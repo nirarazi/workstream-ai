@@ -2,7 +2,7 @@
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "ATC",
   "version": "0.1.0",
-  "identifier": "com.tauri.dev",
+  "identifier": "com.atc.app",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:5173"
@@ -11,14 +11,21 @@
     "windows": [
       {
         "title": "ATC",
-        "width": 800,
-        "height": 600,
+        "width": 1200,
+        "height": 800,
+        "minWidth": 800,
+        "minHeight": 600,
         "resizable": true,
         "fullscreen": false
       }
     ],
     "security": {
       "csp": null
+    }
+  },
+  "plugins": {
+    "shell": {
+      "open": true
     }
   },
   "bundle": {
