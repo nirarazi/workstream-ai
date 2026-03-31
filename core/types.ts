@@ -1,0 +1,112 @@
+// core/types.ts — Shared types for the ATC engine
+
+export type StatusCategory =
+  | "completed"
+  | "in_progress"
+  | "blocked_on_human"
+  | "needs_decision"
+  | "noise";
+
+export interface Classification {
+  status: StatusCategory;
+  confidence: number;
+  reason: string;
+  workItemIds: string[];
+}
+
+export interface Message {
+  id: string;
+  threadId: string;
+  channelId: string;
+  channelName: string;
+  userId: string;
+  userName: string;
+  text: string;
+  timestamp: string;
+  platform: string;
+}
+
+export interface Thread {
+  id: string;
+  channelId: string;
+  channelName: string;
+  platform: string;
+  workItemId: string | null;
+  lastActivity: string;
+  messageCount: number;
+  messages: Message[];
+}
+
+export interface WorkItem {
+  id: string;
+  source: string;
+  title: string;
+  externalStatus: string | null;
+  assignee: string | null;
+  url: string | null;
+  currentAtcStatus: StatusCategory | null;
+  currentConfidence: number | null;
+  snoozedUntil: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface Agent {
+  id: string;
+  name: string;
+  platform: string;
+  platformUserId: string;
+  role: string | null;
+  firstSeen: string;
+  lastSeen: string;
+}
+
+export interface Event {
+  id: string;
+  threadId: string;
+  messageId: string;
+  workItemId: string | null;
+  agentId: string | null;
+  status: StatusCategory;
+  confidence: number;
+  reason: string;
+  rawText: string;
+  timestamp: string;
+  createdAt: string;
+}
+
+export interface Enrichment {
+  id: string;
+  workItemId: string;
+  source: string;
+  data: Record<string, unknown>;
+  fetchedAt: string;
+}
+
+export interface PollCursor {
+  channelId: string;
+  lastTimestamp: string;
+  updatedAt: string;
+}
+
+export interface Credentials {
+  token: string;
+  [key: string]: unknown;
+}
+
+export interface WorkItemDetail {
+  id: string;
+  title: string;
+  status: string;
+  assignee: string | null;
+  url: string | null;
+  labels: string[];
+  description: string | null;
+}
+
+export interface ActionableItem {
+  workItem: WorkItem;
+  latestEvent: Event;
+  agent: Agent | null;
+  thread: Thread | null;
+}
