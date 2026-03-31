@@ -1,0 +1,39 @@
+slack:
+  # Polling interval in seconds
+  pollInterval: 30
+  # Channels to monitor (empty = all channels the user is in)
+  channels: []
+
+classifier:
+  # Any OpenAI-compatible endpoint
+  provider:
+    baseUrl: ${ATC_LLM_BASE_URL:-https://api.anthropic.com/v1}
+    model: ${ATC_LLM_MODEL:-claude-sonnet-4-6}
+    # apiKey loaded from ATC_LLM_API_KEY env var
+  # Confidence threshold — below this, classify as "noise"
+  confidenceThreshold: 0.6
+
+jira:
+  # baseUrl loaded from ATC_JIRA_BASE_URL env var
+  # token loaded from ATC_JIRA_TOKEN env var
+  enabled: false
+  ticketPrefixes:
+    - "AI-"
+    - "IT-"
+    - "MS-"
+
+extractors:
+  # Regex patterns for work item ID extraction
+  ticketPatterns:
+    - "\\b([A-Z]{2,6}-\\d+)\\b"
+  prPatterns:
+    - "PR\\s*#?(\\d+)"
+    - "#(\\d+)"
+
+mcp:
+  # Transport: "stdio" for local agents
+  transport: stdio
+
+server:
+  port: 9847
+  host: "127.0.0.1"
