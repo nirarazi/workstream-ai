@@ -1,0 +1,9 @@
+node_modules/
+dist/
+target/
+*.db
+*.db-wal
+*.db-shm
+.env
+config/local.yaml
+.DS_Store
