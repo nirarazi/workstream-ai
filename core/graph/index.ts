@@ -143,6 +143,13 @@ export class ContextGraph {
     return row ? toAgent(row) : null;
   }
 
+  getAllAgents(): Agent[] {
+    const rows = this.db.db
+      .prepare("SELECT * FROM agents ORDER BY last_seen DESC")
+      .all() as AgentRow[];
+    return rows.map(toAgent);
+  }
+
   // --- Work Items ---
 
   upsertWorkItem(item: {
@@ -298,6 +305,13 @@ export class ContextGraph {
     const rows = this.db.db
       .prepare("SELECT * FROM events WHERE thread_id = ? ORDER BY timestamp ASC")
       .all(threadId) as EventRow[];
+    return rows.map(toEvent);
+  }
+
+  getEventsForWorkItem(workItemId: string): Event[] {
+    const rows = this.db.db
+      .prepare("SELECT * FROM events WHERE work_item_id = ? ORDER BY timestamp ASC")
+      .all(workItemId) as EventRow[];
     return rows.map(toEvent);
   }
 
