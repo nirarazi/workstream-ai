@@ -46,7 +46,10 @@ describe("SlackAdapter", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     adapter = new SlackAdapter();
-    mockAuthTest.mockResolvedValue({ user: "operator", team: "test-team" });
+    mockAuthTest.mockResolvedValue({ user: "operator", team: "test-team", url: "https://test-team.slack.com/" });
+    // connect() now pre-fetches users and channels — provide defaults
+    mockUsersList.mockResolvedValue({ members: [], response_metadata: {} });
+    mockConversationsList.mockResolvedValue({ channels: [], response_metadata: {} });
   });
 
   // -- connect --
@@ -280,6 +283,8 @@ describe("SlackAdapter", () => {
   describe("getUsers", () => {
     beforeEach(async () => {
       await adapter.connect({ token: "xoxp-valid-token" });
+      // Clear call counts from connect()'s pre-fetch
+      mockUsersList.mockClear();
     });
 
     it("should return userId -> displayName map", async () => {
@@ -322,6 +327,8 @@ describe("SlackAdapter", () => {
   describe("rate limiting", () => {
     beforeEach(async () => {
       await adapter.connect({ token: "xoxp-valid-token" });
+      // Clear call counts from connect()'s pre-fetch
+      mockUsersList.mockClear();
     });
 
     it("should retry on rate limit and succeed", async () => {
@@ -354,6 +361,48 @@ describe("SlackAdapter", () => {
       await expect(adapter.getUsers()).rejects.toThrow("rate limited");
       // 1 initial + 3 retries = 4 calls
       expect(mockUsersList).toHaveBeenCalledTimes(4);
+    });
+  });
+
+  // -- getThreadMessages --
+
+  describe("getThreadMessages", () => {
+    it("returns messages for a specific thread", async () => {
+      // Mock the conversations.replies API call
+      const mockReplies = {
+        ok: true,
+        messages: [
+          { ts: "1711900000.000000", user: "U1", text: "Starting work on AI-382" },
+          { ts: "1711900100.000000", user: "U2", text: "PR submitted for review" },
+          { ts: "1711900200.000000", user: "U1", text: "Approved and merged" },
+        ],
+        response_metadata: {},
+      };
+
+      // Use the existing mock pattern from the test file
+      const adapter = new SlackAdapter();
+      // Connect with mocked client
+      const mockClient = {
+        auth: { test: vi.fn().mockResolvedValue({ user: "test", team: "test", url: "https://test.slack.com/" }) },
+        conversations: {
+          list: vi.fn().mockResolvedValue({ channels: [], response_metadata: {} }),
+          replies: vi.fn().mockResolvedValue(mockReplies),
+        },
+        users: { list: vi.fn().mockResolvedValue({ members: [], response_metadata: {} }) },
+      };
+      (adapter as any).client = mockClient;
+      (adapter as any).channelMap = new Map([["C123", { name: "test", isPrivate: false }]]);
+      (adapter as any).userInfoMap = new Map([
+        ["U1", { name: "Byte", avatar: "" }],
+        ["U2", { name: "Pixel", avatar: "" }],
+      ]);
+
+      const messages = await adapter.getThreadMessages("1711900000.000000", "C123");
+
+      expect(messages).toHaveLength(3);
+      expect(messages[0].userName).toBe("Byte");
+      expect(messages[0].text).toBe("Starting work on AI-382");
+      expect(messages[2].text).toBe("Approved and merged");
     });
   });
 

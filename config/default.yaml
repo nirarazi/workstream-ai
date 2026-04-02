@@ -9,7 +9,7 @@ classifier:
   provider:
     baseUrl: ${ATC_LLM_BASE_URL:-https://api.anthropic.com/v1}
     model: ${ATC_LLM_MODEL:-claude-sonnet-4-6}
-    # apiKey loaded from ATC_LLM_API_KEY env var
+    apiKey: ${ATC_LLM_API_KEY:-}
   # Confidence threshold — below this, classify as "noise"
   confidenceThreshold: 0.6
 
@@ -30,6 +30,20 @@ extractors:
     - "PR\\s*#?(\\d+)"
     - "#(\\d+)"
 
+rateLimits:
+  llm:
+    maxPerMinute: 4          # Conservative for Anthropic (free tier = 5/min)
+  slack:
+    maxPerMinute: 25         # Slack tier 3 ≈ 50/min, stay well under
+  jira:
+    maxPerMinute: 30         # Jira Cloud is generous
+
+lookback:
+  # How far back to look on first load (before any poll cursors exist)
+  initialDays: 1             # 1 day — keeps initial LLM calls manageable
+  # Max threads to classify per poll cycle (0 = unlimited)
+  maxThreadsPerPoll: 50
+
 mcp:
   # Transport: "stdio" for local agents
   transport: stdio
@@ -37,3 +51,13 @@ mcp:
 server:
   port: 9847
   host: "127.0.0.1"
+
+quickReplies:
+  blocked_on_human:
+    - "Approved, proceed"
+    - "Hold — waiting for my review"
+    - "Re-do with the following constraint:"
+  needs_decision:
+    - "Go with option A"
+    - "Go with option B"
+    - "Need more info before deciding"

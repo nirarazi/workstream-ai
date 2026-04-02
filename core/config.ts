@@ -10,6 +10,10 @@ const log = createLogger("config");
 
 // --- Schema ---
 
+const RateLimitSchema = z.object({
+  maxPerMinute: z.number(),
+});
+
 const ConfigSchema = z.object({
   slack: z.object({
     pollInterval: z.number(),
@@ -33,12 +37,33 @@ const ConfigSchema = z.object({
     ticketPatterns: z.array(z.string()),
     prPatterns: z.array(z.string()),
   }),
+  rateLimits: z.object({
+    llm: RateLimitSchema,
+    slack: RateLimitSchema,
+    jira: RateLimitSchema,
+  }).optional(),
+  lookback: z.object({
+    initialDays: z.number(),
+    maxThreadsPerPoll: z.number(),
+  }).optional(),
   mcp: z.object({
     transport: z.string(),
   }),
   server: z.object({
     port: z.number(),
     host: z.string(),
+  }),
+  quickReplies: z.record(z.string(), z.array(z.string())).optional().default({
+    blocked_on_human: [
+      "Approved, proceed",
+      "Hold — waiting for my review",
+      "Re-do with the following constraint:",
+    ],
+    needs_decision: [
+      "Go with option A",
+      "Go with option B",
+      "Need more info before deciding",
+    ],
   }),
 });
 

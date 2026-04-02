@@ -158,4 +158,12 @@ slack:
     expect(cfg.mcp.transport).toBe("stdio");
     expect(cfg.server.port).toBe(9847);
   });
+
+  it("loads quickReplies config", () => {
+    const projectRoot = resolve(import.meta.dirname, "../..");
+    const config = loadConfig(projectRoot);
+    expect(config.quickReplies).toBeDefined();
+    expect(config.quickReplies.blocked_on_human).toBeInstanceOf(Array);
+    expect(config.quickReplies.blocked_on_human.length).toBeGreaterThan(0);
+  });
 });

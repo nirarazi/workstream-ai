@@ -8,6 +8,7 @@ export interface AgentRow {
   platform: string;
   platform_user_id: string;
   role: string | null;
+  avatar_url: string | null;
   first_seen: string;
   last_seen: string;
 }
@@ -30,6 +31,7 @@ export interface ThreadRow {
   id: string;
   channel_id: string;
   channel_name: string;
+  platform_meta: string;
   platform: string;
   work_item_id: string | null;
   last_activity: string;
@@ -62,4 +64,11 @@ export interface PollCursorRow {
   channel_id: string;
   last_timestamp: string;
   updated_at: string;
+}
+
+export interface SummaryRow {
+  work_item_id: string;
+  summary_text: string;
+  generated_at: string;
+  latest_event_id: string;
 }

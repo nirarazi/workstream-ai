@@ -132,7 +132,7 @@ describe("JiraAdapter", () => {
       expect(item!.title).toBe("Implement auth flow");
       expect(item!.status).toBe("In Progress");
       expect(item!.assignee).toBe("Byte");
-      expect(item!.url).toBe("https://test.atlassian.net/rest/api/3/issue/AI-382");
+      expect(item!.url).toBe("https://test.atlassian.net/browse/AI-382");
       expect(item!.labels).toEqual(["backend", "auth"]);
       expect(item!.description).toBe("Build the OAuth authentication flow for the API.");
 
@@ -412,6 +412,57 @@ describe("JiraAdapter", () => {
         expect(e).toBeInstanceOf(JiraRateLimitError);
         expect((e as JiraRateLimitError).retryAfter).toBe(60);
       }
+    });
+  });
+
+  // -- getComments --
+
+  describe("getComments", () => {
+    beforeEach(async () => {
+      mockFetch.mockResolvedValueOnce(jsonResponse({ displayName: "Op" }));
+      await adapter.connect(CREDENTIALS);
+      mockFetch.mockClear();
+    });
+
+    it("fetches and returns comments for a Jira issue", async () => {
+      const mockResponse = {
+        comments: [
+          {
+            id: "10001",
+            author: { displayName: "Alice" },
+            body: { type: "doc", version: 1, content: [{ type: "paragraph", content: [{ type: "text", text: "Looks good to me" }] }] },
+            created: "2026-03-31T10:00:00.000+0000",
+          },
+          {
+            id: "10002",
+            author: { displayName: "Bob" },
+            body: { type: "doc", version: 1, content: [{ type: "paragraph", content: [{ type: "text", text: "Merged" }] }] },
+            created: "2026-03-31T11:00:00.000+0000",
+          },
+        ],
+      };
+
+      mockFetch.mockResolvedValueOnce(jsonResponse(mockResponse));
+
+      const comments = await adapter.getComments("AI-382");
+
+      expect(comments).toHaveLength(2);
+      expect(comments[0].author).toBe("Alice");
+      expect(comments[0].body).toBe("Looks good to me");
+      expect(comments[1].author).toBe("Bob");
+    });
+
+    it("returns empty array for 404", async () => {
+      mockFetch.mockResolvedValueOnce(jsonResponse({ errorMessages: ["not found"] }, 404));
+
+      const comments = await adapter.getComments("NOPE-999");
+
+      expect(comments).toEqual([]);
+    });
+
+    it("should throw if not connected", async () => {
+      const fresh = new JiraAdapter();
+      await expect(fresh.getComments("AI-1")).rejects.toThrow("not connected");
     });
   });
 

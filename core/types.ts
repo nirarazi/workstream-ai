@@ -21,6 +21,7 @@ export interface Message {
   channelName: string;
   userId: string;
   userName: string;
+  userAvatarUrl?: string;
   text: string;
   timestamp: string;
   platform: string;
@@ -30,6 +31,7 @@ export interface Thread {
   id: string;
   channelId: string;
   channelName: string;
+  platformMeta?: Record<string, unknown>;
   platform: string;
   workItemId: string | null;
   lastActivity: string;
@@ -57,6 +59,7 @@ export interface Agent {
   platform: string;
   platformUserId: string;
   role: string | null;
+  avatarUrl: string | null;
   firstSeen: string;
   lastSeen: string;
 }
@@ -102,6 +105,13 @@ export interface WorkItemDetail {
   url: string | null;
   labels: string[];
   description: string | null;
+}
+
+export interface WorkItemComment {
+  id: string;
+  author: string;
+  body: string;
+  created: string;
 }
 
 export interface ActionableItem {

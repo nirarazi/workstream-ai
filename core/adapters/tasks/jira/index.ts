@@ -1,8 +1,9 @@
 // core/adapters/tasks/jira/index.ts — Jira REST API v3 adapter
 
-import type { Credentials, WorkItemDetail } from "../../../types.js";
+import type { Credentials, WorkItemDetail, WorkItemComment } from "../../../types.js";
 import type { TaskAdapter } from "../interface.js";
 import { createLogger } from "../../../logger.js";
+import type { RateLimiter } from "../../../rate-limiter.js";
 
 const log = createLogger("jira-adapter");
 
@@ -87,7 +88,7 @@ function extractPlainText(adfNode: unknown): string {
   return "";
 }
 
-function mapIssueToWorkItem(issue: JiraIssue): WorkItemDetail {
+function mapIssueToWorkItem(issue: JiraIssue, baseUrl: string): WorkItemDetail {
   const rawDescription = extractPlainText(issue.fields.description);
   const description = rawDescription.length > 200
     ? rawDescription.slice(0, 200)
@@ -98,7 +99,7 @@ function mapIssueToWorkItem(issue: JiraIssue): WorkItemDetail {
     title: issue.fields.summary,
     status: issue.fields.status.name,
     assignee: issue.fields.assignee?.displayName ?? null,
-    url: issue.self,
+    url: `${baseUrl}/browse/${issue.key}`,
     labels: issue.fields.labels ?? [],
     description,
   };
@@ -114,6 +115,11 @@ export class JiraAdapter implements TaskAdapter {
   private baseUrl = "";
   private authToken = "";
   private connected = false;
+  private rateLimiter?: RateLimiter;
+
+  setRateLimiter(limiter: RateLimiter): void {
+    this.rateLimiter = limiter;
+  }
 
   private get headers(): Record<string, string> {
     return {
@@ -124,6 +130,9 @@ export class JiraAdapter implements TaskAdapter {
   }
 
   private async request(path: string, options: RequestInit = {}): Promise<Response> {
+    if (this.rateLimiter) {
+      await this.rateLimiter.acquire();
+    }
     const url = `${this.baseUrl}${path}`;
     const response = await fetch(url, {
       ...options,
@@ -190,7 +199,7 @@ export class JiraAdapter implements TaskAdapter {
     }
 
     const issue = (await response.json()) as JiraIssue;
-    return mapIssueToWorkItem(issue);
+    return mapIssueToWorkItem(issue, this.baseUrl);
   }
 
   async updateWorkItem(id: string, update: Partial<WorkItemDetail>): Promise<void> {
@@ -292,6 +301,39 @@ export class JiraAdapter implements TaskAdapter {
     }
 
     const data = (await response.json()) as JiraSearchResponse;
-    return data.issues.map(mapIssueToWorkItem);
+    return data.issues.map((issue) => mapIssueToWorkItem(issue, this.baseUrl));
+  }
+
+  async getComments(id: string): Promise<WorkItemComment[]> {
+    this.ensureConnected();
+
+    const response = await this.request(
+      `/rest/api/3/issue/${encodeURIComponent(id)}/comment?orderBy=created&maxResults=5`,
+    );
+
+    if (response.status === 404) {
+      return [];
+    }
+
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(`Failed to get comments for ${id} (${response.status}): ${text}`);
+    }
+
+    const data = (await response.json()) as {
+      comments: Array<{
+        id: string;
+        author: { displayName: string };
+        body: unknown;
+        created: string;
+      }>;
+    };
+
+    return data.comments.map((c) => ({
+      id: c.id,
+      author: c.author.displayName,
+      body: extractPlainText(c.body),
+      created: c.created,
+    }));
   }
 }

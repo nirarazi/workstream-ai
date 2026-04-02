@@ -14,6 +14,8 @@ import { JiraAdapter } from "./adapters/tasks/jira/index.js";
 import { Pipeline } from "./pipeline.js";
 import type { PlatformAdapter } from "./adapters/platforms/interface.js";
 import type { TaskAdapter } from "./adapters/tasks/interface.js";
+import { createRateLimiter, type RateLimiter } from "./rate-limiter.js";
+import { Summarizer } from "./summarizer/index.js";
 
 const log = createLogger("server");
 
@@ -85,6 +87,71 @@ export function createApp(state: EngineState): Hono {
     const threads = state.graph.getThreadsForWorkItem(id);
     const events = state.graph.getEventsForWorkItem(id);
     return c.json({ workItem, threads, events });
+  });
+
+  // --- GET /api/work-item/:id/context ---
+  app.get("/api/work-item/:id/context", async (c) => {
+    const id = c.req.param("id");
+    const workItem = state.graph.getWorkItemById(id);
+    if (!workItem) {
+      return c.json({ error: "Work item not found" }, 404);
+    }
+
+    const threads = state.graph.getThreadsForWorkItem(id);
+    const events = state.graph.getEventsForWorkItem(id);
+    const enrichments = state.graph.getEnrichmentsForWorkItem(id);
+
+    // Determine quick replies based on work item status
+    const quickReplies: string[] =
+      (state.config as any).quickReplies?.[workItem.currentAtcStatus ?? ""] ?? [];
+
+    // Summary: check cache, return cached or null
+    let summary: string | null = null;
+    const cached = state.graph.getSummary(id);
+    const latestEvent = events.length > 0 ? events[events.length - 1] : null;
+
+    if (cached && latestEvent && cached.latestEventId === latestEvent.id) {
+      summary = cached.summaryText;
+    }
+
+    return c.json({
+      workItem,
+      threads,
+      events,
+      enrichments,
+      quickReplies,
+      summary,
+    });
+  });
+
+  // --- POST /api/work-item/:id/summarize ---
+  app.post("/api/work-item/:id/summarize", async (c) => {
+    const id = c.req.param("id");
+    const workItem = state.graph.getWorkItemById(id);
+    if (!workItem) {
+      return c.json({ error: "Work item not found" }, 404);
+    }
+
+    const events = state.graph.getEventsForWorkItem(id);
+    if (events.length === 0) {
+      return c.json({ summary: `No conversation history for ${id}.` });
+    }
+
+    // Create summarizer on demand from classifier config
+    const { baseUrl, model, apiKey } = state.config.classifier.provider;
+    const summarizer = new Summarizer({ baseUrl, model, apiKey });
+
+    const summary = await summarizer.summarize(events, id);
+
+    // Cache it
+    const latestEvent = events[events.length - 1];
+    state.graph.upsertSummary({
+      workItemId: id,
+      summaryText: summary,
+      latestEventId: latestEvent.id,
+    });
+
+    return c.json({ summary });
   });
 
   // --- GET /api/agents ---
@@ -193,6 +260,7 @@ export function createApp(state: EngineState): Hono {
       llmApiKey?: string;
       llmBaseUrl?: string;
       llmModel?: string;
+      jiraEmail?: string;
       jiraToken?: string;
       jiraBaseUrl?: string;
     }>();
@@ -229,11 +297,25 @@ export function createApp(state: EngineState): Hono {
       writeFileSync(resolve(configDir, "local.yaml"), toYaml(localConfig), "utf-8");
       log.info("Wrote config/local.yaml");
 
-      // Write .env with sensitive values
+      // Write .env with all values
       const envLines: string[] = [];
       if (body.slackToken) envLines.push(`ATC_SLACK_TOKEN=${body.slackToken}`);
       if (body.llmApiKey) envLines.push(`ATC_LLM_API_KEY=${body.llmApiKey}`);
-      if (body.jiraToken) envLines.push(`ATC_JIRA_TOKEN=${body.jiraToken}`);
+      if (body.llmBaseUrl) envLines.push(`ATC_LLM_BASE_URL=${body.llmBaseUrl}`);
+      if (body.llmModel) envLines.push(`ATC_LLM_MODEL=${body.llmModel}`);
+
+      // Jira: base64-encode email:token for Basic auth
+      // ATC_JIRA_API_TOKEN stores the raw API token; ATC_JIRA_TOKEN stores the computed Basic auth credential.
+      let jiraAuthToken: string | undefined;
+      if (body.jiraToken && body.jiraEmail) {
+        jiraAuthToken = Buffer.from(`${body.jiraEmail}:${body.jiraToken}`).toString("base64");
+      } else if (body.jiraToken && !body.jiraEmail) {
+        // No email provided — treat the token as already base64-encoded (legacy path)
+        jiraAuthToken = body.jiraToken;
+      }
+      if (body.jiraEmail) envLines.push(`ATC_JIRA_EMAIL=${body.jiraEmail}`);
+      if (body.jiraToken) envLines.push(`ATC_JIRA_API_TOKEN=${body.jiraToken}`);
+      if (jiraAuthToken) envLines.push(`ATC_JIRA_TOKEN=${jiraAuthToken}`);
       if (body.jiraBaseUrl) envLines.push(`ATC_JIRA_BASE_URL=${body.jiraBaseUrl}`);
 
       if (envLines.length > 0) {
@@ -243,7 +325,11 @@ export function createApp(state: EngineState): Hono {
         // Also set env vars in current process so config reload picks them up
         if (body.slackToken) process.env.ATC_SLACK_TOKEN = body.slackToken;
         if (body.llmApiKey) process.env.ATC_LLM_API_KEY = body.llmApiKey;
-        if (body.jiraToken) process.env.ATC_JIRA_TOKEN = body.jiraToken;
+        if (body.llmBaseUrl) process.env.ATC_LLM_BASE_URL = body.llmBaseUrl;
+        if (body.llmModel) process.env.ATC_LLM_MODEL = body.llmModel;
+        if (body.jiraEmail) process.env.ATC_JIRA_EMAIL = body.jiraEmail;
+        if (body.jiraToken) process.env.ATC_JIRA_API_TOKEN = body.jiraToken;
+        if (jiraAuthToken) process.env.ATC_JIRA_TOKEN = jiraAuthToken;
         if (body.jiraBaseUrl) process.env.ATC_JIRA_BASE_URL = body.jiraBaseUrl;
       }
 
@@ -260,20 +346,35 @@ export function createApp(state: EngineState): Hono {
       // Reconnect adapters
       if (body.slackToken) {
         const slack = new SlackAdapter();
+        const slackRl = createRateLimiter({
+          name: "slack",
+          maxPerMinute: state.config.rateLimits?.slack?.maxPerMinute ?? 25,
+        });
+        slack.setRateLimiter(slackRl);
         await slack.connect({ token: body.slackToken });
         state.platformAdapter = slack;
         log.info("Slack adapter reconnected");
       }
 
-      if (body.jiraToken && body.jiraBaseUrl) {
+      if (jiraAuthToken && body.jiraBaseUrl) {
         const jira = new JiraAdapter();
-        await jira.connect({ token: body.jiraToken, baseUrl: body.jiraBaseUrl });
+        const jiraRl = createRateLimiter({
+          name: "jira",
+          maxPerMinute: state.config.rateLimits?.jira?.maxPerMinute ?? 30,
+        });
+        jira.setRateLimiter(jiraRl);
+        await jira.connect({ token: jiraAuthToken, baseUrl: body.jiraBaseUrl });
         state.taskAdapter = jira;
         log.info("Jira adapter reconnected");
       }
 
       // Recreate classifier with new config
       state.classifier = Classifier.fromConfig(state.config);
+      const llmRl = createRateLimiter({
+        name: "llm",
+        maxPerMinute: state.config.rateLimits?.llm?.maxPerMinute ?? 4,
+      });
+      state.classifier.setRateLimiter(llmRl);
 
       // Restart pipeline if we have a platform adapter
       if (state.platformAdapter) {
@@ -297,6 +398,21 @@ export function createApp(state: EngineState): Hono {
     }
   });
 
+  // --- GET /api/setup/prefill ---
+  // Returns env var values to pre-populate the setup form.
+  // Safe to expose over localhost — values are already on this machine.
+  app.get("/api/setup/prefill", (c) => {
+    return c.json({
+      slackToken: process.env.ATC_SLACK_TOKEN ?? "",
+      llmApiKey: process.env.ATC_LLM_API_KEY ?? "",
+      llmBaseUrl: process.env.ATC_LLM_BASE_URL ?? "https://api.anthropic.com/v1",
+      llmModel: process.env.ATC_LLM_MODEL ?? "claude-sonnet-4-6",
+      jiraEmail: process.env.ATC_JIRA_EMAIL ?? "",
+      jiraToken: process.env.ATC_JIRA_API_TOKEN ?? "",
+      jiraBaseUrl: process.env.ATC_JIRA_BASE_URL ?? "",
+    });
+  });
+
   // --- GET /api/setup/status ---
   app.get("/api/setup/status", (c) => {
     const slackConfigured = !!process.env.ATC_SLACK_TOKEN;
@@ -307,11 +423,18 @@ export function createApp(state: EngineState): Hono {
     );
     const jiraConfigured = !!(state.config.jira.enabled && process.env.ATC_JIRA_TOKEN);
 
+    const platformMeta: Record<string, unknown> = {};
+    if (state.platformAdapter?.name === "slack") {
+      const slack = state.platformAdapter as import("./adapters/platforms/slack/index.js").SlackAdapter;
+      platformMeta.slackWorkspaceUrl = slack.getWorkspaceUrl?.() ?? null;
+    }
+
     return c.json({
       configured: slackConfigured && llmConfigured,
       slack: slackConfigured,
       llm: llmConfigured,
       jira: jiraConfigured,
+      platformMeta,
     });
   });
 
@@ -354,9 +477,24 @@ async function main(): Promise<void> {
   // 2. Open/create SQLite database
   const db = new Database("atc.db");
 
-  // 3. Create core components
+  // 3. Create rate limiters
+  const llmLimiter = createRateLimiter({
+    name: "llm",
+    maxPerMinute: config.rateLimits?.llm?.maxPerMinute ?? 4,
+  });
+  const slackLimiter = createRateLimiter({
+    name: "slack",
+    maxPerMinute: config.rateLimits?.slack?.maxPerMinute ?? 25,
+  });
+  const jiraLimiter = createRateLimiter({
+    name: "jira",
+    maxPerMinute: config.rateLimits?.jira?.maxPerMinute ?? 30,
+  });
+
+  // 4. Create core components
   const graph = new ContextGraph(db);
   const classifier = Classifier.fromConfig(config, projectRoot);
+  classifier.setRateLimiter(llmLimiter);
   const extractor = new DefaultExtractor({
     ticketPatterns: config.extractors.ticketPatterns,
     prPatterns: config.extractors.prPatterns,
@@ -378,14 +516,59 @@ async function main(): Promise<void> {
     processed: 0,
   };
 
-  // 4. If Slack configured, create adapter and connect
+  // 5. If Slack configured, create adapter and connect
   const slackToken = process.env.ATC_SLACK_TOKEN;
   if (slackToken) {
     try {
       const slack = new SlackAdapter();
+      slack.setRateLimiter(slackLimiter);
       await slack.connect({ token: slackToken });
       state.platformAdapter = slack;
       log.info("Slack adapter connected");
+
+      // Backfill agent names and avatars from Slack user data.
+      // Agents whose name is still a raw Slack user ID (e.g. "U0399K5KCQ3") get
+      // their display name resolved. Agents missing avatars get them filled in.
+      const agents = graph.getAllAgents();
+      const users = await slack.getUsers();
+      let backfilled = 0;
+      for (const agent of agents) {
+        const slackName = users.get(agent.platformUserId);
+        const avatar = slack.getUserAvatar(agent.platformUserId);
+        const needsName = agent.name === agent.platformUserId && slackName;
+        const needsAvatar = !agent.avatarUrl && avatar;
+        if (needsName || needsAvatar) {
+          graph.upsertAgent({
+            id: agent.id,
+            name: needsName ? slackName! : agent.name,
+            platform: agent.platform,
+            platformUserId: agent.platformUserId,
+            avatarUrl: avatar || agent.avatarUrl,
+          });
+          backfilled++;
+        }
+      }
+      if (backfilled > 0) {
+        log.info(`Backfilled names/avatars for ${backfilled} agents`);
+      }
+
+      // Backfill channel privacy into platform_meta for existing threads
+      // This runs a direct SQL update for efficiency — no need to load each thread
+      const channelIds = db.db.prepare(
+        "SELECT DISTINCT channel_id FROM threads WHERE platform = 'slack' AND platform_meta = '{}'"
+      ).all() as Array<{ channel_id: string }>;
+      let privUpdated = 0;
+      for (const { channel_id } of channelIds) {
+        if (slack.isChannelPrivate(channel_id)) {
+          db.db.prepare(
+            "UPDATE threads SET platform_meta = '{\"isPrivate\":true}' WHERE channel_id = ?"
+          ).run(channel_id);
+          privUpdated++;
+        }
+      }
+      if (privUpdated > 0) {
+        log.info(`Backfilled private flag for ${privUpdated} channels`);
+      }
     } catch (err) {
       log.error("Failed to connect Slack adapter", err);
     }
@@ -393,10 +576,11 @@ async function main(): Promise<void> {
     log.warn("No ATC_SLACK_TOKEN set — Slack adapter disabled");
   }
 
-  // 5. If Jira configured, create adapter and connect
+  // 6. If Jira configured, create adapter and connect
   if (config.jira.enabled && process.env.ATC_JIRA_TOKEN) {
     try {
       const jira = new JiraAdapter();
+      jira.setRateLimiter(jiraLimiter);
       await jira.connect({
         token: process.env.ATC_JIRA_TOKEN,
         baseUrl: process.env.ATC_JIRA_BASE_URL ?? config.jira.baseUrl ?? "",
@@ -418,15 +602,12 @@ async function main(): Promise<void> {
       state.taskAdapter ?? undefined,
       state.config,
     );
-
-    // 7. Start pipeline polling
-    await state.pipeline.start();
-    log.info("Pipeline started");
   } else {
     log.warn("No platform adapter available — pipeline not started (configure via POST /api/setup)");
   }
 
-  // 8. Create and start Hono server
+  // 7. Create and start Hono server — before pipeline polling so the server
+  //    is reachable immediately (initial poll can block for minutes with rate limiting)
   const app = createApp(state);
 
   // Static file serving in web mode
@@ -442,8 +623,11 @@ async function main(): Promise<void> {
 
   serve({ fetch: app.fetch, hostname: host, port }, () => {
     log.info(`ATC engine listening on http://${host}:${port}`);
-    if (state.platformAdapter) {
-      log.info("Pipeline is polling — inbox is live");
+    if (state.pipeline) {
+      // Start pipeline after server is bound so the server is immediately reachable.
+      // Initial poll can take minutes with rate limiting — run it in the background.
+      state.pipeline.start().catch((err) => log.error("Pipeline start failed", err));
+      log.info("Pipeline polling started in background");
     } else {
       log.info(`No adapters configured — visit http://${host}:${port} to set up`);
     }

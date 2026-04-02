@@ -31,6 +31,14 @@ describe("Database", () => {
       expect(names).toContain("poll_cursors");
     });
 
+    it("creates summaries table", () => {
+      const tables = db.db
+        .prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
+        .all() as Array<{ name: string }>;
+      const names = tables.map((t) => t.name);
+      expect(names).toContain("summaries");
+    });
+
     it("creates indexes", () => {
       const indexes = db.db
         .prepare("SELECT name FROM sqlite_master WHERE type='index' AND name LIKE 'idx_%'")
@@ -317,6 +325,67 @@ describe("Database", () => {
 
       const items = graph.getActionableItems();
       expect(items).toHaveLength(0);
+    });
+  });
+
+  describe("summaries CRUD", () => {
+    it("upserts and retrieves a summary", () => {
+      graph.upsertWorkItem({ id: "AI-1", source: "jira" });
+      graph.upsertThread({ id: "t1", channelId: "C1", platform: "slack", workItemId: "AI-1" });
+      graph.insertEvent({
+        threadId: "t1",
+        messageId: "m1",
+        workItemId: "AI-1",
+        status: "in_progress",
+        confidence: 0.9,
+        timestamp: "2026-03-31T10:00:00Z",
+      });
+
+      const events = graph.getEventsForWorkItem("AI-1");
+      const latestEventId = events[events.length - 1].id;
+
+      graph.upsertSummary({
+        workItemId: "AI-1",
+        summaryText: "- Agent started work\n- Waiting for PR review",
+        latestEventId,
+      });
+
+      const summary = graph.getSummary("AI-1");
+      expect(summary).not.toBeNull();
+      expect(summary!.summaryText).toContain("Agent started work");
+      expect(summary!.latestEventId).toBe(latestEventId);
+    });
+
+    it("returns null for non-existent summary", () => {
+      expect(graph.getSummary("NOPE-1")).toBeNull();
+    });
+
+    it("overwrites existing summary on upsert", () => {
+      graph.upsertWorkItem({ id: "AI-1", source: "jira" });
+      graph.upsertThread({ id: "t1", channelId: "C1", platform: "slack", workItemId: "AI-1" });
+      graph.insertEvent({
+        threadId: "t1",
+        messageId: "m1",
+        workItemId: "AI-1",
+        status: "in_progress",
+        confidence: 0.9,
+        timestamp: "2026-03-31T10:00:00Z",
+      });
+
+      graph.upsertSummary({
+        workItemId: "AI-1",
+        summaryText: "Old summary",
+        latestEventId: "evt-old",
+      });
+      graph.upsertSummary({
+        workItemId: "AI-1",
+        summaryText: "New summary",
+        latestEventId: "evt-new",
+      });
+
+      const summary = graph.getSummary("AI-1");
+      expect(summary!.summaryText).toBe("New summary");
+      expect(summary!.latestEventId).toBe("evt-new");
     });
   });
 

@@ -9,4 +9,5 @@ export interface PlatformAdapter {
   replyToThread(threadId: string, channelId: string, message: string): Promise<void>;
   streamMessages(handler: (msg: Message) => void): void;
   getUsers(): Promise<Map<string, string>>; // userId -> displayName
+  getThreadMessages(threadId: string, channelId: string): Promise<Message[]>;
 }

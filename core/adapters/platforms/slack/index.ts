@@ -4,6 +4,7 @@ import { WebClient } from "@slack/web-api";
 import type { PlatformAdapter } from "../interface.js";
 import type { Credentials, Thread, Message } from "../../../types.js";
 import { createLogger } from "../../../logger.js";
+import type { RateLimiter } from "../../../rate-limiter.js";
 
 const log = createLogger("slack-adapter");
 
@@ -22,17 +23,39 @@ interface SlackMessage {
 interface SlackChannel {
   id?: string;
   name?: string;
+  is_private?: boolean;
 }
 
 interface SlackUser {
   id?: string;
+  name?: string;
   real_name?: string;
+  is_bot?: boolean;
   profile?: {
     display_name?: string;
+    real_name?: string;
+    image_48?: string;
   };
 }
 
-async function withRateLimitRetry<T>(fn: () => Promise<T>, context: string): Promise<T> {
+/** Resolved user info: display name + avatar URL */
+interface UserInfo {
+  name: string;
+  avatar: string;
+}
+
+/** Convert a Slack epoch timestamp (e.g. "1711234567.123456") to ISO 8601 */
+function slackTsToISO(ts: string): string {
+  const epoch = parseFloat(ts);
+  if (Number.isNaN(epoch)) return ts;
+  return new Date(epoch * 1000).toISOString();
+}
+
+async function withRateLimitRetry<T>(fn: () => Promise<T>, context: string, rateLimiter?: RateLimiter): Promise<T> {
+  // Pre-flight rate limiting
+  if (rateLimiter) {
+    await rateLimiter.acquire();
+  }
   for (let attempt = 0; attempt <= RATE_LIMIT_MAX_RETRIES; attempt++) {
     try {
       return await fn();
@@ -65,9 +88,15 @@ function sleep(ms: number): Promise<void> {
 export class SlackAdapter implements PlatformAdapter {
   readonly name = "slack";
   private client: WebClient | null = null;
-  private userMap: Map<string, string> = new Map();
-  private channelMap: Map<string, string> = new Map(); // channelId -> channelName
+  private userInfoMap: Map<string, UserInfo> = new Map();
+  private channelMap: Map<string, { name: string; isPrivate: boolean }> = new Map();
   private messageHandler: ((msg: Message) => void) | null = null;
+  private rateLimiter?: RateLimiter;
+  private workspaceUrl: string | null = null;
+
+  setRateLimiter(limiter: RateLimiter): void {
+    this.rateLimiter = limiter;
+  }
 
   async connect(credentials: Credentials): Promise<void> {
     const token = credentials.token;
@@ -79,7 +108,16 @@ export class SlackAdapter implements PlatformAdapter {
 
     try {
       const authResult = await this.client.auth.test();
+      // Store workspace URL for constructing Slack links (e.g. channel URLs)
+      this.workspaceUrl = (authResult.url as string | undefined)?.replace(/\/+$/, "") ?? null;
       log.info(`Connected to Slack as ${authResult.user} (team: ${authResult.team})`);
+
+      // Pre-fetch user and channel lists so names, avatars, and privacy flags
+      // are available for thread building and backfill
+      await this.fetchUsers();
+      log.info(`Loaded ${this.userInfoMap.size} Slack users`);
+      await this.fetchChannelList();
+      log.info(`Loaded ${this.channelMap.size} Slack channels`);
     } catch (err: unknown) {
       this.client = null;
       const message = err instanceof Error ? err.message : String(err);
@@ -98,7 +136,8 @@ export class SlackAdapter implements PlatformAdapter {
     const oldest = String(since.getTime() / 1000);
 
     for (const channelId of channelIds) {
-      const channelName = this.channelMap.get(channelId) ?? channelId;
+      const channelInfo = this.channelMap.get(channelId);
+      const channelName = channelInfo?.name ?? channelId;
 
       const messages = await this.fetchChannelHistory(channelId, oldest);
 
@@ -146,6 +185,7 @@ export class SlackAdapter implements PlatformAdapter {
           as_user: true,
         }),
       "chat.postMessage",
+      this.rateLimiter,
     );
 
     log.info(`Replied to thread ${threadId} in channel ${channelId}`);
@@ -159,7 +199,52 @@ export class SlackAdapter implements PlatformAdapter {
   async getUsers(): Promise<Map<string, string>> {
     this.ensureConnected();
     await this.fetchUsers();
-    return new Map(this.userMap);
+    // Return name-only map for backwards compatibility
+    const nameMap = new Map<string, string>();
+    for (const [id, info] of this.userInfoMap) {
+      nameMap.set(id, info.name);
+    }
+    return nameMap;
+  }
+
+  async getThreadMessages(threadId: string, channelId: string): Promise<Message[]> {
+    this.ensureConnected();
+
+    const channelInfo = this.channelMap.get(channelId);
+    const channelName = channelInfo?.name ?? channelId;
+
+    const slackMessages = await this.fetchThreadReplies(channelId, threadId);
+
+    return slackMessages.map((msg) => {
+      const userInfo = this.userInfoMap.get(msg.user ?? "");
+      return {
+        id: msg.ts ?? "",
+        threadId,
+        channelId,
+        channelName,
+        userId: msg.user ?? "",
+        userName: userInfo?.name ?? msg.user ?? "unknown",
+        userAvatarUrl: userInfo?.avatar || undefined,
+        text: this.resolveSlackMentions(msg.text ?? ""),
+        timestamp: msg.ts ? slackTsToISO(msg.ts) : "",
+        platform: "slack",
+      };
+    });
+  }
+
+  /** Get avatar URL for a user ID, or empty string if unknown */
+  getUserAvatar(userId: string): string {
+    return this.userInfoMap.get(userId)?.avatar ?? "";
+  }
+
+  /** Get workspace URL (e.g. "https://myteam.slack.com") for link construction */
+  getWorkspaceUrl(): string | null {
+    return this.workspaceUrl;
+  }
+
+  /** Check if a channel is private */
+  isChannelPrivate(channelId: string): boolean {
+    return this.channelMap.get(channelId)?.isPrivate ?? false;
   }
 
   // --- Private helpers ---
@@ -175,8 +260,8 @@ export class SlackAdapter implements PlatformAdapter {
     await this.fetchChannelList();
 
     const nameToId = new Map<string, string>();
-    for (const [id, name] of this.channelMap) {
-      nameToId.set(name, id);
+    for (const [id, info] of this.channelMap) {
+      nameToId.set(info.name, id);
     }
 
     const ids: string[] = [];
@@ -212,12 +297,13 @@ export class SlackAdapter implements PlatformAdapter {
             cursor: cursor || undefined,
           }),
         "conversations.list",
+        this.rateLimiter,
       );
 
       const channels = (result.channels ?? []) as SlackChannel[];
       for (const ch of channels) {
         if (ch.id && ch.name) {
-          this.channelMap.set(ch.id, ch.name);
+          this.channelMap.set(ch.id, { name: ch.name, isPrivate: ch.is_private ?? false });
         }
       }
 
@@ -239,6 +325,7 @@ export class SlackAdapter implements PlatformAdapter {
             cursor: cursor || undefined,
           }),
         "conversations.history",
+        this.rateLimiter,
       );
 
       const messages = (result.messages ?? []) as SlackMessage[];
@@ -264,6 +351,7 @@ export class SlackAdapter implements PlatformAdapter {
             cursor: cursor || undefined,
           }),
         "conversations.replies",
+        this.rateLimiter,
       );
 
       const messages = (result.messages ?? []) as SlackMessage[];
@@ -277,7 +365,7 @@ export class SlackAdapter implements PlatformAdapter {
 
   private async fetchUsers(): Promise<void> {
     let cursor: string | undefined;
-    this.userMap.clear();
+    this.userInfoMap.clear();
 
     do {
       const result = await withRateLimitRetry(
@@ -287,14 +375,23 @@ export class SlackAdapter implements PlatformAdapter {
             cursor: cursor || undefined,
           }),
         "users.list",
+        this.rateLimiter,
       );
 
       const members = (result.members ?? []) as SlackUser[];
       for (const member of members) {
         if (member.id) {
+          // Bots/apps often have no display_name — fall through to real_name, profile.real_name, or member.name
           const displayName =
-            member.profile?.display_name || member.real_name || member.id;
-          this.userMap.set(member.id, displayName);
+            member.profile?.display_name ||
+            member.real_name ||
+            member.profile?.real_name ||
+            member.name ||
+            member.id;
+          this.userInfoMap.set(member.id, {
+            name: displayName,
+            avatar: member.profile?.image_48 ?? "",
+          });
         }
       }
 
@@ -308,17 +405,21 @@ export class SlackAdapter implements PlatformAdapter {
     threadTs: string,
     slackMessages: SlackMessage[],
   ): Thread {
-    const messages: Message[] = slackMessages.map((msg) => ({
-      id: msg.ts ?? "",
-      threadId: threadTs,
-      channelId,
-      channelName,
-      userId: msg.user ?? "",
-      userName: this.userMap.get(msg.user ?? "") ?? msg.user ?? "unknown",
-      text: msg.text ?? "",
-      timestamp: msg.ts ?? "",
-      platform: "slack",
-    }));
+    const messages: Message[] = slackMessages.map((msg) => {
+      const userInfo = this.userInfoMap.get(msg.user ?? "");
+      return {
+        id: msg.ts ?? "",
+        threadId: threadTs,
+        channelId,
+        channelName,
+        userId: msg.user ?? "",
+        userName: userInfo?.name ?? msg.user ?? "unknown",
+        userAvatarUrl: userInfo?.avatar || undefined,
+        text: this.resolveSlackMentions(msg.text ?? ""),
+        timestamp: msg.ts ? slackTsToISO(msg.ts) : "",
+        platform: "slack",
+      };
+    });
 
     const lastMessage = messages[messages.length - 1];
 
@@ -326,11 +427,21 @@ export class SlackAdapter implements PlatformAdapter {
       id: threadTs,
       channelId,
       channelName,
+      platformMeta: { isPrivate: this.channelMap.get(channelId)?.isPrivate ?? false },
       platform: "slack",
       workItemId: null,
-      lastActivity: lastMessage?.timestamp ?? threadTs,
+      lastActivity: lastMessage?.timestamp ?? (threadTs ? slackTsToISO(threadTs) : ""),
       messageCount: messages.length,
       messages,
     };
+  }
+
+  /** Replace bare <@USERID> mentions with <@USERID|displayName> so downstream renderers can show names */
+  private resolveSlackMentions(text: string): string {
+    return text.replace(/<@([A-Z0-9]+)>/g, (_match, userId: string) => {
+      const info = this.userInfoMap.get(userId);
+      if (info) return `<@${userId}|${info.name}>`;
+      return _match; // leave as-is if user unknown
+    });
   }
 }

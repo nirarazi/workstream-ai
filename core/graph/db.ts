@@ -13,6 +13,7 @@ CREATE TABLE IF NOT EXISTS agents (
   platform TEXT NOT NULL,
   platform_user_id TEXT NOT NULL,
   role TEXT,
+  avatar_url TEXT,
   first_seen TEXT NOT NULL,
   last_seen TEXT NOT NULL
 );
@@ -35,6 +36,7 @@ CREATE TABLE IF NOT EXISTS threads (
   id TEXT PRIMARY KEY,
   channel_id TEXT NOT NULL,
   channel_name TEXT NOT NULL DEFAULT '',
+  platform_meta TEXT NOT NULL DEFAULT '{}',
   platform TEXT NOT NULL,
   work_item_id TEXT REFERENCES work_items(id),
   last_activity TEXT NOT NULL,
@@ -69,6 +71,13 @@ CREATE TABLE IF NOT EXISTS poll_cursors (
   updated_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS summaries (
+  work_item_id TEXT PRIMARY KEY REFERENCES work_items(id),
+  summary_text TEXT NOT NULL,
+  generated_at TEXT NOT NULL,
+  latest_event_id TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_events_thread_id ON events(thread_id);
 CREATE INDEX IF NOT EXISTS idx_events_work_item_id ON events(work_item_id);
 CREATE INDEX IF NOT EXISTS idx_threads_work_item_id ON threads(work_item_id);
@@ -88,7 +97,61 @@ export class Database {
 
   private initialize(): void {
     this.db.exec(SCHEMA_SQL);
+    this.migrate();
     log.debug("Schema initialized");
+  }
+
+  private migrate(): void {
+    // Add avatar_url column to agents table if it doesn't exist (added in v0.2)
+    const cols = this.db.pragma("table_info(agents)") as Array<{ name: string }>;
+    if (!cols.some((c) => c.name === "avatar_url")) {
+      this.db.exec("ALTER TABLE agents ADD COLUMN avatar_url TEXT");
+      log.info("Migration: added avatar_url column to agents");
+    }
+
+    // Migrate channel_is_private → platform_meta JSON column
+    const threadCols = this.db.pragma("table_info(threads)") as Array<{ name: string }>;
+    if (!threadCols.some((c) => c.name === "platform_meta")) {
+      this.db.exec("ALTER TABLE threads ADD COLUMN platform_meta TEXT NOT NULL DEFAULT '{}'");
+      log.info("Migration: added platform_meta column to threads");
+      // Convert any existing channel_is_private = 1 rows to platform_meta JSON
+      if (threadCols.some((c) => c.name === "channel_is_private")) {
+        const updated = this.db.prepare(
+          "UPDATE threads SET platform_meta = '{\"isPrivate\":true}' WHERE channel_is_private = 1"
+        ).run();
+        if (updated.changes > 0) {
+          log.info(`Migration: converted ${updated.changes} channel_is_private rows to platform_meta`);
+        }
+      }
+    }
+
+    // Convert Slack epoch timestamps (e.g. "1774958531.590819") to ISO 8601
+    const slackTsCount = (
+      this.db.prepare("SELECT COUNT(*) AS n FROM events WHERE timestamp NOT LIKE '%-%'").get() as { n: number }
+    ).n;
+    if (slackTsCount > 0) {
+      this.db.exec(`
+        UPDATE events
+        SET timestamp = strftime('%Y-%m-%dT%H:%M:%fZ', CAST(timestamp AS REAL), 'unixepoch')
+        WHERE timestamp NOT LIKE '%-%'
+      `);
+      log.info(`Migration: converted ${slackTsCount} Slack timestamps to ISO 8601`);
+    }
+
+    // Fix Jira URLs: convert REST API URLs to browse URLs
+    // e.g. "https://site.atlassian.net/rest/api/3/issue/25937" → "https://site.atlassian.net/browse/AI-320"
+    const jiraApiUrlCount = (
+      this.db.prepare("SELECT COUNT(*) AS n FROM work_items WHERE url LIKE '%/rest/api/%'").get() as { n: number }
+    ).n;
+    if (jiraApiUrlCount > 0) {
+      // Extract base URL (everything before /rest/) and combine with the work item ID as key
+      this.db.exec(`
+        UPDATE work_items
+        SET url = SUBSTR(url, 1, INSTR(url, '/rest/') - 1) || '/browse/' || id
+        WHERE url LIKE '%/rest/api/%'
+      `);
+      log.info(`Migration: fixed ${jiraApiUrlCount} Jira URLs from REST API to browse format`);
+    }
   }
 
   prepare<T>(sql: string): BetterSqlite3Type.Statement<T[]> {
