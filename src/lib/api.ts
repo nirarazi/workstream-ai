@@ -42,14 +42,30 @@ export interface Agent {
   platform: string;
   platformUserId: string;
   role: string | null;
+  avatarUrl: string | null;
   firstSeen: string;
   lastSeen: string;
+}
+
+/** A user/agent that can be @mentioned in a reply */
+export interface Mentionable {
+  id: string;
+  name: string;
+  avatarUrl?: string | null;
+}
+
+/** Convert agents to mentionables for the typeahead */
+export function agentsToMentionables(agents: Agent[]): Mentionable[] {
+  return agents
+    .filter((a) => a.platformUserId && a.name !== a.platformUserId)
+    .map((a) => ({ id: a.platformUserId, name: a.name, avatarUrl: a.avatarUrl }));
 }
 
 export interface Thread {
   id: string;
   channelId: string;
   channelName: string;
+  platformMeta?: Record<string, unknown>;
   platform: string;
   workItemId: string | null;
   lastActivity: string;
@@ -68,6 +84,7 @@ export interface SetupStatus {
   slack: boolean;
   llm: boolean;
   jira: boolean;
+  platformMeta: Record<string, unknown>;
 }
 
 export interface SetupConfig {
@@ -75,6 +92,7 @@ export interface SetupConfig {
   llmApiKey: string;
   llmBaseUrl: string;
   llmModel: string;
+  jiraEmail?: string;
   jiraToken?: string;
   jiraBaseUrl?: string;
 }
@@ -89,6 +107,30 @@ export interface WorkItemDetail {
   workItem: WorkItem;
   threads: Thread[];
   events: LatestEvent[];
+}
+
+export interface WorkItemComment {
+  id: string;
+  author: string;
+  body: string;
+  created: string;
+}
+
+export interface Enrichment {
+  id: string;
+  workItemId: string;
+  source: string;
+  data: Record<string, unknown>;
+  fetchedAt: string;
+}
+
+export interface WorkItemContext {
+  workItem: WorkItem;
+  threads: Thread[];
+  events: LatestEvent[];
+  enrichments: Enrichment[];
+  quickReplies: string[];
+  summary: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -195,9 +237,37 @@ export function postAction(
   });
 }
 
+export function fetchWorkItemContext(id: string): Promise<WorkItemContext> {
+  return apiFetch(`/api/work-item/${encodeURIComponent(id)}/context`);
+}
+
+export function generateSummary(id: string): Promise<{ summary: string }> {
+  return apiFetch(`/api/work-item/${encodeURIComponent(id)}/summarize`, {
+    method: "POST",
+  });
+}
+
 export function postSetup(config: SetupConfig): Promise<{ ok: boolean }> {
   return apiFetch("/api/setup", {
     method: "POST",
     body: JSON.stringify(config),
   });
+}
+
+export function fetchSetupPrefill(): Promise<SetupConfig> {
+  return apiFetch("/api/setup/prefill");
+}
+
+// ---------------------------------------------------------------------------
+// External URL opener — uses Tauri shell plugin in WebView, falls back to
+// window.open in browser.
+// ---------------------------------------------------------------------------
+
+export async function openExternalUrl(url: string): Promise<void> {
+  try {
+    const { open } = await import("@tauri-apps/plugin-shell");
+    await open(url);
+  } catch {
+    window.open(url, "_blank", "noreferrer");
+  }
 }

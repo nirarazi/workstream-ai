@@ -1,72 +1,164 @@
-import { useState, type JSX } from "react";
-import type { ActionableItem } from "../lib/api";
-import { postAction } from "../lib/api";
+import { useState, useRef, type JSX } from "react";
+import type { ActionableItem, Mentionable } from "../lib/api";
+import { postAction, postReply, openExternalUrl } from "../lib/api";
 import { timeAgo } from "../lib/time";
 import StatusBadge from "./StatusBadge";
-import ReplyBar from "./ReplyBar";
+import Tooltip from "./Tooltip";
+import MentionInput from "./MentionInput";
+import MessageRenderer from "../platforms/MessageRenderer";
+import ChannelLabel from "../platforms/ChannelLabel";
+import { slackSerializeMention } from "../platforms/slack/mentions";
 
 interface WorkItemCardProps {
   item: ActionableItem;
+  platformMeta?: Record<string, unknown>;
+  userMap: Map<string, string>;
+  mentionables: Mentionable[];
+  onActioned?: () => void;
+  onSelect?: (workItemId: string) => void;
 }
 
-type ActionKind = "approve" | "redirect" | "close" | "snooze";
+type ActionKind = "done" | "unblock" | "dismiss" | "snooze";
 
-const ACTION_BUTTONS: { action: ActionKind; label: string; classes: string }[] = [
-  { action: "approve", label: "Approve", classes: "bg-green-800/70 hover:bg-green-700 text-green-200" },
-  { action: "redirect", label: "Redirect", classes: "bg-blue-800/70 hover:bg-blue-700 text-blue-200" },
-  { action: "close", label: "Close", classes: "bg-gray-700/70 hover:bg-gray-600 text-gray-300" },
-  { action: "snooze", label: "Snooze", classes: "bg-amber-800/70 hover:bg-amber-700 text-amber-200" },
+const ACTION_BUTTONS: {
+  action: ActionKind;
+  label: string;
+  classes: string;
+  tooltip: string;
+  primary?: boolean;
+}[] = [
+  {
+    action: "unblock",
+    label: "Unblock",
+    classes: "bg-blue-700/80 hover:bg-blue-600 text-blue-100",
+    tooltip: "Unblock the agent \u2014 your reply lets them continue",
+    primary: true,
+  },
+  {
+    action: "done",
+    label: "Done",
+    classes: "bg-green-800/70 hover:bg-green-700 text-green-200",
+    tooltip: "Mark as complete \u2014 work is finished or approved",
+  },
+  {
+    action: "dismiss",
+    label: "Dismiss",
+    classes: "bg-gray-700/70 hover:bg-gray-600 text-gray-300",
+    tooltip: "Dismiss \u2014 not relevant or a false positive",
+  },
+  {
+    action: "snooze",
+    label: "Snooze",
+    classes: "bg-amber-800/70 hover:bg-amber-700 text-amber-200",
+    tooltip: "Snooze for 1 hour \u2014 revisit later",
+  },
 ];
 
-export default function WorkItemCard({ item }: WorkItemCardProps): JSX.Element {
+/** Map new action names to server-side action values */
+function toServerAction(action: ActionKind): string {
+  switch (action) {
+    case "done": return "approve";
+    case "unblock": return "redirect";
+    case "dismiss": return "close";
+    case "snooze": return "snooze";
+  }
+}
+
+/** First letter avatar fallback */
+function AvatarFallback({ name }: { name: string }) {
+  const initial = name.charAt(0).toUpperCase();
+  return (
+    <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-gray-700 text-xs font-semibold text-gray-300">
+      {initial}
+    </span>
+  );
+}
+
+export default function WorkItemCard({ item, platformMeta, userMap, mentionables, onActioned, onSelect }: WorkItemCardProps): JSX.Element {
   const { workItem, latestEvent, agent, thread } = item;
   const [acting, setActing] = useState<ActionKind | null>(null);
+  const [sending, setSending] = useState(false);
+  const [done, setDone] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  // Pending reply text set by MentionInput's onSubmit (Enter key = reply-only)
+  // Action buttons read and clear this via a ref to avoid stale closures
+  const pendingReply = useRef("");
+
+  // Pick the right mention serializer based on platform
+  const serializeMention = thread?.platform === "slack" ? slackSerializeMention : (id: string) => `@${id}`;
 
   async function handleAction(action: ActionKind) {
     setActing(action);
+    setError(null);
     try {
-      await postAction(
-        workItem.id,
-        action,
-        undefined,
-        action === "snooze" ? 3600 : undefined,
-      );
-    } catch {
-      // Silently fail for now — the item will remain in the inbox
+      const message = pendingReply.current || undefined;
+      await postAction(workItem.id, toServerAction(action), message, action === "snooze" ? 3600 : undefined);
+      pendingReply.current = "";
+      setDone(true);
+      onActioned?.();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Action failed");
     } finally {
       setActing(null);
     }
   }
 
-  const workItemLabel = workItem.id;
-  const workItemUrl = workItem.url;
+  async function handleReplySubmit(serializedText: string) {
+    if (!serializedText || !thread) return;
+    setSending(true);
+    setError(null);
+    try {
+      await postReply(thread.id, thread.channelId, serializedText);
+      pendingReply.current = "";
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Reply failed");
+    } finally {
+      setSending(false);
+    }
+  }
+
+  // Fade out after action
+  if (done) {
+    return (
+      <div className="rounded border border-gray-800 bg-gray-900/50 p-4 opacity-40 transition-opacity duration-300">
+        <p className="text-sm text-gray-500 text-center">Done</p>
+      </div>
+    );
+  }
+
+  const busy = acting !== null || sending;
 
   return (
-    <div className="rounded border border-gray-800 bg-gray-900 p-4">
-      {/* Top row: ID + agent + time + status */}
+    <div
+      className="rounded border border-gray-800 bg-gray-900 p-4 cursor-pointer hover:border-gray-700 transition-colors"
+      onClick={() => onSelect?.(workItem.id)}
+    >
+      {/* Top row: ID + channel + time + status */}
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2 flex-wrap">
-            {workItemUrl ? (
-              <a
-                href={workItemUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="font-mono text-sm font-semibold text-blue-400 hover:underline"
+            {/* Work item ID — links to external tracker */}
+            {workItem.url ? (
+              <button
+                type="button"
+                onClick={() => openExternalUrl(workItem.url!)}
+                className="font-mono text-sm font-semibold text-blue-400 hover:underline cursor-pointer"
               >
-                {workItemLabel}
-              </a>
+                {workItem.id}
+              </button>
             ) : (
               <span className="font-mono text-sm font-semibold text-gray-200">
-                {workItemLabel}
+                {workItem.id}
               </span>
             )}
-            {agent && (
-              <span className="text-xs text-gray-400">
-                {agent.name}
-              </span>
+
+            {/* Channel label — platform-aware */}
+            {thread?.channelName && (
+              <ChannelLabel thread={thread} platformMeta={platformMeta} />
             )}
-            <span className="font-mono text-xs text-gray-500">
+
+            {/* Timestamp — no font-mono to avoid wide spacing */}
+            <span className="text-xs text-gray-500">
               {timeAgo(latestEvent.timestamp)}
             </span>
           </div>
@@ -77,29 +169,63 @@ export default function WorkItemCard({ item }: WorkItemCardProps): JSX.Element {
         <StatusBadge status={latestEvent.status} />
       </div>
 
-      {/* Message text — truncated to 2 lines */}
-      <p className="mt-2 text-sm text-gray-300 line-clamp-2 leading-relaxed">
-        {latestEvent.rawText}
-      </p>
-
-      {/* Action buttons */}
-      <div className="mt-3 flex items-center gap-2">
-        {ACTION_BUTTONS.map(({ action, label, classes }) => (
-          <button
-            key={action}
-            onClick={() => handleAction(action)}
-            disabled={acting !== null}
-            className={`rounded px-2.5 py-1 text-xs font-medium disabled:opacity-40 disabled:cursor-not-allowed ${classes}`}
-          >
-            {acting === action ? "..." : label}
-          </button>
-        ))}
+      {/* Message bubble — darker background for visual separation */}
+      <div className="mt-3 rounded-lg bg-gray-950 border border-gray-800/60 px-3.5 py-3">
+        <div className="flex gap-3">
+          {agent && (
+            <div className="shrink-0 pt-0.5">
+              {agent.avatarUrl ? (
+                <img src={agent.avatarUrl} alt={agent.name} className="h-7 w-7 rounded-full" />
+              ) : (
+                <AvatarFallback name={agent.name} />
+              )}
+            </div>
+          )}
+          <div className="min-w-0 flex-1">
+            {agent && (
+              <span className="text-xs font-medium text-gray-400">{agent.name}</span>
+            )}
+            <div className="mt-0.5 text-sm text-gray-300 leading-relaxed whitespace-pre-wrap break-words">
+              <MessageRenderer
+                platform={thread?.platform ?? "unknown"}
+                text={latestEvent.rawText}
+                userMap={userMap}
+              />
+            </div>
+          </div>
+        </div>
       </div>
 
-      {/* Reply bar */}
-      {thread && (
-        <ReplyBar threadId={thread.id} channelId={thread.channelId} />
-      )}
+      {/* Reply input + action buttons */}
+      <div className="mt-3 space-y-2" onClick={(e) => e.stopPropagation()}>
+        {thread && (
+          <MentionInput
+            placeholder="Reply (type @ to mention). Enter sends, or click an action below."
+            disabled={busy}
+            mentionables={mentionables}
+            serializeMention={serializeMention}
+            onSubmit={handleReplySubmit}
+          />
+        )}
+
+        <div className="flex items-center gap-2 flex-wrap">
+
+          {/* Action buttons */}
+          {ACTION_BUTTONS.map(({ action, label, classes, tooltip, primary }) => (
+            <Tooltip key={action} text={tooltip}>
+              <button
+                onClick={() => handleAction(action)}
+                disabled={busy}
+                className={`cursor-pointer rounded px-2.5 py-1 text-xs font-medium disabled:opacity-40 disabled:cursor-not-allowed ${classes} ${primary ? "px-3.5" : ""}`}
+              >
+                {acting === action ? "..." : label}
+              </button>
+            </Tooltip>
+          ))}
+        </div>
+
+        {error && <p className="text-xs text-red-400">{error}</p>}
+      </div>
     </div>
   );
 }

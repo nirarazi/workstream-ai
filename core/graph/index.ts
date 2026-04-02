@@ -18,6 +18,7 @@ import type {
   EnrichmentRow,
   EventRow,
   PollCursorRow,
+  SummaryRow,
   ThreadRow,
   WorkItemRow,
 } from "./schema.js";
@@ -47,6 +48,7 @@ function toThread(row: ThreadRow): Thread {
     id: row.id,
     channelId: row.channel_id,
     channelName: row.channel_name,
+    platformMeta: row.platform_meta ? JSON.parse(row.platform_meta) : undefined,
     platform: row.platform,
     workItemId: row.work_item_id,
     lastActivity: row.last_activity,
@@ -78,6 +80,7 @@ function toAgent(row: AgentRow): Agent {
     platform: row.platform,
     platformUserId: row.platform_user_id,
     role: row.role,
+    avatarUrl: row.avatar_url,
     firstSeen: row.first_seen,
     lastSeen: row.last_seen,
   };
@@ -101,6 +104,15 @@ function toPollCursor(row: PollCursorRow): PollCursor {
   };
 }
 
+function toSummary(row: SummaryRow): { workItemId: string; summaryText: string; generatedAt: string; latestEventId: string } {
+  return {
+    workItemId: row.work_item_id,
+    summaryText: row.summary_text,
+    generatedAt: row.generated_at,
+    latestEventId: row.latest_event_id,
+  };
+}
+
 export class ContextGraph {
   private db: Database;
 
@@ -116,21 +128,23 @@ export class ContextGraph {
     platform: string;
     platformUserId: string;
     role?: string | null;
+    avatarUrl?: string | null;
   }): Agent {
     const now = new Date().toISOString();
     const id = agent.id ?? randomUUID();
 
     const stmt = this.db.db.prepare(`
-      INSERT INTO agents (id, name, platform, platform_user_id, role, first_seen, last_seen)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO agents (id, name, platform, platform_user_id, role, avatar_url, first_seen, last_seen)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         name = excluded.name,
         platform = excluded.platform,
         platform_user_id = excluded.platform_user_id,
         role = COALESCE(excluded.role, agents.role),
+        avatar_url = COALESCE(excluded.avatar_url, agents.avatar_url),
         last_seen = excluded.last_seen
     `);
-    stmt.run(id, agent.name, agent.platform, agent.platformUserId, agent.role ?? null, now, now);
+    stmt.run(id, agent.name, agent.platform, agent.platformUserId, agent.role ?? null, agent.avatarUrl ?? null, now, now);
     log.debug("Upserted agent", id);
 
     return this.getAgentById(id)!;
@@ -210,6 +224,7 @@ export class ContextGraph {
     id: string;
     channelId: string;
     channelName?: string;
+    platformMeta?: Record<string, unknown>;
     platform: string;
     workItemId?: string | null;
     lastActivity?: string;
@@ -218,11 +233,12 @@ export class ContextGraph {
     const now = new Date().toISOString();
 
     const stmt = this.db.db.prepare(`
-      INSERT INTO threads (id, channel_id, channel_name, platform, work_item_id, last_activity, message_count)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO threads (id, channel_id, channel_name, platform_meta, platform, work_item_id, last_activity, message_count)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         channel_id = excluded.channel_id,
         channel_name = CASE WHEN excluded.channel_name = '' THEN threads.channel_name ELSE excluded.channel_name END,
+        platform_meta = excluded.platform_meta,
         platform = excluded.platform,
         work_item_id = COALESCE(excluded.work_item_id, threads.work_item_id),
         last_activity = excluded.last_activity,
@@ -232,6 +248,7 @@ export class ContextGraph {
       thread.id,
       thread.channelId,
       thread.channelName ?? "",
+      JSON.stringify(thread.platformMeta ?? {}),
       thread.platform,
       thread.workItemId ?? null,
       thread.lastActivity ?? now,
@@ -374,6 +391,31 @@ export class ContextGraph {
     return this.getPollCursor(channelId)!;
   }
 
+  // --- Summaries ---
+
+  getSummary(workItemId: string): { workItemId: string; summaryText: string; generatedAt: string; latestEventId: string } | null {
+    const row = this.db.db
+      .prepare("SELECT * FROM summaries WHERE work_item_id = ?")
+      .get(workItemId) as SummaryRow | undefined;
+    return row ? toSummary(row) : null;
+  }
+
+  upsertSummary(summary: {
+    workItemId: string;
+    summaryText: string;
+    latestEventId: string;
+  }): void {
+    const now = new Date().toISOString();
+    this.db.db.prepare(`
+      INSERT INTO summaries (work_item_id, summary_text, generated_at, latest_event_id)
+      VALUES (?, ?, ?, ?)
+      ON CONFLICT(work_item_id) DO UPDATE SET
+        summary_text = excluded.summary_text,
+        generated_at = excluded.generated_at,
+        latest_event_id = excluded.latest_event_id
+    `).run(summary.workItemId, summary.summaryText, now, summary.latestEventId);
+  }
+
   // --- Actionable Items ---
 
   getActionableItems(): ActionableItem[] {
@@ -388,8 +430,10 @@ export class ContextGraph {
         e.raw_text AS e_raw_text, e.timestamp AS e_timestamp, e.created_at AS e_created_at,
         a.id AS a_id, a.name AS a_name, a.platform AS a_platform,
         a.platform_user_id AS a_platform_user_id, a.role AS a_role,
+        a.avatar_url AS a_avatar_url,
         a.first_seen AS a_first_seen, a.last_seen AS a_last_seen,
         t.id AS t_id, t.channel_id AS t_channel_id, t.channel_name AS t_channel_name,
+        t.platform_meta AS t_platform_meta,
         t.platform AS t_platform, t.work_item_id AS t_work_item_id,
         t.last_activity AS t_last_activity, t.message_count AS t_message_count
       FROM work_items wi
@@ -429,8 +473,10 @@ export class ContextGraph {
         e.raw_text AS e_raw_text, e.timestamp AS e_timestamp, e.created_at AS e_created_at,
         a.id AS a_id, a.name AS a_name, a.platform AS a_platform,
         a.platform_user_id AS a_platform_user_id, a.role AS a_role,
+        a.avatar_url AS a_avatar_url,
         a.first_seen AS a_first_seen, a.last_seen AS a_last_seen,
         t.id AS t_id, t.channel_id AS t_channel_id, t.channel_name AS t_channel_name,
+        t.platform_meta AS t_platform_meta,
         t.platform AS t_platform, t.work_item_id AS t_work_item_id,
         t.last_activity AS t_last_activity, t.message_count AS t_message_count
       FROM work_items wi
@@ -489,6 +535,7 @@ function mapActionableRow(row: Record<string, unknown>): ActionableItem {
         platform: row.a_platform as string,
         platformUserId: row.a_platform_user_id as string,
         role: row.a_role as string | null,
+        avatarUrl: (row.a_avatar_url as string | null) ?? null,
         firstSeen: row.a_first_seen as string,
         lastSeen: row.a_last_seen as string,
       }
@@ -499,6 +546,7 @@ function mapActionableRow(row: Record<string, unknown>): ActionableItem {
         id: row.t_id as string,
         channelId: row.t_channel_id as string,
         channelName: row.t_channel_name as string,
+        platformMeta: row.t_platform_meta ? JSON.parse(row.t_platform_meta as string) : undefined,
         platform: row.t_platform as string,
         workItemId: row.t_work_item_id as string | null,
         lastActivity: row.t_last_activity as string,
