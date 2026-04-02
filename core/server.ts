@@ -17,6 +17,7 @@ import type { TaskAdapter } from "./adapters/tasks/interface.js";
 import { createRateLimiter, type RateLimiter } from "./rate-limiter.js";
 import { Summarizer } from "./summarizer/index.js";
 import { detectAnomalies, type FleetItemInput } from "./graph/anomalies.js";
+import { Sidekick, type SidekickMessage } from "./sidekick/index.js";
 
 const log = createLogger("server");
 
@@ -189,6 +190,35 @@ export function createApp(state: EngineState): Hono {
     });
 
     return c.json({ items: enrichedItems });
+  });
+
+  // --- POST /api/sidekick ---
+  app.post("/api/sidekick", async (c) => {
+    const body = await c.req.json<{
+      question?: string;
+      history?: SidekickMessage[];
+    }>();
+
+    if (!body.question) {
+      return c.json({ error: "Missing required field: question" }, 400);
+    }
+
+    const sidekickConfig = (state.config as any).sidekick ?? {
+      enabled: true,
+      maxToolCalls: 5,
+      maxHistoryTurns: 10,
+    };
+
+    const { baseUrl, model, apiKey } = state.config.classifier.provider;
+    const sidekick = new Sidekick(
+      { baseUrl, model, apiKey, maxToolCalls: sidekickConfig.maxToolCalls },
+      state.graph,
+    );
+
+    const history = (body.history ?? []).slice(-sidekickConfig.maxHistoryTurns);
+    const result = await sidekick.ask(body.question, history);
+
+    return c.json(result);
   });
 
   // --- GET /api/agents ---

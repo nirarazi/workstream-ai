@@ -260,6 +260,26 @@ export function fetchFleet(): Promise<{ items: FleetItem[] }> {
   return apiFetch("/api/fleet");
 }
 
+export interface SidekickMessage {
+  role: "user" | "assistant";
+  content: string;
+}
+
+export interface SidekickResult {
+  answer: string;
+  sources: Array<{ tool: string; args: Record<string, unknown>; result: string }>;
+}
+
+export function askSidekick(
+  question: string,
+  history: SidekickMessage[],
+): Promise<SidekickResult> {
+  return apiFetch("/api/sidekick", {
+    method: "POST",
+    body: JSON.stringify({ question, history }),
+  });
+}
+
 export function postSetup(config: SetupConfig): Promise<{ ok: boolean }> {
   return apiFetch("/api/setup", {
     method: "POST",
