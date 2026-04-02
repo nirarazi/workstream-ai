@@ -72,6 +72,15 @@ const ConfigSchema = z.object({
     staleThresholdHours: 4,
     silentAgentThresholdHours: 2,
   }),
+  sidekick: z.object({
+    enabled: z.boolean(),
+    maxToolCalls: z.number(),
+    maxHistoryTurns: z.number(),
+  }).optional().default({
+    enabled: true,
+    maxToolCalls: 5,
+    maxHistoryTurns: 10,
+  }),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;

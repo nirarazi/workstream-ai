@@ -416,6 +416,61 @@ export class ContextGraph {
     `).run(summary.workItemId, summary.summaryText, now, summary.latestEventId);
   }
 
+  // --- Sidekick query methods ---
+
+  searchWorkItems(query: string): WorkItem[] {
+    const pattern = `%${query}%`;
+    const rows = this.db.db
+      .prepare("SELECT * FROM work_items WHERE id LIKE ? OR title LIKE ? ORDER BY updated_at DESC LIMIT 20")
+      .all(pattern, pattern) as WorkItemRow[];
+    return rows.map(toWorkItem);
+  }
+
+  getWorkItemsByAgent(agentId: string): WorkItem[] {
+    const rows = this.db.db
+      .prepare(`
+        SELECT DISTINCT wi.* FROM work_items wi
+        INNER JOIN events e ON e.work_item_id = wi.id
+        WHERE e.agent_id = ?
+        ORDER BY wi.updated_at DESC
+        LIMIT 20
+      `)
+      .all(agentId) as WorkItemRow[];
+    return rows.map(toWorkItem);
+  }
+
+  getEventsSince(since: Date): Event[] {
+    const rows = this.db.db
+      .prepare("SELECT * FROM events WHERE timestamp >= ? ORDER BY timestamp ASC LIMIT 100")
+      .all(since.toISOString()) as EventRow[];
+    return rows.map(toEvent);
+  }
+
+  getAgentByName(name: string): Agent | null {
+    const row = this.db.db
+      .prepare("SELECT * FROM agents WHERE name LIKE ? LIMIT 1")
+      .get(`%${name}%`) as AgentRow | undefined;
+    return row ? toAgent(row) : null;
+  }
+
+  getFleetStats(): Record<string, number> {
+    const rows = this.db.db
+      .prepare(`
+        SELECT current_atc_status AS status, COUNT(*) AS count
+        FROM work_items
+        GROUP BY current_atc_status
+      `)
+      .all() as Array<{ status: string | null; count: number }>;
+
+    const stats: Record<string, number> = { total: 0 };
+    for (const row of rows) {
+      const key = row.status ?? "unknown";
+      stats[key] = row.count;
+      stats.total += row.count;
+    }
+    return stats;
+  }
+
   // --- Actionable Items ---
 
   getFleetItems(): ActionableItem[] {

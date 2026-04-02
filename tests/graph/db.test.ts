@@ -461,4 +461,85 @@ describe("Database", () => {
       expect(items).toHaveLength(3);
     });
   });
+
+  describe("sidekick query methods", () => {
+    beforeEach(() => {
+      graph.upsertAgent({ id: "a1", name: "Byte", platform: "slack", platformUserId: "U1" });
+      graph.upsertAgent({ id: "a2", name: "Pixel", platform: "slack", platformUserId: "U2" });
+
+      graph.upsertWorkItem({ id: "AI-100", source: "jira", title: "Fix login bug", currentAtcStatus: "in_progress" });
+      graph.upsertWorkItem({ id: "AI-200", source: "jira", title: "Add dark mode", currentAtcStatus: "blocked_on_human" });
+      graph.upsertWorkItem({ id: "AI-300", source: "jira", title: "Update API docs", currentAtcStatus: "completed" });
+
+      graph.upsertThread({ id: "t1", channelId: "C1", platform: "slack", workItemId: "AI-100" });
+      graph.upsertThread({ id: "t2", channelId: "C1", platform: "slack", workItemId: "AI-200" });
+      graph.upsertThread({ id: "t3", channelId: "C1", platform: "slack", workItemId: "AI-300" });
+
+      graph.insertEvent({
+        threadId: "t1", messageId: "m1", workItemId: "AI-100", agentId: "a1",
+        status: "in_progress", confidence: 0.9, rawText: "Working on login fix",
+        timestamp: "2026-04-01T08:00:00Z",
+      });
+      graph.insertEvent({
+        threadId: "t2", messageId: "m2", workItemId: "AI-200", agentId: "a2",
+        status: "blocked_on_human", confidence: 0.95, rawText: "Need approval for design",
+        timestamp: "2026-04-01T09:00:00Z",
+      });
+      graph.insertEvent({
+        threadId: "t3", messageId: "m3", workItemId: "AI-300", agentId: "a1",
+        status: "completed", confidence: 0.9, rawText: "Docs updated",
+        timestamp: "2026-04-01T10:00:00Z",
+      });
+    });
+
+    it("searchWorkItems finds by ID", () => {
+      const results = graph.searchWorkItems("AI-100");
+      expect(results).toHaveLength(1);
+      expect(results[0].id).toBe("AI-100");
+    });
+
+    it("searchWorkItems finds by title substring", () => {
+      const results = graph.searchWorkItems("login");
+      expect(results).toHaveLength(1);
+      expect(results[0].title).toContain("login");
+    });
+
+    it("searchWorkItems returns empty for no match", () => {
+      const results = graph.searchWorkItems("nonexistent");
+      expect(results).toHaveLength(0);
+    });
+
+    it("getWorkItemsByAgent returns items for a specific agent", () => {
+      const results = graph.getWorkItemsByAgent("a1");
+      expect(results.length).toBeGreaterThanOrEqual(1);
+      const ids = results.map((r) => r.id);
+      expect(ids).toContain("AI-100");
+    });
+
+    it("getEventsSince returns events after a date", () => {
+      const since = new Date("2026-04-01T08:30:00Z");
+      const results = graph.getEventsSince(since);
+      expect(results).toHaveLength(2); // m2 and m3
+      expect(results[0].timestamp >= since.toISOString()).toBe(true);
+    });
+
+    it("getAgentByName finds by case-insensitive name", () => {
+      const agent = graph.getAgentByName("byte");
+      expect(agent).not.toBeNull();
+      expect(agent!.name).toBe("Byte");
+    });
+
+    it("getAgentByName returns null for unknown name", () => {
+      const agent = graph.getAgentByName("UnknownBot");
+      expect(agent).toBeNull();
+    });
+
+    it("getFleetStats returns aggregate counts by status", () => {
+      const stats = graph.getFleetStats();
+      expect(stats.in_progress).toBe(1);
+      expect(stats.blocked_on_human).toBe(1);
+      expect(stats.completed).toBe(1);
+      expect(stats.total).toBe(3);
+    });
+  });
 });

@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback, type JSX } from "react";
 import { fetchSetupStatus, fetchStatus } from "./lib/api";
 import Inbox from "./components/Inbox";
 import FleetBoard from "./components/FleetBoard";
+import Sidekick from "./components/Sidekick";
 import Setup from "./components/Setup";
 
 type View = "loading" | "setup" | "inbox" | "fleet" | "settings";
@@ -11,6 +12,7 @@ function App(): JSX.Element {
   const [connected, setConnected] = useState(false);
   const [platformMeta, setPlatformMeta] = useState<Record<string, unknown>>({});
   const [retryVisible, setRetryVisible] = useState(false);
+  const [sidekickOpen, setSidekickOpen] = useState(false);
   const statusInterval = useRef<ReturnType<typeof setInterval> | null>(null);
   const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -58,6 +60,18 @@ function App(): JSX.Element {
       if (e.key === "," && (e.metaKey || e.ctrlKey)) {
         e.preventDefault();
         setView((v) => (v === "settings" ? "inbox" : "settings"));
+      }
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
+
+  // Cmd+K toggles sidekick
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === "k" && (e.metaKey || e.ctrlKey)) {
+        e.preventDefault();
+        setSidekickOpen((open) => !open);
       }
     }
     window.addEventListener("keydown", handleKeyDown);
@@ -163,6 +177,7 @@ function App(): JSX.Element {
           <Setup onComplete={() => { init(); setView("inbox"); }} />
         )}
       </main>
+      {sidekickOpen && <Sidekick onClose={() => setSidekickOpen(false)} />}
     </div>
   );
 }
