@@ -389,6 +389,40 @@ describe("Database", () => {
     });
   });
 
+  describe("getFleetItems", () => {
+    it("returns all non-completed work items with latest event and agent", () => {
+      graph.upsertAgent({ id: "a1", name: "Byte", platform: "slack", platformUserId: "U1" });
+      graph.upsertWorkItem({ id: "AI-1", source: "jira", title: "Active task", currentAtcStatus: "in_progress" });
+      graph.upsertWorkItem({ id: "AI-2", source: "jira", title: "Done task", currentAtcStatus: "completed" });
+      graph.upsertWorkItem({ id: "AI-3", source: "jira", title: "Blocked task", currentAtcStatus: "blocked_on_human" });
+
+      graph.upsertThread({ id: "t1", channelId: "C1", platform: "slack", workItemId: "AI-1" });
+      graph.upsertThread({ id: "t2", channelId: "C1", platform: "slack", workItemId: "AI-2" });
+      graph.upsertThread({ id: "t3", channelId: "C1", platform: "slack", workItemId: "AI-3" });
+
+      graph.insertEvent({ threadId: "t1", messageId: "m1", workItemId: "AI-1", agentId: "a1", status: "in_progress", confidence: 0.9, timestamp: "2026-04-01T08:00:00Z" });
+      graph.insertEvent({ threadId: "t2", messageId: "m2", workItemId: "AI-2", agentId: "a1", status: "completed", confidence: 0.95, timestamp: "2026-04-01T09:00:00Z" });
+      graph.insertEvent({ threadId: "t3", messageId: "m3", workItemId: "AI-3", agentId: "a1", status: "blocked_on_human", confidence: 0.9, timestamp: "2026-04-01T10:00:00Z" });
+
+      const items = graph.getFleetItems();
+
+      // Should exclude completed
+      expect(items).toHaveLength(2);
+      const ids = items.map((i) => i.workItem.id);
+      expect(ids).toContain("AI-1");
+      expect(ids).toContain("AI-3");
+      expect(ids).not.toContain("AI-2");
+    });
+
+    it("returns items with no events (newly created work items)", () => {
+      graph.upsertWorkItem({ id: "AI-1", source: "jira", title: "New task", currentAtcStatus: "in_progress" });
+
+      const items = graph.getFleetItems();
+      expect(items).toHaveLength(1);
+      expect(items[0].workItem.id).toBe("AI-1");
+    });
+  });
+
   describe("getRecentItems", () => {
     it("returns most recently updated items", () => {
       graph.upsertWorkItem({ id: "AI-1", source: "jira", currentAtcStatus: "completed" });

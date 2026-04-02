@@ -418,6 +418,51 @@ export class ContextGraph {
 
   // --- Actionable Items ---
 
+  getFleetItems(): ActionableItem[] {
+    const rows = this.db.db
+      .prepare(
+        `
+      SELECT
+        wi.*,
+        e.id AS e_id, e.thread_id AS e_thread_id, e.message_id AS e_message_id,
+        e.work_item_id AS e_work_item_id, e.agent_id AS e_agent_id,
+        e.status AS e_status, e.confidence AS e_confidence, e.reason AS e_reason,
+        e.raw_text AS e_raw_text, e.timestamp AS e_timestamp, e.created_at AS e_created_at,
+        a.id AS a_id, a.name AS a_name, a.platform AS a_platform,
+        a.platform_user_id AS a_platform_user_id, a.role AS a_role,
+        a.avatar_url AS a_avatar_url,
+        a.first_seen AS a_first_seen, a.last_seen AS a_last_seen,
+        t.id AS t_id, t.channel_id AS t_channel_id, t.channel_name AS t_channel_name,
+        t.platform_meta AS t_platform_meta,
+        t.platform AS t_platform, t.work_item_id AS t_work_item_id,
+        t.last_activity AS t_last_activity, t.message_count AS t_message_count
+      FROM work_items wi
+      LEFT JOIN events e ON e.work_item_id = wi.id
+        AND e.id = (
+          SELECT e2.id FROM events e2
+          WHERE e2.work_item_id = wi.id
+          ORDER BY e2.timestamp DESC
+          LIMIT 1
+        )
+      LEFT JOIN agents a ON e.agent_id = a.id
+      LEFT JOIN threads t ON e.thread_id = t.id
+      WHERE wi.current_atc_status IS NULL
+         OR wi.current_atc_status != 'completed'
+      ORDER BY
+        CASE wi.current_atc_status
+          WHEN 'blocked_on_human' THEN 0
+          WHEN 'needs_decision' THEN 1
+          WHEN 'in_progress' THEN 2
+          ELSE 3
+        END,
+        wi.updated_at DESC
+    `,
+      )
+      .all() as Array<Record<string, unknown>>;
+
+    return rows.map(mapActionableRow);
+  }
+
   getActionableItems(): ActionableItem[] {
     const rows = this.db.db
       .prepare(

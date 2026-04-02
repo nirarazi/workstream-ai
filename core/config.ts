@@ -65,6 +65,13 @@ const ConfigSchema = z.object({
       "Need more info before deciding",
     ],
   }),
+  anomalies: z.object({
+    staleThresholdHours: z.number(),
+    silentAgentThresholdHours: z.number(),
+  }).optional().default({
+    staleThresholdHours: 4,
+    silentAgentThresholdHours: 2,
+  }),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;
