@@ -16,6 +16,7 @@ import type { PlatformAdapter } from "./adapters/platforms/interface.js";
 import type { TaskAdapter } from "./adapters/tasks/interface.js";
 import { createRateLimiter, type RateLimiter } from "./rate-limiter.js";
 import { Summarizer } from "./summarizer/index.js";
+import { detectAnomalies, type FleetItemInput } from "./graph/anomalies.js";
 
 const log = createLogger("server");
 
@@ -152,6 +153,42 @@ export function createApp(state: EngineState): Hono {
     });
 
     return c.json({ summary });
+  });
+
+  // --- GET /api/fleet ---
+  app.get("/api/fleet", (c) => {
+    const items = state.graph.getFleetItems();
+
+    // Build fleet inputs for anomaly detection
+    const fleetInputs: FleetItemInput[] = items.map((item) => {
+      const events = state.graph.getEventsForWorkItem(item.workItem.id);
+      return {
+        workItemId: item.workItem.id,
+        currentAtcStatus: item.workItem.currentAtcStatus,
+        latestEventTimestamp: item.latestEvent?.timestamp ?? item.workItem.updatedAt,
+        agentLastSeen: item.agent?.lastSeen ?? null,
+        eventStatuses: events.map((e) => e.status),
+        title: item.workItem.title,
+      };
+    });
+
+    const anomalyConfig = (state.config as any).anomalies ?? {
+      staleThresholdHours: 4,
+      silentAgentThresholdHours: 2,
+    };
+
+    const now = new Date();
+    const enrichedItems = items.map((item, idx) => {
+      const anomalies = detectAnomalies(
+        fleetInputs[idx],
+        fleetInputs.filter((_, i) => i !== idx),
+        anomalyConfig,
+        now,
+      );
+      return { ...item, anomalies };
+    });
+
+    return c.json({ items: enrichedItems });
   });
 
   // --- GET /api/agents ---

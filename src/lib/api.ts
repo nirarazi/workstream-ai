@@ -247,6 +247,19 @@ export function generateSummary(id: string): Promise<{ summary: string }> {
   });
 }
 
+export interface AnomalyFlag {
+  type: "stale" | "silent_agent" | "status_regression" | "duplicate_work";
+  message: string;
+}
+
+export interface FleetItem extends ActionableItem {
+  anomalies: AnomalyFlag[];
+}
+
+export function fetchFleet(): Promise<{ items: FleetItem[] }> {
+  return apiFetch("/api/fleet");
+}
+
 export function postSetup(config: SetupConfig): Promise<{ ok: boolean }> {
   return apiFetch("/api/setup", {
     method: "POST",

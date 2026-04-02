@@ -61,3 +61,7 @@ quickReplies:
     - "Go with option A"
     - "Go with option B"
     - "Need more info before deciding"
+
+anomalies:
+  staleThresholdHours: 4
+  silentAgentThresholdHours: 2

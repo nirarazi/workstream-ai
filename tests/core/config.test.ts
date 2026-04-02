@@ -166,4 +166,12 @@ slack:
     expect(config.quickReplies.blocked_on_human).toBeInstanceOf(Array);
     expect(config.quickReplies.blocked_on_human.length).toBeGreaterThan(0);
   });
+
+  it("loads anomaly thresholds config", () => {
+    const projectRoot = resolve(import.meta.dirname, "../..");
+    const config = loadConfig(projectRoot);
+    expect(config.anomalies).toBeDefined();
+    expect(config.anomalies.staleThresholdHours).toBe(4);
+    expect(config.anomalies.silentAgentThresholdHours).toBe(2);
+  });
 });
