@@ -279,7 +279,7 @@ export class Pipeline {
       if (existing) {
         const shouldUpdate =
           !existing.currentConfidence ||
-          classification.confidence > existing.currentConfidence;
+          classification.confidence >= existing.currentConfidence;
 
         if (shouldUpdate) {
           this.graph.upsertWorkItem({
