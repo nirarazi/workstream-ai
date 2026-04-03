@@ -8,7 +8,7 @@ import Setup from "./components/Setup";
 type View = "loading" | "setup" | "inbox" | "fleet" | "settings";
 type DotStatus = "ok" | "degraded" | "disconnected";
 
-const DEFAULT_SERVICES: ServiceStatuses = { slack: "disconnected", jira: "disconnected", llm: "disconnected" };
+const DEFAULT_SERVICES: ServiceStatuses = {};
 
 const DOT_CLASSES: Record<DotStatus, string> = {
   ok: "bg-green-500",
@@ -132,9 +132,9 @@ function App(): JSX.Element {
           {/* Service indicators */}
           <div data-tauri-drag-region className="flex items-center gap-3">
             <ServiceDot label="ATC" status={connected ? "ok" : "disconnected"} />
-            <ServiceDot label="Slack" status={connected ? services.slack : "disconnected"} />
-            <ServiceDot label="Jira" status={connected ? services.jira : "disconnected"} />
-            <ServiceDot label="LLM" status={connected ? services.llm : "disconnected"} />
+            {Object.entries(services).map(([name, status]) => (
+              <ServiceDot key={name} label={name} status={connected ? status : "disconnected"} />
+            ))}
           </div>
         </div>
       </header>
