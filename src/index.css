@@ -12,3 +12,28 @@
 .animate-slide-in-right {
   animation: slide-in-right 0.2s ease-out;
 }
+
+@keyframes shimmer {
+  0% {
+    background-position: 200% center;
+  }
+  100% {
+    background-position: -200% center;
+  }
+}
+
+.animate-shimmer {
+  background: linear-gradient(
+    90deg,
+    #e2e8f0 0%,
+    #c4b5fd 25%,
+    #a78bfa 50%,
+    #c4b5fd 75%,
+    #e2e8f0 100%
+  );
+  background-size: 200% auto;
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: shimmer 4s linear infinite;
+}
