@@ -159,7 +159,7 @@ export default function WorkItemCard({ item, platformMeta, userMap, mentionables
           <div className="flex items-center gap-2 flex-wrap">
             {/* Work item ID or title for inferred items */}
             {isInferred ? (
-              <span className="text-sm font-semibold text-gray-200">
+              <span className="text-sm font-semibold animate-shimmer">
                 {workItem.title || "Untitled conversation"}
               </span>
             ) : workItem.url ? (
