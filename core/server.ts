@@ -66,7 +66,7 @@ export function createApp(state: EngineState): Hono {
       services: {
         ...(state.platformAdapter ? { [state.platformAdapter.name]: "ok" as const } : {}),
         ...(state.taskAdapter ? { [state.taskAdapter.name]: "ok" as const } : {}),
-        llm: llmBackoff?.active ? "degraded" as const : "ok" as const,
+        LLM: llmBackoff?.active ? "degraded" as const : "ok" as const,
       },
       llmBackoff,
     });
