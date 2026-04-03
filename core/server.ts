@@ -64,8 +64,8 @@ export function createApp(state: EngineState): Hono {
         processed: state.processed,
       },
       services: {
-        slack: state.platformAdapter ? "ok" as const : "disconnected" as const,
-        jira: state.taskAdapter ? "ok" as const : "disconnected" as const,
+        ...(state.platformAdapter ? { [state.platformAdapter.name]: "ok" as const } : {}),
+        ...(state.taskAdapter ? { [state.taskAdapter.name]: "ok" as const } : {}),
         llm: llmBackoff?.active ? "degraded" as const : "ok" as const,
       },
       llmBackoff,

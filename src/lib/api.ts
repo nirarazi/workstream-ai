@@ -106,11 +106,8 @@ export interface LlmBackoff {
 
 export type ServiceStatus = "ok" | "degraded" | "disconnected";
 
-export interface ServiceStatuses {
-  slack: ServiceStatus;
-  jira: ServiceStatus;
-  llm: ServiceStatus;
-}
+/** Dynamic map of service name → status. Keys come from the server based on which adapters are loaded. */
+export type ServiceStatuses = Record<string, ServiceStatus>;
 
 export interface EngineStatus {
   ok: boolean;
