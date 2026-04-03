@@ -12,7 +12,8 @@ import type { WorkItemLinker } from "./graph/linker.js";
 const log = createLogger("pipeline");
 
 const DEFAULT_POLL_INTERVAL = 30;
-const DEFAULT_LOOKBACK_DAYS = 7;
+const DEFAULT_LOOKBACK_DAYS = 1;
+const DEFAULT_MAX_THREADS_PER_POLL = 50;
 
 export interface ProcessResult {
   processed: number;
@@ -102,7 +103,15 @@ export class Pipeline {
     // Track latest timestamp per channel for cursor updates
     const latestTimestamps = new Map<string, string>();
 
-    for (const thread of threads) {
+    // Cap threads per poll to avoid LLM call bursts
+    const maxThreads = this.config?.lookback?.maxThreadsPerPoll ?? DEFAULT_MAX_THREADS_PER_POLL;
+    const cappedThreads = maxThreads > 0 ? threads.slice(0, maxThreads) : threads;
+
+    if (threads.length > cappedThreads.length) {
+      log.info(`Capped threads from ${threads.length} to ${cappedThreads.length} (maxThreadsPerPoll=${maxThreads})`);
+    }
+
+    for (const thread of cappedThreads) {
       if (!thread.messages || thread.messages.length === 0) {
         continue;
       }
@@ -183,13 +192,26 @@ export class Pipeline {
       return earliest;
     }
 
-    // Default: 7 days ago
+    // Use configured lookback or default
+    const lookbackDays = this.config?.lookback?.initialDays ?? DEFAULT_LOOKBACK_DAYS;
     const fallback = new Date();
-    fallback.setDate(fallback.getDate() - DEFAULT_LOOKBACK_DAYS);
+    fallback.setDate(fallback.getDate() - lookbackDays);
     return fallback;
   }
 
   private async processMessageInternal(message: Message, thread: Thread): Promise<Classification> {
+    // Step 0: Skip if we've already processed this message (avoids duplicate LLM calls)
+    if (this.graph.hasEvent(message.id, thread.id)) {
+      log.debug("Skipping already-processed message", message.id);
+      const existing = this.graph.getEventByMessageId(message.id, thread.id)!;
+      return {
+        status: existing.status as Classification["status"],
+        confidence: existing.confidence,
+        reason: existing.reason,
+        workItemIds: existing.workItemId ? [existing.workItemId] : [],
+      };
+    }
+
     // Step 1: Link work items from message text
     const workItemIds = this.linker.linkMessage(message.text, thread.id);
 
@@ -205,6 +227,7 @@ export class Pipeline {
       name: message.userName,
       platform: message.platform,
       platformUserId: message.userId,
+      avatarUrl: message.userAvatarUrl ?? null,
     });
 
     // Step 4: Upsert thread in graph
@@ -212,6 +235,7 @@ export class Pipeline {
       id: thread.id,
       channelId: thread.channelId,
       channelName: thread.channelName,
+      platformMeta: thread.platformMeta,
       platform: thread.platform,
       workItemId: workItemIds.length > 0 ? workItemIds[0] : undefined,
       lastActivity: message.timestamp,
