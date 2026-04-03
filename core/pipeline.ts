@@ -209,6 +209,7 @@ export class Pipeline {
         confidence: existing.confidence,
         reason: existing.reason,
         workItemIds: existing.workItemId ? [existing.workItemId] : [],
+        title: "",
       };
     }
 
@@ -220,6 +221,21 @@ export class Pipeline {
 
     // Merge work item IDs from linker and classifier
     const allWorkItemIds = new Set([...workItemIds, ...classification.workItemIds]);
+
+    // Step 2b: If no work item IDs found and this isn't noise, create a synthetic work item
+    // keyed by thread ID so the conversation stays grouped under one item
+    if (allWorkItemIds.size === 0 && classification.status !== "noise") {
+      const syntheticId = `thread:${thread.id}`;
+      this.graph.upsertWorkItem({
+        id: syntheticId,
+        source: "inferred",
+        title: classification.title || "Untitled conversation",
+        currentAtcStatus: classification.status,
+        currentConfidence: classification.confidence,
+      });
+      allWorkItemIds.add(syntheticId);
+      log.debug("Created synthetic work item for unticketed thread", syntheticId, classification.title);
+    }
 
     // Step 3: Upsert agent
     const agent = this.graph.upsertAgent({
@@ -271,6 +287,8 @@ export class Pipeline {
             source: existing.source,
             currentAtcStatus: classification.status,
             currentConfidence: classification.confidence,
+            // Set LLM title if work item has no title yet (e.g. extracted IDs with no Jira enrichment)
+            ...(classification.title && !existing.title ? { title: classification.title } : {}),
           });
         }
       }

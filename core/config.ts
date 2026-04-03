@@ -32,6 +32,7 @@ const ConfigSchema = z.object({
     baseUrl: z.string().optional(),
     token: z.string().optional(),
     ticketPrefixes: z.array(z.string()),
+    defaultProject: z.string().optional(),
   }),
   extractors: z.object({
     ticketPatterns: z.array(z.string()),

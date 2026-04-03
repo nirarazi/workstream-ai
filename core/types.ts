@@ -12,6 +12,7 @@ export interface Classification {
   confidence: number;
   reason: string;
   workItemIds: string[];
+  title: string;
 }
 
 export interface Message {

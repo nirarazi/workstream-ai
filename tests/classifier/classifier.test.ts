@@ -151,6 +151,7 @@ describe("OpenAICompatibleProvider", () => {
       confidence: 0.95,
       reason: "Task done",
       workItemIds: ["AI-100"],
+      title: "Task completion",
     };
 
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
@@ -192,6 +193,7 @@ describe("OpenAICompatibleProvider", () => {
       confidence: 0.9,
       reason: "Needs approval",
       workItemIds: ["IT-200"],
+      title: "Approval needed",
     };
 
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
@@ -328,6 +330,7 @@ describe("OpenAICompatibleProvider", () => {
       confidence: 0.9,
       reason: "done",
       workItemIds: ["AI-1"],
+      title: "Task done",
     };
 
     const fetchSpy = vi.spyOn(globalThis, "fetch")

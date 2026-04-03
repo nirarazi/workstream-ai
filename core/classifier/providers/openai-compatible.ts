@@ -230,6 +230,8 @@ export class OpenAICompatibleProvider implements ModelProvider {
       ? (parsed.workItemIds.filter((id) => typeof id === "string") as string[])
       : [];
 
-    return { status, confidence, reason, workItemIds };
+    const title = typeof parsed.title === "string" ? parsed.title : "";
+
+    return { status, confidence, reason, workItemIds, title };
   }
 }

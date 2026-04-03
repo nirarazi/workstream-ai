@@ -259,16 +259,17 @@ export function createApp(state: EngineState): Hono {
   app.post("/api/action", async (c) => {
     const body = await c.req.json<{
       workItemId: string;
-      action: "approve" | "redirect" | "close" | "snooze";
+      action: "approve" | "redirect" | "close" | "snooze" | "create_ticket";
       message?: string;
       snoozeDuration?: number;
+      projectKey?: string;
     }>();
 
     if (!body.workItemId || !body.action) {
       return c.json({ ok: false, error: "Missing required fields: workItemId, action" }, 400);
     }
 
-    const validActions = new Set(["approve", "redirect", "close", "snooze"]);
+    const validActions = new Set(["approve", "redirect", "close", "snooze", "create_ticket"]);
     if (!validActions.has(body.action)) {
       return c.json({ ok: false, error: `Invalid action: ${body.action}` }, 400);
     }
@@ -308,6 +309,65 @@ export function createApp(state: EngineState): Hono {
             currentAtcStatus: "in_progress",
           });
           break;
+
+        case "create_ticket": {
+          if (!state.taskAdapter?.createWorkItem) {
+            return c.json({ ok: false, error: "No task adapter with ticket creation support" }, 400);
+          }
+          const projectKey = body.projectKey ?? state.config.jira?.defaultProject;
+          if (!projectKey) {
+            return c.json({ ok: false, error: "projectKey required (or set jira.defaultProject in config)" }, 400);
+          }
+          // Build description from conversation history
+          const events = state.graph.getEventsForWorkItem(body.workItemId);
+          const description = events
+            .slice(-5)
+            .map((e) => e.rawText)
+            .filter(Boolean)
+            .join("\n\n");
+
+          const ticket = await state.taskAdapter.createWorkItem({
+            title: workItem.title || "Untitled",
+            description,
+            projectKey,
+          });
+
+          // Relink: update the old synthetic work item's threads and events to point to the real ticket
+          const threads = state.graph.getThreadsForWorkItem(body.workItemId);
+          for (const t of threads) {
+            state.graph.upsertThread({
+              id: t.id,
+              channelId: t.channelId,
+              channelName: t.channelName,
+              platform: t.platform,
+              workItemId: ticket.id,
+              lastActivity: t.lastActivity,
+              messageCount: t.messageCount,
+            });
+          }
+
+          // Create the real work item
+          state.graph.upsertWorkItem({
+            id: ticket.id,
+            source: state.taskAdapter.name,
+            title: ticket.title,
+            externalStatus: ticket.status,
+            assignee: ticket.assignee,
+            url: ticket.url,
+            currentAtcStatus: workItem.currentAtcStatus,
+            currentConfidence: workItem.currentConfidence,
+          });
+
+          // Mark the synthetic work item as completed (superseded)
+          state.graph.upsertWorkItem({
+            id: body.workItemId,
+            source: workItem.source,
+            currentAtcStatus: "completed",
+          });
+
+          log.info("Created ticket from synthetic work item", body.workItemId, "→", ticket.id);
+          return c.json({ ok: true, ticketId: ticket.id, ticketUrl: ticket.url });
+        }
       }
 
       // If there's a message and a platform adapter, post it to the related thread

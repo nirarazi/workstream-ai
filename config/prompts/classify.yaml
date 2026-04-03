@@ -6,6 +6,7 @@ system: |
   - confidence: number between 0 and 1
   - reason: brief explanation of why you chose this status
   - workItemIds: array of work item IDs mentioned (e.g. "AI-382", "IT-100", "PR #716")
+  - title: a short descriptive title (5-8 words) summarizing the topic or task being discussed. This is used as the work item label when no ticket ID is found.
 
   ## Status Definitions
 
@@ -32,6 +33,7 @@ few_shot_examples:
       confidence: 0.95
       reason: "Agent confirms PR merged and deployed, explicitly moving to next task"
       workItemIds: ["AI-382", "AI-383"]
+      title: "PR merge and staging deployment"
 
   - role: user
     content: "Currently implementing the payment webhook handler for IT-205. About 60% done, should finish within the hour."
@@ -40,6 +42,7 @@ few_shot_examples:
       confidence: 0.9
       reason: "Agent providing progress update with estimated completion"
       workItemIds: ["IT-205"]
+      title: "Payment webhook handler implementation"
 
   - role: user
     content: "I've hit a permissions issue with the S3 bucket for AI-401. Need someone to update the IAM role with PutObject access for the reports bucket."
@@ -48,6 +51,7 @@ few_shot_examples:
       confidence: 0.95
       reason: "Agent blocked on infrastructure access that requires human intervention"
       workItemIds: ["AI-401"]
+      title: "S3 bucket IAM permissions issue"
 
   - role: user
     content: "For MS-112, I see two approaches: (A) Add a new endpoint /api/v2/reports with the updated schema, or (B) version the existing endpoint with a query parameter. Which should I go with?"
@@ -56,6 +60,7 @@ few_shot_examples:
       confidence: 0.95
       reason: "Agent presenting two options and explicitly asking for direction"
       workItemIds: ["MS-112"]
+      title: "Reports API versioning approach decision"
 
   - role: user
     content: "Good morning! Starting my shift. Will check overnight dispatch queue first."
@@ -64,3 +69,13 @@ few_shot_examples:
       confidence: 0.9
       reason: "Routine shift start message with no actionable content"
       workItemIds: []
+      title: "Morning shift start"
+
+  - role: user
+    content: "Hey, the staging database is running low on disk space. We should probably increase the volume size before it becomes a problem."
+    expected:
+      status: blocked_on_human
+      confidence: 0.85
+      reason: "Agent raising an infrastructure concern that needs human action"
+      workItemIds: []
+      title: "Staging database disk space low"
