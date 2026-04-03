@@ -290,10 +290,10 @@ export class ContextGraph {
     const now = new Date().toISOString();
 
     const stmt = this.db.db.prepare(`
-      INSERT INTO events (id, thread_id, message_id, work_item_id, agent_id, status, confidence, reason, raw_text, timestamp, created_at)
+      INSERT OR IGNORE INTO events (id, thread_id, message_id, work_item_id, agent_id, status, confidence, reason, raw_text, timestamp, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
-    stmt.run(
+    const result = stmt.run(
       id,
       event.threadId,
       event.messageId,
@@ -306,9 +306,31 @@ export class ContextGraph {
       event.timestamp,
       now,
     );
-    log.debug("Inserted event", id);
 
+    if (result.changes === 0) {
+      // Duplicate — return existing event
+      const existing = this.db.db.prepare(
+        "SELECT * FROM events WHERE message_id = ? AND thread_id = ?"
+      ).get(event.messageId, event.threadId) as EventRow;
+      return toEvent(existing);
+    }
+
+    log.debug("Inserted event", id);
     return this.getEventById(id)!;
+  }
+
+  hasEvent(messageId: string, threadId: string): boolean {
+    const row = this.db.db.prepare(
+      "SELECT 1 FROM events WHERE message_id = ? AND thread_id = ? LIMIT 1"
+    ).get(messageId, threadId);
+    return !!row;
+  }
+
+  getEventByMessageId(messageId: string, threadId: string): Event | null {
+    const row = this.db.db.prepare(
+      "SELECT * FROM events WHERE message_id = ? AND thread_id = ?"
+    ).get(messageId, threadId) as EventRow | undefined;
+    return row ? toEvent(row) : null;
   }
 
   getEventById(id: string): Event | null {

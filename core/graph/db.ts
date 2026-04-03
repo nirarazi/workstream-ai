@@ -152,6 +152,34 @@ export class Database {
       `);
       log.info(`Migration: fixed ${jiraApiUrlCount} Jira URLs from REST API to browse format`);
     }
+
+    // Deduplicate events: remove duplicate (message_id, thread_id) rows, keeping earliest
+    const dupCount = (
+      this.db.prepare(`
+        SELECT COUNT(*) AS n FROM events
+        WHERE id NOT IN (
+          SELECT MIN(id) FROM events GROUP BY message_id, thread_id
+        )
+      `).get() as { n: number }
+    ).n;
+    if (dupCount > 0) {
+      this.db.exec(`
+        DELETE FROM events
+        WHERE id NOT IN (
+          SELECT MIN(id) FROM events GROUP BY message_id, thread_id
+        )
+      `);
+      log.info(`Migration: removed ${dupCount} duplicate events`);
+    }
+
+    // Add unique constraint on (message_id, thread_id) to prevent future duplicates
+    const indices = this.db.prepare(
+      "SELECT name FROM sqlite_master WHERE type='index' AND name='idx_events_message_thread_unique'"
+    ).get() as { name: string } | undefined;
+    if (!indices) {
+      this.db.exec("CREATE UNIQUE INDEX idx_events_message_thread_unique ON events(message_id, thread_id)");
+      log.info("Migration: added unique index on events(message_id, thread_id)");
+    }
   }
 
   prepare<T>(sql: string): BetterSqlite3Type.Statement<T[]> {

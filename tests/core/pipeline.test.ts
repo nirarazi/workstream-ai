@@ -127,6 +127,8 @@ function createMockGraph(): ContextGraph {
       messageCount: 1,
       messages: [],
     }),
+    hasEvent: vi.fn().mockReturnValue(false),
+    getEventByMessageId: vi.fn().mockReturnValue(null),
     insertEvent: vi.fn().mockReturnValue({
       id: "evt-1",
       threadId: "t-1",
