@@ -190,7 +190,7 @@ export default function WorkItemCard({ item, platformMeta, userMap, mentionables
             <p className="mt-0.5 text-xs text-gray-400 truncate">{workItem.title}</p>
           )}
         </div>
-        <StatusBadge status={latestEvent.status} />
+        <StatusBadge status={workItem.currentAtcStatus ?? latestEvent.status} />
       </div>
 
       {/* Message bubble — darker background for visual separation */}
