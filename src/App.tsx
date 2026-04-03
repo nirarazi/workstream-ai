@@ -4,7 +4,6 @@ import Inbox from "./components/Inbox";
 import FleetBoard from "./components/FleetBoard";
 import Sidekick from "./components/Sidekick";
 import Setup from "./components/Setup";
-import Tooltip from "./components/Tooltip";
 
 type View = "loading" | "setup" | "inbox" | "fleet" | "settings";
 type DotStatus = "ok" | "degraded" | "disconnected";
@@ -19,9 +18,10 @@ const DOT_CLASSES: Record<DotStatus, string> = {
 
 function ServiceDot({ label, status }: { label: string; status: DotStatus }): JSX.Element {
   return (
-    <Tooltip text={`${label}: ${status === "ok" ? "connected" : status}`}>
+    <span className="inline-flex items-center gap-1.5">
       <span className={`inline-block h-2 w-2 rounded-full ${DOT_CLASSES[status]}`} />
-    </Tooltip>
+      <span className="text-[11px] text-gray-500">{label}</span>
+    </span>
   );
 }
 
@@ -130,7 +130,7 @@ function App(): JSX.Element {
           )}
 
           {/* Service indicators */}
-          <div data-tauri-drag-region className="flex items-center gap-2">
+          <div data-tauri-drag-region className="flex items-center gap-3">
             <ServiceDot label="ATC" status={connected ? "ok" : "disconnected"} />
             <ServiceDot label="Slack" status={connected ? services.slack : "disconnected"} />
             <ServiceDot label="Jira" status={connected ? services.jira : "disconnected"} />
