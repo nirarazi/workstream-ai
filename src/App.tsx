@@ -1,11 +1,29 @@
 import { useState, useEffect, useRef, useCallback, type JSX } from "react";
-import { fetchSetupStatus, fetchStatus, type LlmBackoff } from "./lib/api";
+import { fetchSetupStatus, fetchStatus, type ServiceStatuses } from "./lib/api";
 import Inbox from "./components/Inbox";
 import FleetBoard from "./components/FleetBoard";
 import Sidekick from "./components/Sidekick";
 import Setup from "./components/Setup";
+import Tooltip from "./components/Tooltip";
 
 type View = "loading" | "setup" | "inbox" | "fleet" | "settings";
+type DotStatus = "ok" | "degraded" | "disconnected";
+
+const DEFAULT_SERVICES: ServiceStatuses = { slack: "disconnected", jira: "disconnected", llm: "disconnected" };
+
+const DOT_CLASSES: Record<DotStatus, string> = {
+  ok: "bg-green-500",
+  degraded: "bg-amber-500 animate-pulse",
+  disconnected: "bg-gray-600",
+};
+
+function ServiceDot({ label, status }: { label: string; status: DotStatus }): JSX.Element {
+  return (
+    <Tooltip text={`${label}: ${status === "ok" ? "connected" : status}`}>
+      <span className={`inline-block h-2 w-2 rounded-full ${DOT_CLASSES[status]}`} />
+    </Tooltip>
+  );
+}
 
 function App(): JSX.Element {
   const [view, setView] = useState<View>("loading");
@@ -13,7 +31,7 @@ function App(): JSX.Element {
   const [platformMeta, setPlatformMeta] = useState<Record<string, unknown>>({});
   const [retryVisible, setRetryVisible] = useState(false);
   const [sidekickOpen, setSidekickOpen] = useState(false);
-  const [llmBackoff, setLlmBackoff] = useState<LlmBackoff | null>(null);
+  const [services, setServices] = useState<ServiceStatuses>(DEFAULT_SERVICES);
   const statusInterval = useRef<ReturnType<typeof setInterval> | null>(null);
   const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -21,9 +39,10 @@ function App(): JSX.Element {
     try {
       const status = await fetchStatus();
       setConnected(true);
-      setLlmBackoff(status.llmBackoff);
+      setServices(status.services);
     } catch {
       setConnected(false);
+      setServices(DEFAULT_SERVICES);
     }
   }, []);
 
@@ -110,32 +129,15 @@ function App(): JSX.Element {
             </button>
           )}
 
-          {/* Connection indicator */}
+          {/* Service indicators */}
           <div data-tauri-drag-region className="flex items-center gap-2">
-            <span
-              className={`inline-block h-2 w-2 rounded-full ${
-                connected ? "bg-green-500" : "bg-red-500"
-              }`}
-            />
-            <span className="text-xs text-gray-500">
-              {connected ? "Connected" : "Disconnected"}
-            </span>
+            <ServiceDot label="ATC" status={connected ? "ok" : "disconnected"} />
+            <ServiceDot label="Slack" status={connected ? services.slack : "disconnected"} />
+            <ServiceDot label="Jira" status={connected ? services.jira : "disconnected"} />
+            <ServiceDot label="LLM" status={connected ? services.llm : "disconnected"} />
           </div>
         </div>
       </header>
-
-      {/* LLM backoff banner */}
-      {llmBackoff?.active && (
-        <div className="bg-amber-900/50 border-b border-amber-700 px-6 py-2 flex items-center gap-3">
-          <span className="inline-block h-2 w-2 rounded-full bg-amber-500 animate-pulse" />
-          <span className="text-xs text-amber-200">
-            LLM rate-limited — retrying (attempt {llmBackoff.retryCount}/{5})
-            {llmBackoff.nextRetryAt && (
-              <> · next retry {new Date(llmBackoff.nextRetryAt).toLocaleTimeString()}</>
-            )}
-          </span>
-        </div>
-      )}
 
       {/* Tab bar — only visible when configured */}
       {(view === "inbox" || view === "fleet") && (

@@ -55,6 +55,7 @@ export function createApp(state: EngineState): Hono {
   // --- GET /api/status ---
   app.get("/api/status", (c) => {
     const uptime = Math.floor((Date.now() - state.startedAt.getTime()) / 1000);
+    const llmBackoff = state.classifier.getBackoffState();
     return c.json({
       ok: true,
       uptime,
@@ -62,7 +63,12 @@ export function createApp(state: EngineState): Hono {
         lastPoll: state.lastPoll?.toISOString() ?? null,
         processed: state.processed,
       },
-      llmBackoff: state.classifier.getBackoffState(),
+      services: {
+        slack: state.platformAdapter ? "ok" as const : "disconnected" as const,
+        jira: state.taskAdapter ? "ok" as const : "disconnected" as const,
+        llm: llmBackoff?.active ? "degraded" as const : "ok" as const,
+      },
+      llmBackoff,
     });
   });
 
