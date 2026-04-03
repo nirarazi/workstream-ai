@@ -62,6 +62,7 @@ export function createApp(state: EngineState): Hono {
         lastPoll: state.lastPoll?.toISOString() ?? null,
         processed: state.processed,
       },
+      llmBackoff: state.classifier.getBackoffState(),
     });
   });
 

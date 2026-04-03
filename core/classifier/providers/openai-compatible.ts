@@ -5,11 +5,37 @@ import type { ClassificationResult, ModelProvider } from "./interface.js";
 
 const log = createLogger("openai-compatible");
 
+const MAX_RETRIES = 5;
+const INITIAL_BACKOFF_MS = 1_000;
+const MAX_BACKOFF_MS = 60_000;
+
+export interface BackoffState {
+  active: boolean;
+  retryCount: number;
+  nextRetryAt: string | null;
+  lastError: string | null;
+}
+
 export interface OpenAICompatibleConfig {
   name: string;
   baseUrl: string;
   model: string;
   apiKey?: string;
+}
+
+function isRetryable(error: unknown): boolean {
+  if (error instanceof Error) {
+    if (error.name === "TimeoutError" || error.message.includes("timeout")) return true;
+    if (error.message.includes("429")) return true;
+    if (error.message.includes("502") || error.message.includes("503") || error.message.includes("504")) return true;
+  }
+  return false;
+}
+
+function getBackoffMs(attempt: number): number {
+  const base = INITIAL_BACKOFF_MS * Math.pow(2, attempt);
+  const jitter = Math.random() * base * 0.3; // up to 30% jitter
+  return Math.min(base + jitter, MAX_BACKOFF_MS);
 }
 
 export class OpenAICompatibleProvider implements ModelProvider {
@@ -18,6 +44,18 @@ export class OpenAICompatibleProvider implements ModelProvider {
   private readonly model: string;
   private readonly apiKey: string | undefined;
   private readonly isAnthropic: boolean;
+
+  // Backoff state — exposed so the server can surface it to the UI
+  private _backoff: BackoffState = {
+    active: false,
+    retryCount: 0,
+    nextRetryAt: null,
+    lastError: null,
+  };
+
+  get backoffState(): BackoffState {
+    return { ...this._backoff };
+  }
 
   constructor(config: OpenAICompatibleConfig) {
     this.name = config.name;
@@ -32,16 +70,57 @@ export class OpenAICompatibleProvider implements ModelProvider {
     systemPrompt: string,
     fewShotExamples: Array<{ role: string; content: string }>,
   ): Promise<ClassificationResult> {
-    try {
-      const rawText = this.isAnthropic
-        ? await this.callAnthropic(message, systemPrompt, fewShotExamples)
-        : await this.callOpenAI(message, systemPrompt, fewShotExamples);
+    let lastError: unknown;
 
-      return this.parseResponse(rawText);
-    } catch (error) {
-      log.error("Classification failed", error);
-      throw error;
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+      try {
+        const rawText = this.isAnthropic
+          ? await this.callAnthropic(message, systemPrompt, fewShotExamples)
+          : await this.callOpenAI(message, systemPrompt, fewShotExamples);
+
+        // Success — clear backoff state
+        if (this._backoff.active) {
+          log.info("LLM recovered after backoff");
+        }
+        this._backoff = { active: false, retryCount: 0, nextRetryAt: null, lastError: null };
+
+        return this.parseResponse(rawText);
+      } catch (error) {
+        lastError = error;
+
+        if (attempt < MAX_RETRIES && isRetryable(error)) {
+          const delayMs = getBackoffMs(attempt);
+          const nextRetryAt = new Date(Date.now() + delayMs).toISOString();
+          const errorMsg = error instanceof Error ? error.message.slice(0, 200) : String(error);
+
+          this._backoff = {
+            active: true,
+            retryCount: attempt + 1,
+            nextRetryAt,
+            lastError: errorMsg,
+          };
+
+          log.warn(
+            `Retryable error (attempt ${attempt + 1}/${MAX_RETRIES}), backing off ${Math.ceil(delayMs / 1000)}s`,
+            errorMsg,
+          );
+          await new Promise((resolve) => setTimeout(resolve, delayMs));
+          continue;
+        }
+
+        // Non-retryable or exhausted retries
+        this._backoff = {
+          active: false,
+          retryCount: 0,
+          nextRetryAt: null,
+          lastError: error instanceof Error ? error.message.slice(0, 200) : String(error),
+        };
+        log.error("Classification failed", error);
+        throw error;
+      }
     }
+
+    throw lastError;
   }
 
   private async callAnthropic(
@@ -49,7 +128,7 @@ export class OpenAICompatibleProvider implements ModelProvider {
     systemPrompt: string,
     fewShotExamples: Array<{ role: string; content: string }>,
   ): Promise<string> {
-    const url = `${this.baseUrl}/v1/messages`;
+    const url = `${this.baseUrl}/messages`;
     const headers: Record<string, string> = {
       "content-type": "application/json",
       "anthropic-version": "2023-06-01",

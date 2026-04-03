@@ -97,10 +97,18 @@ export interface SetupConfig {
   jiraBaseUrl?: string;
 }
 
+export interface LlmBackoff {
+  active: boolean;
+  retryCount: number;
+  nextRetryAt: string | null;
+  lastError: string | null;
+}
+
 export interface EngineStatus {
   ok: boolean;
   uptime: number;
   pipeline: unknown;
+  llmBackoff: LlmBackoff | null;
 }
 
 export interface WorkItemDetail {
