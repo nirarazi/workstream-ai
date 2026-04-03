@@ -104,10 +104,19 @@ export interface LlmBackoff {
   lastError: string | null;
 }
 
+export type ServiceStatus = "ok" | "degraded" | "disconnected";
+
+export interface ServiceStatuses {
+  slack: ServiceStatus;
+  jira: ServiceStatus;
+  llm: ServiceStatus;
+}
+
 export interface EngineStatus {
   ok: boolean;
   uptime: number;
   pipeline: unknown;
+  services: ServiceStatuses;
   llmBackoff: LlmBackoff | null;
 }
 
