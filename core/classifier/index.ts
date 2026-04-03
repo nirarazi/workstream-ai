@@ -112,6 +112,7 @@ export class Classifier {
         confidence,
         reason: result.reason,
         workItemIds: result.workItemIds,
+        title: result.title,
       };
     } catch (error) {
       log.warn("Classification failed, returning default noise classification", error);
@@ -120,6 +121,7 @@ export class Classifier {
         confidence: 0.1,
         reason: "Classification failed — defaulting to noise",
         workItemIds: [],
+        title: "",
       };
     }
   }

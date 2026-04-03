@@ -1,6 +1,6 @@
 import { useState, useRef, type JSX } from "react";
 import type { ActionableItem, Mentionable } from "../lib/api";
-import { postAction, postReply, openExternalUrl } from "../lib/api";
+import { postAction, postReply, openExternalUrl, createTicket } from "../lib/api";
 import { timeAgo } from "../lib/time";
 import StatusBadge from "./StatusBadge";
 import Tooltip from "./Tooltip";
@@ -126,7 +126,27 @@ export default function WorkItemCard({ item, platformMeta, userMap, mentionables
     );
   }
 
-  const busy = acting !== null || sending;
+  const isInferred = workItem.source === "inferred" || workItem.id.startsWith("thread:");
+  const [creatingTicket, setCreatingTicket] = useState(false);
+
+  async function handleCreateTicket() {
+    setCreatingTicket(true);
+    setError(null);
+    try {
+      const result = await createTicket(workItem.id);
+      if (result.ticketUrl) {
+        openExternalUrl(result.ticketUrl);
+      }
+      setDone(true);
+      onActioned?.();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to create ticket");
+    } finally {
+      setCreatingTicket(false);
+    }
+  }
+
+  const busy = acting !== null || sending || creatingTicket;
 
   return (
     <div
@@ -137,8 +157,12 @@ export default function WorkItemCard({ item, platformMeta, userMap, mentionables
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2 flex-wrap">
-            {/* Work item ID — links to external tracker */}
-            {workItem.url ? (
+            {/* Work item ID or title for inferred items */}
+            {isInferred ? (
+              <span className="text-sm font-semibold text-gray-200">
+                {workItem.title || "Untitled conversation"}
+              </span>
+            ) : workItem.url ? (
               <button
                 type="button"
                 onClick={() => openExternalUrl(workItem.url!)}
@@ -162,7 +186,7 @@ export default function WorkItemCard({ item, platformMeta, userMap, mentionables
               {timeAgo(latestEvent.timestamp)}
             </span>
           </div>
-          {workItem.title && (
+          {workItem.title && !isInferred && (
             <p className="mt-0.5 text-xs text-gray-400 truncate">{workItem.title}</p>
           )}
         </div>
@@ -222,6 +246,19 @@ export default function WorkItemCard({ item, platformMeta, userMap, mentionables
               </button>
             </Tooltip>
           ))}
+
+          {/* Create Ticket — only for inferred/unticketed work items */}
+          {isInferred && (
+            <Tooltip text="Create a Jira ticket from this conversation">
+              <button
+                onClick={handleCreateTicket}
+                disabled={busy}
+                className="cursor-pointer rounded px-2.5 py-1 text-xs font-medium bg-purple-800/70 hover:bg-purple-700 text-purple-200 disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                {creatingTicket ? "..." : "Create Ticket"}
+              </button>
+            </Tooltip>
+          )}
         </div>
 
         {error && <p className="text-xs text-red-400">{error}</p>}

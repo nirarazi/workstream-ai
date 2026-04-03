@@ -304,6 +304,46 @@ export class JiraAdapter implements TaskAdapter {
     return data.issues.map((issue) => mapIssueToWorkItem(issue, this.baseUrl));
   }
 
+  async createWorkItem(params: import("../interface.js").CreateWorkItemParams): Promise<WorkItemDetail> {
+    this.ensureConnected();
+
+    const fields: Record<string, unknown> = {
+      project: { key: params.projectKey },
+      summary: params.title,
+      issuetype: { name: params.issueType ?? "Task" },
+    };
+
+    if (params.description) {
+      fields.description = {
+        type: "doc",
+        version: 1,
+        content: [
+          {
+            type: "paragraph",
+            content: [{ type: "text", text: params.description }],
+          },
+        ],
+      };
+    }
+
+    const response = await this.request("/rest/api/3/issue", {
+      method: "POST",
+      body: JSON.stringify({ fields }),
+    });
+
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(`Failed to create Jira issue (${response.status}): ${text}`);
+    }
+
+    const created = (await response.json()) as { key: string };
+    log.info("Created Jira issue", created.key);
+
+    // Fetch the full issue to return consistent WorkItemDetail
+    const detail = await this.getWorkItem(created.key);
+    return detail!;
+  }
+
   async getComments(id: string): Promise<WorkItemComment[]> {
     this.ensureConnected();
 

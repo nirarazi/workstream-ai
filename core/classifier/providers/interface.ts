@@ -5,6 +5,7 @@ export interface ClassificationResult {
   confidence: number;
   reason: string;
   workItemIds: string[];
+  title: string;
 }
 
 export interface ModelProvider {

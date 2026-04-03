@@ -251,6 +251,16 @@ export function postAction(
   });
 }
 
+export function createTicket(
+  workItemId: string,
+  projectKey?: string,
+): Promise<{ ok: boolean; ticketId?: string; ticketUrl?: string }> {
+  return apiFetch("/api/action", {
+    method: "POST",
+    body: JSON.stringify({ workItemId, action: "create_ticket", projectKey }),
+  });
+}
+
 export function fetchWorkItemContext(id: string): Promise<WorkItemContext> {
   return apiFetch(`/api/work-item/${encodeURIComponent(id)}/context`);
 }
