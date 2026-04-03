@@ -11,16 +11,20 @@ type DotStatus = "ok" | "degraded" | "disconnected";
 const DEFAULT_SERVICES: ServiceStatuses = {};
 
 const DOT_CLASSES: Record<DotStatus, string> = {
-  ok: "bg-green-500",
+  ok: "bg-green-500 animate-[pulse_3s_ease-in-out_infinite]",
   degraded: "bg-amber-500 animate-pulse",
   disconnected: "bg-gray-600",
 };
+
+function capitalize(s: string): string {
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
 
 function ServiceDot({ label, status }: { label: string; status: DotStatus }): JSX.Element {
   return (
     <span className="inline-flex items-center gap-1.5">
       <span className={`inline-block h-2 w-2 rounded-full ${DOT_CLASSES[status]}`} />
-      <span className="text-[11px] text-gray-500">{label}</span>
+      <span className="text-[11px] text-gray-500">{capitalize(label)}</span>
     </span>
   );
 }
