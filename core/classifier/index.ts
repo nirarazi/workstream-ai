@@ -6,8 +6,9 @@ import { parse as parseYaml } from "yaml";
 import { createLogger } from "../logger.js";
 import { findProjectRoot, type Config } from "../config.js";
 import type { Classification, StatusCategory } from "../types.js";
-import { OpenAICompatibleProvider } from "./providers/openai-compatible.js";
+import { OpenAICompatibleProvider, type BackoffState } from "./providers/openai-compatible.js";
 import type { ModelProvider } from "./providers/interface.js";
+import type { RateLimiter } from "../rate-limiter.js";
 
 const log = createLogger("classifier");
 
@@ -59,11 +60,24 @@ export class Classifier {
   private readonly provider: ModelProvider;
   private readonly systemPrompt: string;
   private readonly fewShotMessages: Array<{ role: string; content: string }>;
+  private rateLimiter?: RateLimiter;
 
-  constructor(provider: ModelProvider, systemPrompt: string, fewShotMessages: Array<{ role: string; content: string }>) {
+  constructor(provider: ModelProvider, systemPrompt: string, fewShotMessages: Array<{ role: string; content: string }>, rateLimiter?: RateLimiter) {
     this.provider = provider;
     this.systemPrompt = systemPrompt;
     this.fewShotMessages = fewShotMessages;
+    this.rateLimiter = rateLimiter;
+  }
+
+  setRateLimiter(limiter: RateLimiter): void {
+    this.rateLimiter = limiter;
+  }
+
+  getBackoffState(): BackoffState | null {
+    if (this.provider instanceof OpenAICompatibleProvider) {
+      return this.provider.backoffState;
+    }
+    return null;
   }
 
   static fromConfig(config: Config, projectRoot?: string): Classifier {
@@ -76,6 +90,11 @@ export class Classifier {
 
   async classify(message: string): Promise<Classification> {
     try {
+      // Rate-limit LLM calls
+      if (this.rateLimiter) {
+        await this.rateLimiter.acquire();
+      }
+
       const result = await this.provider.classify(
         message,
         this.systemPrompt,

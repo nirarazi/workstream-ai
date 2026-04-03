@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback, type JSX } from "react";
-import { fetchSetupStatus, fetchStatus } from "./lib/api";
+import { fetchSetupStatus, fetchStatus, type LlmBackoff } from "./lib/api";
 import Inbox from "./components/Inbox";
 import FleetBoard from "./components/FleetBoard";
 import Sidekick from "./components/Sidekick";
@@ -13,13 +13,15 @@ function App(): JSX.Element {
   const [platformMeta, setPlatformMeta] = useState<Record<string, unknown>>({});
   const [retryVisible, setRetryVisible] = useState(false);
   const [sidekickOpen, setSidekickOpen] = useState(false);
+  const [llmBackoff, setLlmBackoff] = useState<LlmBackoff | null>(null);
   const statusInterval = useRef<ReturnType<typeof setInterval> | null>(null);
   const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const checkConnection = useCallback(async () => {
     try {
-      await fetchStatus();
+      const status = await fetchStatus();
       setConnected(true);
+      setLlmBackoff(status.llmBackoff);
     } catch {
       setConnected(false);
     }
@@ -121,6 +123,19 @@ function App(): JSX.Element {
           </div>
         </div>
       </header>
+
+      {/* LLM backoff banner */}
+      {llmBackoff?.active && (
+        <div className="bg-amber-900/50 border-b border-amber-700 px-6 py-2 flex items-center gap-3">
+          <span className="inline-block h-2 w-2 rounded-full bg-amber-500 animate-pulse" />
+          <span className="text-xs text-amber-200">
+            LLM rate-limited — retrying (attempt {llmBackoff.retryCount}/{5})
+            {llmBackoff.nextRetryAt && (
+              <> · next retry {new Date(llmBackoff.nextRetryAt).toLocaleTimeString()}</>
+            )}
+          </span>
+        </div>
+      )}
 
       {/* Tab bar — only visible when configured */}
       {(view === "inbox" || view === "fleet") && (
