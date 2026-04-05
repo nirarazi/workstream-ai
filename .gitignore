@@ -7,3 +7,4 @@ target/
 .env
 config/local.yaml
 .DS_Store
+.superpowers/
