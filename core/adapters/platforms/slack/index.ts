@@ -4,7 +4,7 @@ import { WebClient } from "@slack/web-api";
 import type { PlatformAdapter } from "../interface.js";
 import type { Credentials, Thread, Message } from "../../../types.js";
 import { createLogger } from "../../../logger.js";
-import type { RateLimiter } from "../../../rate-limiter.js";
+import { SlackRateLimiter } from "./rate-limiter.js";
 
 const log = createLogger("slack-adapter");
 
@@ -51,34 +51,56 @@ function slackTsToISO(ts: string): string {
   return new Date(epoch * 1000).toISOString();
 }
 
-async function withRateLimitRetry<T>(fn: () => Promise<T>, context: string, rateLimiter?: RateLimiter): Promise<T> {
-  // Pre-flight rate limiting
-  if (rateLimiter) {
-    await rateLimiter.acquire();
-  }
+/**
+ * Execute a Slack API call with per-method rate limiting and 429 retry.
+ *
+ * Flow:
+ * 1. Acquire a slot in the per-method bucket (blocks if bucket is full or
+ *    a global 429 backoff is active)
+ * 2. Lock the method (serializes concurrent calls to the same method)
+ * 3. Execute the call
+ * 4. On 429: report to global backoff, wait, retry (up to max retries)
+ * 5. Release the lock on completion
+ */
+async function withRateLimitRetry<T>(
+  fn: () => Promise<T>,
+  method: string,
+  limiter: SlackRateLimiter,
+): Promise<T> {
   for (let attempt = 0; attempt <= RATE_LIMIT_MAX_RETRIES; attempt++) {
+    // Acquire a slot (waits for per-method bucket + global backoff)
+    await limiter.acquire(method);
+    const release = limiter.lock(method);
+
     try {
-      return await fn();
+      const result = await fn();
+      release();
+      return result;
     } catch (err: unknown) {
+      release();
+
       const error = err as { code?: string; data?: { retryAfter?: number }; retryAfter?: number };
       if (
         error.code === "slack_webapi_rate_limited" ||
         (error.code === "slack_webapi_platform_error" && error.data?.retryAfter)
       ) {
+        const retryAfter = error.data?.retryAfter ?? error.retryAfter ?? 1;
+
+        // Report 429 to the global backoff — pauses ALL methods
+        limiter.report429(retryAfter);
+
         if (attempt >= RATE_LIMIT_MAX_RETRIES) {
-          log.error(`Rate limited on ${context} after ${RATE_LIMIT_MAX_RETRIES} retries`);
+          log.error(`Rate limited on ${method} after ${RATE_LIMIT_MAX_RETRIES} retries`);
           throw err;
         }
-        const retryAfter = error.data?.retryAfter ?? error.retryAfter ?? 1;
-        log.warn(`Rate limited on ${context}, retrying after ${retryAfter}s (attempt ${attempt + 1})`);
+        log.warn(`Rate limited on ${method}, retrying after ${retryAfter}s (attempt ${attempt + 1})`);
         await sleep(retryAfter * 1000);
       } else {
         throw err;
       }
     }
   }
-  // Unreachable, but TypeScript needs it
-  throw new Error(`Rate limit retries exhausted for ${context}`);
+  throw new Error(`Rate limit retries exhausted for ${method}`);
 }
 
 function sleep(ms: number): Promise<void> {
@@ -87,15 +109,24 @@ function sleep(ms: number): Promise<void> {
 
 export class SlackAdapter implements PlatformAdapter {
   readonly name = "slack";
+  readonly displayName = "Slack";
   private client: WebClient | null = null;
   private userInfoMap: Map<string, UserInfo> = new Map();
   private channelMap: Map<string, { name: string; isPrivate: boolean }> = new Map();
   private messageHandler: ((msg: Message) => void) | null = null;
-  private rateLimiter?: RateLimiter;
+  private limiter = new SlackRateLimiter();
   private workspaceUrl: string | null = null;
 
-  setRateLimiter(limiter: RateLimiter): void {
-    this.rateLimiter = limiter;
+  /** @deprecated The Slack adapter now manages its own per-method rate limiting internally. */
+  setRateLimiter(_limiter: unknown): void {
+    // No-op — kept for backwards compatibility with server.ts wiring.
+    // The Slack adapter uses its own SlackRateLimiter with per-method
+    // buckets matching Slack's actual tier limits.
+  }
+
+  /** True when any Slack API method bucket is full or a 429 backoff is active */
+  get isThrottling(): boolean {
+    return this.limiter.isThrottling;
   }
 
   async connect(credentials: Credentials): Promise<void> {
@@ -104,7 +135,11 @@ export class SlackAdapter implements PlatformAdapter {
       throw new Error("Slack adapter requires an xoxp- user token");
     }
 
-    this.client = new WebClient(token);
+    // Disable the SDK's built-in automatic retries on 429 — we handle
+    // rate limiting ourselves with per-method buckets and global backoff.
+    this.client = new WebClient(token, {
+      retryConfig: { retries: 0 },
+    });
 
     try {
       const authResult = await this.client.auth.test();
@@ -185,7 +220,7 @@ export class SlackAdapter implements PlatformAdapter {
           as_user: true,
         }),
       "chat.postMessage",
-      this.rateLimiter,
+      this.limiter,
     );
 
     log.info(`Replied to thread ${threadId} in channel ${channelId}`);
@@ -297,7 +332,7 @@ export class SlackAdapter implements PlatformAdapter {
             cursor: cursor || undefined,
           }),
         "conversations.list",
-        this.rateLimiter,
+        this.limiter,
       );
 
       const channels = (result.channels ?? []) as SlackChannel[];
@@ -325,7 +360,7 @@ export class SlackAdapter implements PlatformAdapter {
             cursor: cursor || undefined,
           }),
         "conversations.history",
-        this.rateLimiter,
+        this.limiter,
       );
 
       const messages = (result.messages ?? []) as SlackMessage[];
@@ -351,7 +386,7 @@ export class SlackAdapter implements PlatformAdapter {
             cursor: cursor || undefined,
           }),
         "conversations.replies",
-        this.rateLimiter,
+        this.limiter,
       );
 
       const messages = (result.messages ?? []) as SlackMessage[];
@@ -375,7 +410,7 @@ export class SlackAdapter implements PlatformAdapter {
             cursor: cursor || undefined,
           }),
         "users.list",
-        this.rateLimiter,
+        this.limiter,
       );
 
       const members = (result.members ?? []) as SlackUser[];
