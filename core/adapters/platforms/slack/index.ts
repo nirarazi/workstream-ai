@@ -275,6 +275,16 @@ export class SlackAdapter implements PlatformAdapter {
     return { channelId: dmChannelId, threadId: ts };
   }
 
+  parseThreadUrl(url: string): { threadId: string; channelId: string } | null {
+    // Slack thread URLs: https://team.slack.com/archives/C001/p1711900000000100
+    const match = url.match(/\/archives\/([A-Z0-9]+)\/p(\d+)/);
+    if (!match) return null;
+    const channelId = match[1];
+    const rawTs = match[2];
+    const threadId = rawTs.slice(0, 10) + "." + rawTs.slice(10);
+    return { threadId, channelId };
+  }
+
   streamMessages(handler: (msg: Message) => void): void {
     this.messageHandler = handler;
     log.info("Message handler registered (will fire on next readThreads poll)");

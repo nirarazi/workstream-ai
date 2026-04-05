@@ -362,14 +362,12 @@ export function createApp(state: EngineState): Hono {
       return c.json({ error: "Missing url" }, 400);
     }
 
-    // Parse Slack thread URL: https://team.slack.com/archives/C001/p1711900000000100
-    const match = body.url.match(/\/archives\/([A-Z0-9]+)\/p(\d+)/);
-    if (!match) {
-      return c.json({ error: "Invalid Slack thread URL" }, 400);
+    // Delegate URL parsing to the platform adapter
+    const parsed = state.platformAdapter.parseThreadUrl?.(body.url);
+    if (!parsed) {
+      return c.json({ error: "Unrecognized thread URL format" }, 400);
     }
-    const channelId = match[1];
-    const rawTs = match[2];
-    const threadTs = rawTs.slice(0, 10) + "." + rawTs.slice(10);
+    const { threadId: threadTs, channelId } = parsed;
 
     // Fetch thread if not already in graph
     if (!state.graph.getThreadById(threadTs)) {

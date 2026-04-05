@@ -456,6 +456,21 @@ describe("SlackAdapter", () => {
     });
   });
 
+  describe("parseThreadUrl", () => {
+    it("parses a valid Slack thread URL", () => {
+      const result = adapter.parseThreadUrl("https://team.slack.com/archives/C001/p1711900000000100");
+      expect(result).toEqual({ threadId: "1711900000.000100", channelId: "C001" });
+    });
+
+    it("returns null for non-Slack URLs", () => {
+      expect(adapter.parseThreadUrl("https://google.com")).toBeNull();
+    });
+
+    it("returns null for malformed Slack URLs", () => {
+      expect(adapter.parseThreadUrl("https://team.slack.com/messages/foo")).toBeNull();
+    });
+  });
+
   // -- Error handling --
 
   describe("error handling", () => {

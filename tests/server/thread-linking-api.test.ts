@@ -33,6 +33,12 @@ describe("Thread Linking API", () => {
     mockAdapter = {
       name: "slack",
       displayName: "Slack",
+      parseThreadUrl: vi.fn().mockImplementation((url: string) => {
+        const match = url.match(/\/archives\/([A-Z0-9]+)\/p(\d+)/);
+        if (!match) return null;
+        const rawTs = match[2];
+        return { threadId: rawTs.slice(0, 10) + "." + rawTs.slice(10), channelId: match[1] };
+      }),
       getThreadMessages: vi.fn().mockResolvedValue([
         { id: "msg-1", threadId: "1711900000.000100", channelId: "C001",
           channelName: "general", userId: "U1", userName: "Byte",
@@ -89,14 +95,12 @@ describe("Thread Linking API", () => {
         return c.json({ error: "Missing url" }, 400);
       }
 
-      // Parse Slack URL: https://team.slack.com/archives/C001/p1711900000000100
-      const match = body.url.match(/\/archives\/([A-Z0-9]+)\/p(\d+)/);
-      if (!match) {
-        return c.json({ error: "Invalid Slack thread URL" }, 400);
+      // Delegate URL parsing to adapter
+      const parsed = mockAdapter.parseThreadUrl(body.url);
+      if (!parsed) {
+        return c.json({ error: "Unrecognized thread URL format" }, 400);
       }
-      const channelId = match[1];
-      const rawTs = match[2];
-      const threadTs = rawTs.slice(0, 10) + "." + rawTs.slice(10);
+      const { threadId: threadTs, channelId } = parsed;
 
       // Fetch thread if not in graph
       if (!mockGraph.getThreadById(threadTs)) {
