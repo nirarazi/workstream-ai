@@ -728,6 +728,57 @@ describe("Pipeline", () => {
     });
   });
 
+  describe("manually linked thread protection", () => {
+    it("does not overwrite work_item_id on manually linked threads", async () => {
+      // Thread is manually linked to OPS-100
+      vi.mocked(graph.getThreadById).mockReturnValue({
+        id: "t-1",
+        channelId: "C-1",
+        channelName: "fleet-ops",
+        platform: "slack",
+        workItemId: "OPS-100",
+        lastActivity: "2026-03-30T09:00:00.000Z",
+        messageCount: 1,
+        messages: [],
+        manuallyLinked: true,
+      });
+
+      // Message mentions a DIFFERENT ticket
+      const msg = makeMessage({ text: "Working on ENG-200 now" });
+      const thread = makeThread({}, [msg]);
+      vi.mocked(adapter.readThreads).mockResolvedValue([thread]);
+
+      vi.mocked(linker.linkMessage).mockReturnValue(["ENG-200"]);
+      vi.mocked(classifier.classify).mockResolvedValue(
+        makeClassification({ status: "in_progress", workItemIds: [] }),
+      );
+
+      const existingAI100: WorkItem = {
+        id: "OPS-100", source: "extracted", title: "Manual work",
+        externalStatus: null, assignee: null, url: null,
+        currentAtcStatus: null, currentConfidence: null,
+        snoozedUntil: null, createdAt: "2026-03-29T10:00:00.000Z",
+        updatedAt: "2026-03-29T10:00:00.000Z",
+      };
+      const existingIT200: WorkItem = { ...existingAI100, id: "ENG-200", title: "Other" };
+
+      vi.mocked(graph.getWorkItemById).mockImplementation((id: string) => {
+        if (id === "OPS-100") return existingAI100;
+        if (id === "ENG-200") return existingIT200;
+        return null;
+      });
+
+      await pipeline.processOnce();
+
+      // Thread upsert should keep OPS-100 (the manually linked ID), NOT ENG-200
+      expect(graph.upsertThread).toHaveBeenCalledWith(
+        expect.objectContaining({
+          workItemId: "OPS-100",
+        }),
+      );
+    });
+  });
+
   describe("work item ID merging", () => {
     it("merges work item IDs from linker and classifier", async () => {
       // Linker extracts OPS-382
