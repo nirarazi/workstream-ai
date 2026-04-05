@@ -75,6 +75,8 @@ function createMockPlatformAdapter(): PlatformAdapter {
     connect: vi.fn().mockResolvedValue(undefined),
     readThreads: vi.fn().mockResolvedValue([]),
     replyToThread: vi.fn().mockResolvedValue(undefined),
+    postMessage: vi.fn().mockResolvedValue({ threadId: "new-ts" }),
+    sendDirectMessage: vi.fn().mockResolvedValue({ channelId: "D001", threadId: "new-ts" }),
     streamMessages: vi.fn(),
     getUsers: vi.fn().mockResolvedValue(new Map()),
   };

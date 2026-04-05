@@ -226,6 +226,55 @@ export class SlackAdapter implements PlatformAdapter {
     log.info(`Replied to thread ${threadId} in channel ${channelId}`);
   }
 
+  async postMessage(channelId: string, message: string): Promise<{ threadId: string }> {
+    this.ensureConnected();
+
+    const result = await withRateLimitRetry(
+      () =>
+        this.client!.chat.postMessage({
+          channel: channelId,
+          text: message,
+          as_user: true,
+        }),
+      "chat.postMessage",
+      this.limiter,
+    );
+
+    const ts = (result as { ts?: string }).ts ?? "";
+    log.info(`Posted message to channel ${channelId}, ts=${ts}`);
+    return { threadId: ts };
+  }
+
+  async sendDirectMessage(userId: string, message: string): Promise<{ channelId: string; threadId: string }> {
+    this.ensureConnected();
+
+    const openResult = await withRateLimitRetry(
+      () => this.client!.conversations.open({ users: userId }),
+      "conversations.open",
+      this.limiter,
+    );
+
+    const dmChannelId = (openResult as { channel?: { id?: string } }).channel?.id;
+    if (!dmChannelId) {
+      throw new Error(`Failed to open DM with user ${userId}`);
+    }
+
+    const postResult = await withRateLimitRetry(
+      () =>
+        this.client!.chat.postMessage({
+          channel: dmChannelId,
+          text: message,
+          as_user: true,
+        }),
+      "chat.postMessage",
+      this.limiter,
+    );
+
+    const ts = (postResult as { ts?: string }).ts ?? "";
+    log.info(`Sent DM to ${userId} in channel ${dmChannelId}, ts=${ts}`);
+    return { channelId: dmChannelId, threadId: ts };
+  }
+
   streamMessages(handler: (msg: Message) => void): void {
     this.messageHandler = handler;
     log.info("Message handler registered (will fire on next readThreads poll)");
