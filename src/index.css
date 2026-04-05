@@ -1,5 +1,54 @@
 @import "tailwindcss";
 
+/* ── Light theme — swap gray scale so dark-mode classes render light ── */
+html.light {
+  --color-gray-950: #ffffff;
+  --color-gray-900: #f9fafb;
+  --color-gray-800: #f3f4f6;
+  --color-gray-700: #d1d5db;
+  --color-gray-600: #9ca3af;
+  --color-gray-500: #6b7280;
+  --color-gray-400: #4b5563;
+  --color-gray-300: #374151;
+  --color-gray-200: #1f2937;
+  --color-gray-100: #111827;
+  --color-gray-50: #030712;
+
+  /* Swap accent scales so bg-*-900/60 + text-*-300 look right in light */
+  --color-blue-900: #dbeafe;
+  --color-blue-800: #bfdbfe;
+  --color-blue-700: #93c5fd;
+  --color-blue-600: #3b82f6;
+  --color-blue-500: #2563eb;
+  --color-blue-400: #1d4ed8;
+  --color-blue-300: #1e40af;
+  --color-blue-200: #1e3a5f;
+  --color-blue-100: #172554;
+
+  --color-red-900: #fee2e2;
+  --color-red-700: #fca5a5;
+  --color-red-400: #b91c1c;
+  --color-red-300: #991b1b;
+
+  --color-amber-900: #fef3c7;
+  --color-amber-800: #fde68a;
+  --color-amber-700: #fcd34d;
+  --color-amber-500: #d97706;
+  --color-amber-400: #b45309;
+  --color-amber-300: #92400e;
+  --color-amber-200: #78350f;
+
+  --color-green-900: #dcfce7;
+  --color-green-800: #bbf7d0;
+  --color-green-700: #86efac;
+  --color-green-500: #16a34a;
+  --color-green-400: #15803d;
+  --color-green-300: #166534;
+  --color-green-200: #14532d;
+
+  --color-purple-400: #7e22ce;
+}
+
 @keyframes slide-in-right {
   from {
     transform: translateX(100%);
@@ -36,4 +85,19 @@
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   animation: shimmer 4s linear infinite;
+}
+
+html.light .animate-shimmer {
+  background: linear-gradient(
+    90deg,
+    #374151 0%,
+    #6d28d9 25%,
+    #7c3aed 50%,
+    #6d28d9 75%,
+    #374151 100%
+  );
+  background-size: 200% auto;
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
 }
