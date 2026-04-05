@@ -354,6 +354,21 @@ export function linkThreadByUrl(
   });
 }
 
+export function postForward(params: {
+  sourceThreadId: string;
+  sourceChannelId: string;
+  targetId: string;
+  targetType: "user" | "channel";
+  quoteMode?: "latest" | "full";
+  includeSummary?: boolean;
+  note?: string;
+}): Promise<{ ok: boolean; threadId: string; channelId: string }> {
+  return apiFetch("/api/forward", {
+    method: "POST",
+    body: JSON.stringify(params),
+  });
+}
+
 export function postSetup(config: SetupConfig): Promise<{ ok: boolean }> {
   return apiFetch("/api/setup", {
     method: "POST",

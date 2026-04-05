@@ -346,6 +346,96 @@ export function createApp(state: EngineState): Hono {
     return c.json({ ok: true, threadId: threadTs });
   });
 
+  // --- POST /api/forward ---
+  app.post("/api/forward", async (c) => {
+    if (!state.platformAdapter) {
+      return c.json({ ok: false, error: "No platform adapter configured" }, 503);
+    }
+
+    const body = await c.req.json<{
+      sourceThreadId: string;
+      sourceChannelId: string;
+      targetId: string;
+      targetType: "user" | "channel";
+      quoteMode?: "latest" | "full";
+      includeSummary?: boolean;
+      note?: string;
+    }>();
+
+    if (!body.sourceThreadId || !body.targetId || !body.targetType) {
+      return c.json({ ok: false, error: "Missing required fields: sourceThreadId, targetId, targetType" }, 400);
+    }
+
+    const sourceThread = state.graph.getThreadById(body.sourceThreadId);
+    if (!sourceThread) {
+      return c.json({ ok: false, error: "Source thread not found" }, 404);
+    }
+
+    // Build the forwarded message
+    const parts: string[] = [];
+    if (body.note) {
+      parts.push(body.note);
+    }
+
+    const channelName = sourceThread.channelName || sourceThread.channelId;
+    const quoteMode = body.quoteMode ?? "latest";
+
+    try {
+      if (quoteMode === "latest") {
+        const events = state.graph.getEventsForThread(body.sourceThreadId);
+        const lastEvent = events[events.length - 1];
+        if (lastEvent) {
+          parts.push(`> Forwarded from #${channelName}:\n> "${lastEvent.rawText}"`);
+        }
+      } else {
+        const messages = await state.platformAdapter.getThreadMessages(
+          body.sourceThreadId, body.sourceChannelId,
+        );
+        const quoted = messages
+          .map((m) => `> ${m.userName}: ${m.text}`)
+          .join("\n");
+        parts.push(`> Forwarded from #${channelName}:\n${quoted}`);
+      }
+
+      if (body.includeSummary && sourceThread.workItemId) {
+        const cached = state.graph.getSummary(sourceThread.workItemId);
+        if (cached) {
+          parts.push(`Summary:\n${cached.summaryText}`);
+        }
+      }
+
+      const composedMessage = parts.join("\n\n");
+
+      let result: { threadId: string; channelId: string };
+      if (body.targetType === "channel") {
+        const r = await state.platformAdapter.postMessage(body.targetId, composedMessage);
+        result = { threadId: r.threadId, channelId: body.targetId };
+      } else {
+        const r = await state.platformAdapter.sendDirectMessage(body.targetId, composedMessage);
+        result = { threadId: r.threadId, channelId: r.channelId };
+      }
+
+      // Proactively link new thread to source work item
+      if (sourceThread.workItemId) {
+        state.graph.upsertThread({
+          id: result.threadId,
+          channelId: result.channelId,
+          channelName: "",
+          platform: state.platformAdapter.name,
+          workItemId: sourceThread.workItemId,
+          lastActivity: new Date().toISOString(),
+          messageCount: 1,
+        });
+      }
+
+      return c.json({ ok: true, threadId: result.threadId, channelId: result.channelId });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      log.error("Forward failed", message);
+      return c.json({ ok: false, error: message }, 500);
+    }
+  });
+
   // --- POST /api/action ---
   app.post("/api/action", async (c) => {
     const body = await c.req.json<{
