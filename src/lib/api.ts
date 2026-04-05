@@ -70,6 +70,7 @@ export interface Thread {
   workItemId: string | null;
   lastActivity: string;
   messageCount: number;
+  manuallyLinked?: boolean;
 }
 
 export interface ActionableItem {
