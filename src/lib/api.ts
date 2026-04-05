@@ -95,6 +95,16 @@ export interface SetupConfig {
   jiraEmail?: string;
   jiraToken?: string;
   jiraBaseUrl?: string;
+  rateLimits?: Record<string, number>;
+}
+
+export interface RateLimitInfo {
+  maxPerMinute: number;
+  displayName: string;
+}
+
+export interface SetupPrefill extends Omit<SetupConfig, "rateLimits"> {
+  rateLimits?: Record<string, RateLimitInfo>;
 }
 
 export interface LlmBackoff {
@@ -304,6 +314,45 @@ export function askSidekick(
   });
 }
 
+export function linkThread(
+  workItemId: string,
+  threadId: string,
+): Promise<{ ok: boolean }> {
+  return apiFetch(`/api/work-item/${encodeURIComponent(workItemId)}/link-thread`, {
+    method: "POST",
+    body: JSON.stringify({ threadId }),
+  });
+}
+
+export function unlinkThread(
+  workItemId: string,
+  threadId: string,
+): Promise<{ ok: boolean }> {
+  return apiFetch(`/api/work-item/${encodeURIComponent(workItemId)}/unlink-thread`, {
+    method: "POST",
+    body: JSON.stringify({ threadId }),
+  });
+}
+
+export function fetchUnlinkedThreads(
+  limit = 20,
+  query?: string,
+): Promise<{ threads: Thread[] }> {
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (query) params.set("q", query);
+  return apiFetch(`/api/threads/unlinked?${params}`);
+}
+
+export function linkThreadByUrl(
+  workItemId: string,
+  url: string,
+): Promise<{ ok: boolean; threadId: string }> {
+  return apiFetch(`/api/work-item/${encodeURIComponent(workItemId)}/link-url`, {
+    method: "POST",
+    body: JSON.stringify({ url }),
+  });
+}
+
 export function postSetup(config: SetupConfig): Promise<{ ok: boolean }> {
   return apiFetch("/api/setup", {
     method: "POST",
@@ -311,8 +360,21 @@ export function postSetup(config: SetupConfig): Promise<{ ok: boolean }> {
   });
 }
 
-export function fetchSetupPrefill(): Promise<SetupConfig> {
+export function fetchSetupPrefill(): Promise<SetupPrefill> {
   return apiFetch("/api/setup/prefill");
+}
+
+// ---------------------------------------------------------------------------
+// Badge — sets the dock badge count (macOS) via Tauri command
+// ---------------------------------------------------------------------------
+
+export async function setBadgeCount(count: number): Promise<void> {
+  try {
+    const tauri = await import("@tauri-apps/api/core");
+    await (tauri as { invoke: (cmd: string, args?: Record<string, unknown>) => Promise<void> }).invoke("set_badge_count", { count });
+  } catch {
+    // Not in Tauri or command unavailable — silently ignore
+  }
 }
 
 // ---------------------------------------------------------------------------
