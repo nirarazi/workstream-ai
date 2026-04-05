@@ -3,6 +3,7 @@ import {
   fetchWorkItemContext,
   generateSummary,
   postReply,
+  postForward,
   linkThread as apiLinkThread,
   unlinkThread as apiUnlinkThread,
   fetchUnlinkedThreads,
@@ -45,6 +46,17 @@ export default function ContextPane({
   const [linkSearch, setLinkSearch] = useState("");
   const [linkUrl, setLinkUrl] = useState("");
   const [linking, setLinking] = useState(false);
+  const [forwardTarget, setForwardTarget] = useState("");
+  const [forwardTargetType, setForwardTargetType] = useState<"user" | "channel">("channel");
+  const [forwardQuoteMode, setForwardQuoteMode] = useState<"latest" | "full">("latest");
+  const [forwardIncludeSummary, setForwardIncludeSummary] = useState(false);
+  const [forwardNote, setForwardNote] = useState("");
+  const [forwarding, setForwarding] = useState(false);
+
+  const [newThreadTarget, setNewThreadTarget] = useState("");
+  const [newThreadTargetType, setNewThreadTargetType] = useState<"user" | "channel">("channel");
+  const [newThreadMessage, setNewThreadMessage] = useState("");
+  const [sendingNewThread, setSendingNewThread] = useState(false);
   const paneRef = useRef<HTMLDivElement>(null);
 
   // Fetch context on mount
@@ -181,6 +193,60 @@ export default function ContextPane({
       setSummary(ctx.summary);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unlink failed");
+    }
+  }
+
+  async function handleForward() {
+    if (!selectedThreadId || !forwardTarget.trim()) return;
+    const selectedThread = context?.threads.find((t) => t.id === selectedThreadId);
+    if (!selectedThread) return;
+
+    setForwarding(true);
+    try {
+      await postForward({
+        sourceThreadId: selectedThreadId,
+        sourceChannelId: selectedThread.channelId,
+        targetId: forwardTarget.trim(),
+        targetType: forwardTargetType,
+        quoteMode: forwardQuoteMode,
+        includeSummary: forwardIncludeSummary,
+        note: forwardNote || undefined,
+      });
+      setActionPanel(null);
+      setForwardTarget("");
+      setForwardNote("");
+      // Refresh context to show newly linked thread
+      const ctx = await fetchWorkItemContext(workItemId);
+      setContext(ctx);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Forward failed");
+    } finally {
+      setForwarding(false);
+    }
+  }
+
+  async function handleNewThread() {
+    if (!newThreadTarget.trim() || !newThreadMessage.trim()) return;
+    setSendingNewThread(true);
+    try {
+      await postReply(
+        undefined,
+        newThreadTargetType === "channel" ? newThreadTarget.trim() : undefined,
+        newThreadMessage.trim(),
+        {
+          targetUserId: newThreadTargetType === "user" ? newThreadTarget.trim() : undefined,
+          workItemId,
+        },
+      );
+      setActionPanel(null);
+      setNewThreadTarget("");
+      setNewThreadMessage("");
+      const ctx = await fetchWorkItemContext(workItemId);
+      setContext(ctx);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Send failed");
+    } finally {
+      setSendingNewThread(false);
     }
   }
 
@@ -413,6 +479,153 @@ export default function ContextPane({
                       className="px-3 py-1.5 rounded text-xs font-medium bg-blue-600 text-white hover:bg-blue-500 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
                     >
                       Link
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Forward panel */}
+            {actionPanel === "forward" && selectedThreadId && (
+              <div className="mt-3 border border-blue-600 rounded-md bg-gray-900 overflow-hidden">
+                <div className="flex items-center justify-between px-3 py-2 border-b border-gray-800">
+                  <span className="text-xs font-semibold text-blue-400">
+                    Forward from {threads.find((t) => t.id === selectedThreadId)?.channelName ?? "thread"}
+                  </span>
+                  <button onClick={() => setActionPanel(null)} className="text-gray-500 hover:text-gray-300 cursor-pointer text-sm">&#x2715;</button>
+                </div>
+                <div className="p-3 space-y-3">
+                  <div>
+                    <label className="text-xs text-gray-500 block mb-1">To</label>
+                    <div className="flex gap-2">
+                      <select
+                        value={forwardTargetType}
+                        onChange={(e) => setForwardTargetType(e.target.value as "user" | "channel")}
+                        className="bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-300"
+                      >
+                        <option value="channel">Channel</option>
+                        <option value="user">User</option>
+                      </select>
+                      <input
+                        type="text"
+                        placeholder={forwardTargetType === "channel" ? "Channel ID (e.g. C001)" : "User ID (e.g. U001)"}
+                        value={forwardTarget}
+                        onChange={(e) => setForwardTarget(e.target.value)}
+                        className="flex-1 bg-gray-800 border border-gray-700 rounded px-2.5 py-1.5 text-sm text-gray-200 placeholder-gray-500 focus:outline-none focus:border-blue-600"
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="text-xs text-gray-500 block mb-1">Quote</label>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => setForwardQuoteMode("latest")}
+                        className={`px-2.5 py-1 rounded text-xs cursor-pointer ${
+                          forwardQuoteMode === "latest" ? "bg-blue-600 text-white" : "bg-gray-800 text-gray-400 border border-gray-700"
+                        }`}
+                      >
+                        Latest message
+                      </button>
+                      <button
+                        onClick={() => setForwardQuoteMode("full")}
+                        className={`px-2.5 py-1 rounded text-xs cursor-pointer ${
+                          forwardQuoteMode === "full" ? "bg-blue-600 text-white" : "bg-gray-800 text-gray-400 border border-gray-700"
+                        }`}
+                      >
+                        Full thread
+                      </button>
+                    </div>
+                  </div>
+                  <label className="flex items-center gap-2 text-xs text-gray-400">
+                    <input
+                      type="checkbox"
+                      checked={forwardIncludeSummary}
+                      onChange={(e) => setForwardIncludeSummary(e.target.checked)}
+                      disabled={!summary}
+                      className="rounded"
+                    />
+                    Attach summary {!summary && <span className="text-gray-600">(no summary available)</span>}
+                  </label>
+                  <div>
+                    <label className="text-xs text-gray-500 block mb-1">Your note</label>
+                    <input
+                      type="text"
+                      placeholder="Add context for the recipient..."
+                      value={forwardNote}
+                      onChange={(e) => setForwardNote(e.target.value)}
+                      className="w-full bg-gray-800 border border-gray-700 rounded px-2.5 py-1.5 text-sm text-gray-200 placeholder-gray-500 focus:outline-none focus:border-blue-600"
+                    />
+                  </div>
+                  <div className="flex justify-end gap-2">
+                    <button
+                      onClick={() => setActionPanel(null)}
+                      className="px-3 py-1.5 rounded text-xs border border-gray-700 text-gray-400 hover:text-gray-300 cursor-pointer"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={handleForward}
+                      disabled={!forwardTarget.trim() || forwarding}
+                      className="px-3 py-1.5 rounded text-xs font-medium bg-blue-600 text-white hover:bg-blue-500 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                    >
+                      {forwarding ? "Sending..." : "Send"}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* New thread panel */}
+            {actionPanel === "new-thread" && (
+              <div className="mt-3 border border-blue-600 rounded-md bg-gray-900 overflow-hidden">
+                <div className="flex items-center justify-between px-3 py-2 border-b border-gray-800">
+                  <span className="text-xs font-semibold text-blue-400">New thread</span>
+                  <button onClick={() => setActionPanel(null)} className="text-gray-500 hover:text-gray-300 cursor-pointer text-sm">&#x2715;</button>
+                </div>
+                <div className="p-3 space-y-3">
+                  <div>
+                    <label className="text-xs text-gray-500 block mb-1">To</label>
+                    <div className="flex gap-2">
+                      <select
+                        value={newThreadTargetType}
+                        onChange={(e) => setNewThreadTargetType(e.target.value as "user" | "channel")}
+                        className="bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-xs text-gray-300"
+                      >
+                        <option value="channel">Channel</option>
+                        <option value="user">User</option>
+                      </select>
+                      <input
+                        type="text"
+                        placeholder={newThreadTargetType === "channel" ? "Channel ID (e.g. C001)" : "User ID (e.g. U001)"}
+                        value={newThreadTarget}
+                        onChange={(e) => setNewThreadTarget(e.target.value)}
+                        className="flex-1 bg-gray-800 border border-gray-700 rounded px-2.5 py-1.5 text-sm text-gray-200 placeholder-gray-500 focus:outline-none focus:border-blue-600"
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="text-xs text-gray-500 block mb-1">Message</label>
+                    <textarea
+                      placeholder="Write your message..."
+                      value={newThreadMessage}
+                      onChange={(e) => setNewThreadMessage(e.target.value)}
+                      rows={3}
+                      className="w-full bg-gray-800 border border-gray-700 rounded px-2.5 py-1.5 text-sm text-gray-200 placeholder-gray-500 focus:outline-none focus:border-blue-600 resize-none"
+                    />
+                  </div>
+                  <div className="flex justify-end gap-2">
+                    <button
+                      onClick={() => setActionPanel(null)}
+                      className="px-3 py-1.5 rounded text-xs border border-gray-700 text-gray-400 hover:text-gray-300 cursor-pointer"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={handleNewThread}
+                      disabled={!newThreadTarget.trim() || !newThreadMessage.trim() || sendingNewThread}
+                      className="px-3 py-1.5 rounded text-xs font-medium bg-blue-600 text-white hover:bg-blue-500 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                    >
+                      {sendingNewThread ? "Sending..." : "Send"}
                     </button>
                   </div>
                 </div>
