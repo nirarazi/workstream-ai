@@ -240,13 +240,20 @@ export function fetchSetupStatus(): Promise<SetupStatus> {
 }
 
 export function postReply(
-  threadId: string,
-  channelId: string,
+  threadId: string | undefined,
+  channelId: string | undefined,
   message: string,
-): Promise<{ ok: boolean }> {
+  options?: { targetUserId?: string; workItemId?: string },
+): Promise<{ ok: boolean; threadId?: string; channelId?: string }> {
   return apiFetch("/api/reply", {
     method: "POST",
-    body: JSON.stringify({ threadId, channelId, message }),
+    body: JSON.stringify({
+      threadId,
+      channelId,
+      message,
+      targetUserId: options?.targetUserId,
+      workItemId: options?.workItemId,
+    }),
   });
 }
 

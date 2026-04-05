@@ -250,14 +250,61 @@ export function createApp(state: EngineState): Hono {
       return c.json({ ok: false, error: "No platform adapter configured" }, 503);
     }
 
-    const body = await c.req.json<{ threadId: string; channelId: string; message: string }>();
-    if (!body.threadId || !body.channelId || !body.message) {
-      return c.json({ ok: false, error: "Missing required fields: threadId, channelId, message" }, 400);
+    const body = await c.req.json<{
+      threadId?: string;
+      channelId?: string;
+      targetUserId?: string;
+      message: string;
+      workItemId?: string;
+    }>();
+
+    if (!body.message) {
+      return c.json({ ok: false, error: "Missing required field: message" }, 400);
     }
 
     try {
-      await state.platformAdapter.replyToThread(body.threadId, body.channelId, body.message);
-      return c.json({ ok: true });
+      // Case 1: Reply to existing thread (original behavior)
+      if (body.threadId && body.channelId) {
+        await state.platformAdapter.replyToThread(body.threadId, body.channelId, body.message);
+        return c.json({ ok: true });
+      }
+
+      // Case 2: New top-level message in a channel
+      if (body.channelId && !body.threadId) {
+        const result = await state.platformAdapter.postMessage(body.channelId, body.message);
+        // Proactively link to work item if provided
+        if (body.workItemId) {
+          state.graph.upsertThread({
+            id: result.threadId,
+            channelId: body.channelId,
+            channelName: "",
+            platform: state.platformAdapter.name,
+            workItemId: body.workItemId,
+            lastActivity: new Date().toISOString(),
+            messageCount: 1,
+          });
+        }
+        return c.json({ ok: true, threadId: result.threadId, channelId: body.channelId });
+      }
+
+      // Case 3: DM to a user
+      if (body.targetUserId) {
+        const result = await state.platformAdapter.sendDirectMessage(body.targetUserId, body.message);
+        if (body.workItemId) {
+          state.graph.upsertThread({
+            id: result.threadId,
+            channelId: result.channelId,
+            channelName: "",
+            platform: state.platformAdapter.name,
+            workItemId: body.workItemId,
+            lastActivity: new Date().toISOString(),
+            messageCount: 1,
+          });
+        }
+        return c.json({ ok: true, threadId: result.threadId, channelId: result.channelId });
+      }
+
+      return c.json({ ok: false, error: "Provide threadId+channelId, channelId alone, or targetUserId" }, 400);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       log.error("Reply failed", message);
