@@ -728,6 +728,57 @@ describe("Pipeline", () => {
     });
   });
 
+  describe("manually linked thread protection", () => {
+    it("does not overwrite work_item_id on manually linked threads", async () => {
+      // Thread is manually linked to AI-100
+      vi.mocked(graph.getThreadById).mockReturnValue({
+        id: "t-1",
+        channelId: "C-1",
+        channelName: "agent-orchestrator",
+        platform: "slack",
+        workItemId: "AI-100",
+        lastActivity: "2026-03-30T09:00:00.000Z",
+        messageCount: 1,
+        messages: [],
+        manuallyLinked: true,
+      });
+
+      // Message mentions a DIFFERENT ticket
+      const msg = makeMessage({ text: "Working on IT-200 now" });
+      const thread = makeThread({}, [msg]);
+      vi.mocked(adapter.readThreads).mockResolvedValue([thread]);
+
+      vi.mocked(linker.linkMessage).mockReturnValue(["IT-200"]);
+      vi.mocked(classifier.classify).mockResolvedValue(
+        makeClassification({ status: "in_progress", workItemIds: [] }),
+      );
+
+      const existingAI100: WorkItem = {
+        id: "AI-100", source: "extracted", title: "Manual work",
+        externalStatus: null, assignee: null, url: null,
+        currentAtcStatus: null, currentConfidence: null,
+        snoozedUntil: null, createdAt: "2026-03-29T10:00:00.000Z",
+        updatedAt: "2026-03-29T10:00:00.000Z",
+      };
+      const existingIT200: WorkItem = { ...existingAI100, id: "IT-200", title: "Other" };
+
+      vi.mocked(graph.getWorkItemById).mockImplementation((id: string) => {
+        if (id === "AI-100") return existingAI100;
+        if (id === "IT-200") return existingIT200;
+        return null;
+      });
+
+      await pipeline.processOnce();
+
+      // Thread upsert should keep AI-100 (the manually linked ID), NOT IT-200
+      expect(graph.upsertThread).toHaveBeenCalledWith(
+        expect.objectContaining({
+          workItemId: "AI-100",
+        }),
+      );
+    });
+  });
+
   describe("work item ID merging", () => {
     it("merges work item IDs from linker and classifier", async () => {
       // Linker extracts AI-382

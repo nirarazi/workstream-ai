@@ -270,21 +270,22 @@ export class Pipeline {
       avatarUrl: message.userAvatarUrl ?? null,
     });
 
-    // Step 4: Upsert thread in graph
+    // Step 4: Upsert thread in graph — preserve manually linked work items
+    const isManuallyLinked = existingThread?.manuallyLinked === true;
+    const primaryWorkItemId = allWorkItemIds.size > 0 ? [...allWorkItemIds][0] : null;
+
     this.graph.upsertThread({
       id: thread.id,
       channelId: thread.channelId,
       channelName: thread.channelName,
       platformMeta: thread.platformMeta,
       platform: thread.platform,
-      workItemId: allWorkItemIds.size > 0 ? [...allWorkItemIds][0] : undefined,
+      workItemId: isManuallyLinked ? existingThread!.workItemId : primaryWorkItemId,
       lastActivity: message.timestamp,
       messageCount: thread.messages.length,
     });
 
     // Step 5: Insert event with classification
-    const primaryWorkItemId = allWorkItemIds.size > 0 ? [...allWorkItemIds][0] : null;
-
     this.graph.insertEvent({
       threadId: thread.id,
       messageId: message.id,
