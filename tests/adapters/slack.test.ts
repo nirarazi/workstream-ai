@@ -9,6 +9,7 @@ const mockAuthTest = vi.fn();
 const mockConversationsList = vi.fn();
 const mockConversationsHistory = vi.fn();
 const mockConversationsReplies = vi.fn();
+const mockConversationsOpen = vi.fn();
 const mockChatPostMessage = vi.fn();
 const mockUsersList = vi.fn();
 
@@ -20,6 +21,7 @@ vi.mock("@slack/web-api", () => {
         list: mockConversationsList,
         history: mockConversationsHistory,
         replies: mockConversationsReplies,
+        open: mockConversationsOpen,
       };
       chat = { postMessage: mockChatPostMessage };
       users = { list: mockUsersList };
@@ -403,6 +405,54 @@ describe("SlackAdapter", () => {
       expect(messages[0].userName).toBe("Byte");
       expect(messages[0].text).toBe("Starting work on AI-382");
       expect(messages[2].text).toBe("Approved and merged");
+    });
+  });
+
+  // -- postMessage --
+
+  describe("postMessage", () => {
+    beforeEach(async () => {
+      await adapter.connect({ token: "xoxp-valid-token" });
+    });
+
+    it("posts a top-level message without thread_ts", async () => {
+      mockChatPostMessage.mockResolvedValue({ ok: true, ts: "1711900000.000100" });
+
+      const result = await adapter.postMessage("C001", "Hello channel");
+
+      expect(mockChatPostMessage).toHaveBeenCalledWith({
+        channel: "C001",
+        text: "Hello channel",
+        as_user: true,
+      });
+      expect(result.threadId).toBe("1711900000.000100");
+    });
+  });
+
+  // -- sendDirectMessage --
+
+  describe("sendDirectMessage", () => {
+    beforeEach(async () => {
+      await adapter.connect({ token: "xoxp-valid-token" });
+    });
+
+    it("opens a DM and posts a message", async () => {
+      mockConversationsOpen.mockResolvedValue({
+        ok: true,
+        channel: { id: "D001" },
+      });
+      mockChatPostMessage.mockResolvedValue({ ok: true, ts: "1711900100.000200" });
+
+      const result = await adapter.sendDirectMessage("U123", "Hey there");
+
+      expect(mockConversationsOpen).toHaveBeenCalledWith({ users: "U123" });
+      expect(mockChatPostMessage).toHaveBeenCalledWith({
+        channel: "D001",
+        text: "Hey there",
+        as_user: true,
+      });
+      expect(result.channelId).toBe("D001");
+      expect(result.threadId).toBe("1711900100.000200");
     });
   });
 
