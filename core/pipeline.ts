@@ -213,14 +213,38 @@ export class Pipeline {
       };
     }
 
-    // Step 1: Link work items from message text
-    const workItemIds = this.linker.linkMessage(message.text, thread.id);
+    // Step 0b: Inherit work item from existing thread (if already linked)
+    const existingThread = this.graph.getThreadById(thread.id);
+    const inheritedWorkItemId = existingThread?.workItemId ?? null;
+    const allWorkItemIds = new Set<string>();
+    if (inheritedWorkItemId) {
+      allWorkItemIds.add(inheritedWorkItemId);
+    }
+
+    // Step 1: Link work items from message text (regex — only known prefixes)
+    const extractedIds = this.linker.linkMessage(message.text, thread.id);
 
     // Step 2: Classify the message
     const classification = await this.classifier.classify(message.text);
 
-    // Merge work item IDs from linker and classifier
-    const allWorkItemIds = new Set([...workItemIds, ...classification.workItemIds]);
+    // Separate LLM-suggested IDs into verified (match an extracted ID) and unverified
+    const extractedSet = new Set(extractedIds);
+    // Add extracted IDs to allWorkItemIds
+    for (const id of extractedIds) {
+      allWorkItemIds.add(id);
+    }
+
+    for (const llmId of classification.workItemIds) {
+      if (!extractedSet.has(llmId)) {
+        // LLM suggested an ID that the regex didn't find — treat as inferred
+        this.graph.upsertWorkItem({
+          id: llmId,
+          source: "inferred",
+          title: classification.title || llmId,
+        });
+      }
+      allWorkItemIds.add(llmId);
+    }
 
     // Step 2b: If no work item IDs found and this isn't noise, create a synthetic work item
     // keyed by thread ID so the conversation stays grouped under one item
@@ -253,7 +277,7 @@ export class Pipeline {
       channelName: thread.channelName,
       platformMeta: thread.platformMeta,
       platform: thread.platform,
-      workItemId: workItemIds.length > 0 ? workItemIds[0] : undefined,
+      workItemId: allWorkItemIds.size > 0 ? [...allWorkItemIds][0] : undefined,
       lastActivity: message.timestamp,
       messageCount: thread.messages.length,
     });
