@@ -3,8 +3,13 @@ import {
   fetchWorkItemContext,
   generateSummary,
   postReply,
+  linkThread as apiLinkThread,
+  unlinkThread as apiUnlinkThread,
+  fetchUnlinkedThreads,
+  linkThreadByUrl,
   type WorkItemContext,
   type Mentionable,
+  type Thread,
 } from "../lib/api";
 import { timeAgo } from "../lib/time";
 import StatusBadge from "./StatusBadge";
@@ -34,6 +39,12 @@ export default function ContextPane({
   const [summarizing, setSummarizing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [acting, setActing] = useState(false);
+  const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null);
+  const [actionPanel, setActionPanel] = useState<"link" | "forward" | "new-thread" | null>(null);
+  const [unlinkedThreads, setUnlinkedThreads] = useState<Thread[]>([]);
+  const [linkSearch, setLinkSearch] = useState("");
+  const [linkUrl, setLinkUrl] = useState("");
+  const [linking, setLinking] = useState(false);
   const paneRef = useRef<HTMLDivElement>(null);
 
   // Fetch context on mount
@@ -113,10 +124,70 @@ export default function ContextPane({
     }
   }
 
+  // Fetch unlinked threads when link panel opens
+  useEffect(() => {
+    if (actionPanel !== "link") return;
+    let cancelled = false;
+    async function load() {
+      try {
+        const res = await fetchUnlinkedThreads(20, linkSearch || undefined);
+        if (!cancelled) setUnlinkedThreads(res.threads);
+      } catch {
+        if (!cancelled) setUnlinkedThreads([]);
+      }
+    }
+    load();
+    return () => { cancelled = true; };
+  }, [actionPanel, linkSearch]);
+
+  async function handleLinkThread(threadId: string) {
+    setLinking(true);
+    try {
+      await apiLinkThread(workItemId, threadId);
+      setActionPanel(null);
+      // Refresh context
+      const ctx = await fetchWorkItemContext(workItemId);
+      setContext(ctx);
+      setSummary(ctx.summary);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Link failed");
+    } finally {
+      setLinking(false);
+    }
+  }
+
+  async function handleLinkUrl() {
+    if (!linkUrl.trim()) return;
+    setLinking(true);
+    try {
+      await linkThreadByUrl(workItemId, linkUrl.trim());
+      setLinkUrl("");
+      setActionPanel(null);
+      const ctx = await fetchWorkItemContext(workItemId);
+      setContext(ctx);
+      setSummary(ctx.summary);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Link failed");
+    } finally {
+      setLinking(false);
+    }
+  }
+
+  async function handleUnlinkThread(threadId: string) {
+    try {
+      await apiUnlinkThread(workItemId, threadId);
+      const ctx = await fetchWorkItemContext(workItemId);
+      setContext(ctx);
+      setSummary(ctx.summary);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unlink failed");
+    }
+  }
+
   // Loading state
   if (!context && !error) {
     return (
-      <div className="fixed inset-0 z-40 flex justify-end" onClick={handleBackdropClick}>
+      <div className="fixed inset-0 z-[60] flex justify-end" onClick={handleBackdropClick}>
         <div ref={paneRef} className="w-full max-w-xl bg-gray-950 border-l border-gray-800 p-6 overflow-y-auto animate-slide-in-right">
           <div className="flex items-center justify-between mb-6">
             <div className="h-5 w-32 bg-gray-800 rounded animate-pulse" />
@@ -134,7 +205,7 @@ export default function ContextPane({
 
   if (error && !context) {
     return (
-      <div className="fixed inset-0 z-40 flex justify-end" onClick={handleBackdropClick}>
+      <div className="fixed inset-0 z-[60] flex justify-end" onClick={handleBackdropClick}>
         <div ref={paneRef} className="w-full max-w-xl bg-gray-950 border-l border-gray-800 p-6">
           <div className="flex items-center justify-between mb-6">
             <span className="text-sm text-red-400">{error}</span>
@@ -155,7 +226,7 @@ export default function ContextPane({
     : (id: string) => `@${id}`;
 
   return (
-    <div className="fixed inset-0 z-40 flex justify-end" onClick={handleBackdropClick}>
+    <div className="fixed inset-0 z-[60] flex justify-end" onClick={handleBackdropClick}>
       <div
         ref={paneRef}
         className="w-full max-w-xl bg-gray-950 border-l border-gray-800 overflow-y-auto animate-slide-in-right"
@@ -225,13 +296,137 @@ export default function ContextPane({
             </section>
           )}
 
-          {/* Conversation Thread */}
+          {/* Conversations */}
           <section>
             <h3 className="text-xs font-semibold uppercase tracking-widest text-gray-500 mb-2">
-              Conversation ({events.length} messages)
+              Conversations ({threads.length})
+            </h3>
+            <div className="space-y-1.5">
+              {threads.map((t) => (
+                <div
+                  key={t.id}
+                  onClick={() => setSelectedThreadId(selectedThreadId === t.id ? null : t.id)}
+                  className={`rounded border px-3 py-2 text-sm cursor-pointer transition-colors ${
+                    selectedThreadId === t.id
+                      ? "border-blue-600 bg-blue-900/20"
+                      : "border-gray-800 hover:border-gray-700"
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <span className="text-gray-300">{t.channelName || t.channelId}</span>
+                      {t.manuallyLinked && (
+                        <span className="ml-2 text-[10px] text-blue-400">manually linked</span>
+                      )}
+                    </div>
+                    {t.manuallyLinked && (
+                      <button
+                        onClick={(e) => { e.stopPropagation(); handleUnlinkThread(t.id); }}
+                        className="text-gray-600 hover:text-gray-400 text-xs cursor-pointer"
+                        title="Unlink thread"
+                      >
+                        &#x2715;
+                      </button>
+                    )}
+                  </div>
+                  <div className="text-xs text-gray-500 mt-0.5">
+                    {t.messageCount} messages · {timeAgo(t.lastActivity)}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* Action bar */}
+            <div className="flex gap-2 mt-3 pt-3 border-t border-gray-800">
+              <button
+                onClick={() => setActionPanel(actionPanel === "link" ? null : "link")}
+                className={`flex-1 py-1.5 rounded text-xs font-medium cursor-pointer transition-colors ${
+                  actionPanel === "link"
+                    ? "border border-blue-600 text-blue-400 bg-blue-900/20"
+                    : "border border-gray-700 text-gray-400 hover:text-gray-300 hover:border-gray-600"
+                }`}
+              >
+                + Link thread
+              </button>
+              <button
+                disabled={!selectedThreadId}
+                onClick={() => setActionPanel(actionPanel === "forward" ? null : "forward")}
+                className={`flex-1 py-1.5 rounded text-xs font-medium cursor-pointer transition-colors disabled:opacity-30 disabled:cursor-not-allowed ${
+                  actionPanel === "forward"
+                    ? "border border-blue-600 text-blue-400 bg-blue-900/20"
+                    : "border border-gray-700 text-gray-400 hover:text-gray-300 hover:border-gray-600"
+                }`}
+              >
+                Forward
+              </button>
+              <button
+                onClick={() => setActionPanel(actionPanel === "new-thread" ? null : "new-thread")}
+                className="flex-1 py-1.5 rounded text-xs font-medium cursor-pointer border border-gray-700 text-gray-400 hover:text-gray-300 hover:border-gray-600 transition-colors"
+              >
+                New thread
+              </button>
+            </div>
+
+            {/* Link thread panel */}
+            {actionPanel === "link" && (
+              <div className="mt-3 border border-blue-600 rounded-md bg-gray-900 overflow-hidden">
+                <div className="p-3 border-b border-gray-800">
+                  <input
+                    type="text"
+                    placeholder="Search by channel name..."
+                    value={linkSearch}
+                    onChange={(e) => setLinkSearch(e.target.value)}
+                    className="w-full bg-gray-800 border border-gray-700 rounded px-2.5 py-1.5 text-sm text-gray-200 placeholder-gray-500 focus:outline-none focus:border-blue-600"
+                  />
+                </div>
+                <div className="max-h-48 overflow-y-auto">
+                  {unlinkedThreads.length === 0 ? (
+                    <div className="p-3 text-xs text-gray-500 text-center">No unlinked threads found</div>
+                  ) : (
+                    unlinkedThreads.map((t) => (
+                      <button
+                        key={t.id}
+                        onClick={() => handleLinkThread(t.id)}
+                        disabled={linking}
+                        className="w-full text-left px-3 py-2 hover:bg-gray-800 transition-colors cursor-pointer disabled:opacity-50 border-b border-gray-800 last:border-b-0"
+                      >
+                        <div className="text-sm text-gray-300">{t.channelName || t.channelId}</div>
+                        <div className="text-xs text-gray-500">{t.messageCount} messages · {timeAgo(t.lastActivity)}</div>
+                      </button>
+                    ))
+                  )}
+                </div>
+                <div className="p-3 border-t border-gray-800">
+                  <div className="text-xs text-gray-500 mb-1.5">Or paste a Slack thread URL</div>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      placeholder="https://team.slack.com/archives/..."
+                      value={linkUrl}
+                      onChange={(e) => setLinkUrl(e.target.value)}
+                      onKeyDown={(e) => e.key === "Enter" && handleLinkUrl()}
+                      className="flex-1 bg-gray-800 border border-gray-700 rounded px-2.5 py-1.5 text-xs text-gray-200 placeholder-gray-500 focus:outline-none focus:border-blue-600"
+                    />
+                    <button
+                      onClick={handleLinkUrl}
+                      disabled={!linkUrl.trim() || linking}
+                      className="px-3 py-1.5 rounded text-xs font-medium bg-blue-600 text-white hover:bg-blue-500 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                    >
+                      Link
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+          </section>
+
+          {/* Event history */}
+          <section>
+            <h3 className="text-xs font-semibold uppercase tracking-widest text-gray-500 mb-2">
+              Event History ({events.length})
             </h3>
             <div className="space-y-2 max-h-80 overflow-y-auto">
-              {events.map((evt) => {
+              {[...events].reverse().map((evt) => {
                 const isHighlighted = evt.status !== "noise" && evt.status !== "in_progress";
                 return (
                   <div
