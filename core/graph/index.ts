@@ -54,6 +54,7 @@ function toThread(row: ThreadRow): Thread {
     lastActivity: row.last_activity,
     messageCount: row.message_count,
     messages: [],
+    manuallyLinked: row.manually_linked === 1,
   };
 }
 
