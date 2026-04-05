@@ -15,4 +15,7 @@ export interface PlatformAdapter {
   streamMessages(handler: (msg: Message) => void): void;
   getUsers(): Promise<Map<string, string>>; // userId -> displayName
   getThreadMessages(threadId: string, channelId: string): Promise<Message[]>;
+
+  /** Parse a platform-specific thread URL into threadId + channelId. Returns null if URL format is not recognized. */
+  parseThreadUrl?(url: string): { threadId: string; channelId: string } | null;
 }

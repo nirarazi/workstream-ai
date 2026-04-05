@@ -463,11 +463,11 @@ export default function ContextPane({
                   )}
                 </div>
                 <div className="p-3 border-t border-gray-800">
-                  <div className="text-xs text-gray-500 mb-1.5">Or paste a Slack thread URL</div>
+                  <div className="text-xs text-gray-500 mb-1.5">Or paste a thread URL</div>
                   <div className="flex gap-2">
                     <input
                       type="text"
-                      placeholder="https://team.slack.com/archives/..."
+                      placeholder="Paste thread URL..."
                       value={linkUrl}
                       onChange={(e) => setLinkUrl(e.target.value)}
                       onKeyDown={(e) => e.key === "Enter" && handleLinkUrl()}
