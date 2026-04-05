@@ -180,6 +180,13 @@ export class Database {
       this.db.exec("CREATE UNIQUE INDEX idx_events_message_thread_unique ON events(message_id, thread_id)");
       log.info("Migration: added unique index on events(message_id, thread_id)");
     }
+
+    // Add manually_linked column to threads table
+    const threadColsForManual = this.db.pragma("table_info(threads)") as Array<{ name: string }>;
+    if (!threadColsForManual.some((c) => c.name === "manually_linked")) {
+      this.db.exec("ALTER TABLE threads ADD COLUMN manually_linked INTEGER DEFAULT 0");
+      log.info("Migration: added manually_linked column to threads");
+    }
   }
 
   prepare<T>(sql: string): BetterSqlite3Type.Statement<T[]> {

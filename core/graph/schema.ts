@@ -36,6 +36,7 @@ export interface ThreadRow {
   work_item_id: string | null;
   last_activity: string;
   message_count: number;
+  manually_linked: number;
 }
 
 export interface EventRow {

@@ -38,6 +38,7 @@ export interface Thread {
   lastActivity: string;
   messageCount: number;
   messages: Message[];
+  manuallyLinked?: boolean;
 }
 
 export interface WorkItem {
