@@ -274,6 +274,40 @@ export class ContextGraph {
     return rows.map(toThread);
   }
 
+  linkThread(threadId: string, workItemId: string): void {
+    this.db.db.prepare(
+      "UPDATE threads SET work_item_id = ?, manually_linked = 1 WHERE id = ?"
+    ).run(workItemId, threadId);
+    log.debug("Manually linked thread", threadId, "to", workItemId);
+  }
+
+  unlinkThread(threadId: string): void {
+    this.db.db.prepare(
+      "UPDATE threads SET work_item_id = NULL, manually_linked = 0 WHERE id = ?"
+    ).run(threadId);
+    log.debug("Unlinked thread", threadId);
+  }
+
+  getUnlinkedThreads(limit: number, query?: string): Thread[] {
+    let sql = `
+      SELECT * FROM threads
+      WHERE manually_linked = 0
+        AND (work_item_id IS NULL OR work_item_id LIKE 'thread:%')
+    `;
+    const params: unknown[] = [];
+
+    if (query) {
+      sql += " AND channel_name LIKE ?";
+      params.push(`%${query}%`);
+    }
+
+    sql += " ORDER BY last_activity DESC LIMIT ?";
+    params.push(limit);
+
+    const rows = this.db.db.prepare(sql).all(...params) as ThreadRow[];
+    return rows.map(toThread);
+  }
+
   // --- Events ---
 
   insertEvent(event: {
