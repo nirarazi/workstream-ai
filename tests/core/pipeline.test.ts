@@ -47,6 +47,7 @@ function makeClassification(overrides: Partial<Classification> = {}): Classifica
     confidence: 0.95,
     reason: "Agent reports task completion",
     workItemIds: [],
+    title: "",
     ...overrides,
   };
 }
@@ -617,6 +618,113 @@ describe("Pipeline", () => {
       expect(adapter.readThreads).toHaveBeenCalledTimes(1);
 
       pipeline.stop();
+    });
+  });
+
+  describe("thread-to-work-item inheritance", () => {
+    it("inherits work item ID from existing thread when message has no ticket", async () => {
+      // Thread already linked to AI-382 in the graph
+      vi.mocked(graph.getThreadById).mockReturnValue({
+        id: "t-1",
+        channelId: "C-1",
+        channelName: "agent-orchestrator",
+        platform: "slack",
+        workItemId: "AI-382",
+        lastActivity: "2026-03-30T09:00:00.000Z",
+        messageCount: 1,
+        messages: [],
+      });
+
+      // Message text has NO ticket reference
+      const msg = makeMessage({ text: "Sounds good, I'll proceed with that approach" });
+      const thread = makeThread({}, [msg]);
+      vi.mocked(adapter.readThreads).mockResolvedValue([thread]);
+
+      // Linker finds nothing, classifier finds nothing
+      vi.mocked(linker.linkMessage).mockReturnValue([]);
+      vi.mocked(classifier.classify).mockResolvedValue(
+        makeClassification({ status: "in_progress", workItemIds: [] }),
+      );
+
+      // Set up existing work item so status update path works
+      const existingWi: WorkItem = {
+        id: "AI-382",
+        source: "extracted",
+        title: "Auth refactor",
+        externalStatus: null,
+        assignee: null,
+        url: null,
+        currentAtcStatus: "in_progress",
+        currentConfidence: 0.8,
+        snoozedUntil: null,
+        createdAt: "2026-03-29T10:00:00.000Z",
+        updatedAt: "2026-03-29T10:00:00.000Z",
+      };
+      vi.mocked(graph.getWorkItemById).mockReturnValue(existingWi);
+
+      await pipeline.processOnce();
+
+      // Event should be linked to the inherited work item
+      expect(graph.insertEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          workItemId: "AI-382",
+        }),
+      );
+
+      // Thread upsert should preserve AI-382 as the work item
+      expect(graph.upsertThread).toHaveBeenCalledWith(
+        expect.objectContaining({
+          workItemId: "AI-382",
+        }),
+      );
+    });
+
+    it("merges inherited work item with newly extracted IDs", async () => {
+      // Thread already linked to AI-382
+      vi.mocked(graph.getThreadById).mockReturnValue({
+        id: "t-1",
+        channelId: "C-1",
+        channelName: "agent-orchestrator",
+        platform: "slack",
+        workItemId: "AI-382",
+        lastActivity: "2026-03-30T09:00:00.000Z",
+        messageCount: 1,
+        messages: [],
+      });
+
+      // Message mentions a DIFFERENT ticket
+      const msg = makeMessage({ text: "Also related to IT-200" });
+      const thread = makeThread({}, [msg]);
+      vi.mocked(adapter.readThreads).mockResolvedValue([thread]);
+
+      vi.mocked(linker.linkMessage).mockReturnValue(["IT-200"]);
+      vi.mocked(classifier.classify).mockResolvedValue(
+        makeClassification({ status: "in_progress", workItemIds: [] }),
+      );
+
+      const existingAI382: WorkItem = {
+        id: "AI-382", source: "extracted", title: "Auth refactor",
+        externalStatus: null, assignee: null, url: null,
+        currentAtcStatus: "in_progress", currentConfidence: 0.8,
+        snoozedUntil: null, createdAt: "2026-03-29T10:00:00.000Z",
+        updatedAt: "2026-03-29T10:00:00.000Z",
+      };
+      const existingIT200: WorkItem = { ...existingAI382, id: "IT-200", title: "Related work" };
+
+      vi.mocked(graph.getWorkItemById).mockImplementation((id: string) => {
+        if (id === "AI-382") return existingAI382;
+        if (id === "IT-200") return existingIT200;
+        return null;
+      });
+
+      await pipeline.processOnce();
+
+      // Both work items should get status updates
+      const upsertCalls = vi.mocked(graph.upsertWorkItem).mock.calls;
+      const aiUpdate = upsertCalls.find((c) => c[0].id === "AI-382" && c[0].currentAtcStatus);
+      const itUpdate = upsertCalls.find((c) => c[0].id === "IT-200" && c[0].currentAtcStatus);
+      expect(aiUpdate).toBeDefined();
+      expect(itUpdate).toBeDefined();
     });
   });
 
