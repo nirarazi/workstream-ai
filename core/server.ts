@@ -32,6 +32,7 @@ export interface EngineState {
   pipeline: Pipeline | null;
   platformAdapter: PlatformAdapter | null;
   taskAdapter: TaskAdapter | null;
+  rateLimiters: Record<string, RateLimiter>;
   startedAt: Date;
   lastPoll: Date | null;
   processed: number;
@@ -56,6 +57,13 @@ export function createApp(state: EngineState): Hono {
   app.get("/api/status", (c) => {
     const uptime = Math.floor((Date.now() - state.startedAt.getTime()) / 1000);
     const llmBackoff = state.classifier.getBackoffState();
+    const llmThrottled = state.rateLimiters.llm?.isThrottling ?? false;
+    const llmDegraded = llmBackoff?.active || llmThrottled;
+
+    // Check Slack adapter's own per-method throttling state
+    const slackAdapter = state.platformAdapter as { isThrottling?: boolean } | null;
+    const slackThrottled = slackAdapter?.isThrottling ?? false;
+
     return c.json({
       ok: true,
       uptime,
@@ -64,9 +72,11 @@ export function createApp(state: EngineState): Hono {
         processed: state.processed,
       },
       services: {
-        ...(state.platformAdapter ? { [state.platformAdapter.name]: "ok" as const } : {}),
-        ...(state.taskAdapter ? { [state.taskAdapter.name]: "ok" as const } : {}),
-        LLM: llmBackoff?.active ? "degraded" as const : "ok" as const,
+        ...(state.platformAdapter
+          ? { [state.platformAdapter.displayName]: slackThrottled ? "degraded" as const : "ok" as const }
+          : {}),
+        ...(state.taskAdapter ? { [state.taskAdapter.displayName]: "ok" as const } : {}),
+        LLM: llmDegraded ? "degraded" as const : "ok" as const,
       },
       llmBackoff,
     });
@@ -255,6 +265,87 @@ export function createApp(state: EngineState): Hono {
     }
   });
 
+  // --- POST /api/work-item/:id/link-thread ---
+  app.post("/api/work-item/:id/link-thread", async (c) => {
+    const id = c.req.param("id");
+    if (!state.graph.getWorkItemById(id)) {
+      return c.json({ error: "Work item not found" }, 404);
+    }
+    const body = await c.req.json<{ threadId: string }>();
+    if (!body.threadId) {
+      return c.json({ error: "Missing threadId" }, 400);
+    }
+    state.graph.linkThread(body.threadId, id);
+    return c.json({ ok: true });
+  });
+
+  // --- POST /api/work-item/:id/unlink-thread ---
+  app.post("/api/work-item/:id/unlink-thread", async (c) => {
+    const id = c.req.param("id");
+    if (!state.graph.getWorkItemById(id)) {
+      return c.json({ error: "Work item not found" }, 404);
+    }
+    const body = await c.req.json<{ threadId: string }>();
+    if (!body.threadId) {
+      return c.json({ error: "Missing threadId" }, 400);
+    }
+    state.graph.unlinkThread(body.threadId);
+    return c.json({ ok: true });
+  });
+
+  // --- GET /api/threads/unlinked ---
+  app.get("/api/threads/unlinked", (c) => {
+    const limit = parseInt(c.req.query("limit") ?? "20", 10);
+    const q = c.req.query("q") || undefined;
+    const threads = state.graph.getUnlinkedThreads(isNaN(limit) ? 20 : limit, q);
+    return c.json({ threads });
+  });
+
+  // --- POST /api/work-item/:id/link-url ---
+  app.post("/api/work-item/:id/link-url", async (c) => {
+    const id = c.req.param("id");
+    if (!state.graph.getWorkItemById(id)) {
+      return c.json({ error: "Work item not found" }, 404);
+    }
+    if (!state.platformAdapter) {
+      return c.json({ error: "No platform adapter configured" }, 503);
+    }
+    const body = await c.req.json<{ url: string }>();
+    if (!body.url) {
+      return c.json({ error: "Missing url" }, 400);
+    }
+
+    // Parse Slack thread URL: https://team.slack.com/archives/C001/p1711900000000100
+    const match = body.url.match(/\/archives\/([A-Z0-9]+)\/p(\d+)/);
+    if (!match) {
+      return c.json({ error: "Invalid Slack thread URL" }, 400);
+    }
+    const channelId = match[1];
+    const rawTs = match[2];
+    const threadTs = rawTs.slice(0, 10) + "." + rawTs.slice(10);
+
+    // Fetch thread if not already in graph
+    if (!state.graph.getThreadById(threadTs)) {
+      try {
+        const messages = await state.platformAdapter.getThreadMessages(threadTs, channelId);
+        state.graph.upsertThread({
+          id: threadTs,
+          channelId,
+          channelName: "",
+          platform: state.platformAdapter.name,
+          lastActivity: messages[0]?.timestamp ?? new Date().toISOString(),
+          messageCount: messages.length,
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return c.json({ error: `Failed to fetch thread: ${message}` }, 500);
+      }
+    }
+
+    state.graph.linkThread(threadTs, id);
+    return c.json({ ok: true, threadId: threadTs });
+  });
+
   // --- POST /api/action ---
   app.post("/api/action", async (c) => {
     const body = await c.req.json<{
@@ -397,6 +488,7 @@ export function createApp(state: EngineState): Hono {
       jiraEmail?: string;
       jiraToken?: string;
       jiraBaseUrl?: string;
+      rateLimits?: Record<string, number>;
     }>();
 
     try {
@@ -426,6 +518,19 @@ export function createApp(state: EngineState): Hono {
           enabled: true,
           baseUrl: body.jiraBaseUrl,
         };
+      }
+
+      // Rate limits — dynamic: persist whatever the client sends
+      if (body.rateLimits && Object.keys(body.rateLimits).length > 0) {
+        const rlConfig: Record<string, { maxPerMinute: number }> = {};
+        for (const [name, maxPerMinute] of Object.entries(body.rateLimits)) {
+          if (typeof maxPerMinute === "number" && maxPerMinute > 0) {
+            rlConfig[name] = { maxPerMinute };
+          }
+        }
+        if (Object.keys(rlConfig).length > 0) {
+          localConfig.rateLimits = rlConfig;
+        }
       }
 
       writeFileSync(resolve(configDir, "local.yaml"), toYaml(localConfig), "utf-8");
@@ -477,14 +582,35 @@ export function createApp(state: EngineState): Hono {
         state.pipeline = null;
       }
 
+      // Recreate rate limiters — known defaults + any extras from config
+      const rlDefaults: Record<string, { maxPerMinute: number; displayName: string }> = {
+        llm: { maxPerMinute: 4, displayName: "LLM" },
+        slack: { maxPerMinute: 25, displayName: "Slack" },
+        jira: { maxPerMinute: 30, displayName: "Jira" },
+      };
+      // Carry over display names from existing limiters (community adapters may have registered theirs)
+      for (const [name, limiter] of Object.entries(state.rateLimiters)) {
+        if (!rlDefaults[name]) {
+          rlDefaults[name] = { maxPerMinute: limiter.limit, displayName: limiter.displayName };
+        }
+      }
+      if (state.config.rateLimits) {
+        for (const [name, cfg] of Object.entries(state.config.rateLimits)) {
+          if (cfg?.maxPerMinute) {
+            rlDefaults[name] = { ...rlDefaults[name], maxPerMinute: cfg.maxPerMinute };
+          }
+        }
+      }
+      const newLimiters: Record<string, RateLimiter> = {};
+      for (const [name, entry] of Object.entries(rlDefaults)) {
+        newLimiters[name] = createRateLimiter({ name, ...entry });
+      }
+      state.rateLimiters = newLimiters;
+
       // Reconnect adapters
       if (body.slackToken) {
         const slack = new SlackAdapter();
-        const slackRl = createRateLimiter({
-          name: "slack",
-          maxPerMinute: state.config.rateLimits?.slack?.maxPerMinute ?? 25,
-        });
-        slack.setRateLimiter(slackRl);
+        if (newLimiters.slack) slack.setRateLimiter(newLimiters.slack);
         await slack.connect({ token: body.slackToken });
         state.platformAdapter = slack;
         log.info("Slack adapter reconnected");
@@ -492,11 +618,7 @@ export function createApp(state: EngineState): Hono {
 
       if (jiraAuthToken && body.jiraBaseUrl) {
         const jira = new JiraAdapter();
-        const jiraRl = createRateLimiter({
-          name: "jira",
-          maxPerMinute: state.config.rateLimits?.jira?.maxPerMinute ?? 30,
-        });
-        jira.setRateLimiter(jiraRl);
+        if (newLimiters.jira) jira.setRateLimiter(newLimiters.jira);
         await jira.connect({ token: jiraAuthToken, baseUrl: body.jiraBaseUrl });
         state.taskAdapter = jira;
         log.info("Jira adapter reconnected");
@@ -504,11 +626,7 @@ export function createApp(state: EngineState): Hono {
 
       // Recreate classifier with new config
       state.classifier = Classifier.fromConfig(state.config);
-      const llmRl = createRateLimiter({
-        name: "llm",
-        maxPerMinute: state.config.rateLimits?.llm?.maxPerMinute ?? 4,
-      });
-      state.classifier.setRateLimiter(llmRl);
+      if (newLimiters.llm) state.classifier.setRateLimiter(newLimiters.llm);
 
       // Restart pipeline if we have a platform adapter
       if (state.platformAdapter) {
@@ -536,6 +654,12 @@ export function createApp(state: EngineState): Hono {
   // Returns env var values to pre-populate the setup form.
   // Safe to expose over localhost — values are already on this machine.
   app.get("/api/setup/prefill", (c) => {
+    // Build rate limits from whichever limiters are registered
+    const rateLimits: Record<string, { maxPerMinute: number; displayName: string }> = {};
+    for (const [name, limiter] of Object.entries(state.rateLimiters)) {
+      rateLimits[name] = { maxPerMinute: limiter.limit, displayName: limiter.displayName };
+    }
+
     return c.json({
       slackToken: process.env.ATC_SLACK_TOKEN ?? "",
       llmApiKey: process.env.ATC_LLM_API_KEY ?? "",
@@ -544,6 +668,7 @@ export function createApp(state: EngineState): Hono {
       jiraEmail: process.env.ATC_JIRA_EMAIL ?? "",
       jiraToken: process.env.ATC_JIRA_API_TOKEN ?? "",
       jiraBaseUrl: process.env.ATC_JIRA_BASE_URL ?? "",
+      rateLimits,
     });
   });
 
@@ -614,14 +739,17 @@ async function main(): Promise<void> {
   // 3. Create rate limiters
   const llmLimiter = createRateLimiter({
     name: "llm",
+    displayName: "LLM",
     maxPerMinute: config.rateLimits?.llm?.maxPerMinute ?? 4,
   });
   const slackLimiter = createRateLimiter({
     name: "slack",
+    displayName: "Slack",
     maxPerMinute: config.rateLimits?.slack?.maxPerMinute ?? 25,
   });
   const jiraLimiter = createRateLimiter({
     name: "jira",
+    displayName: "Jira",
     maxPerMinute: config.rateLimits?.jira?.maxPerMinute ?? 30,
   });
 
@@ -632,6 +760,7 @@ async function main(): Promise<void> {
   const extractor = new DefaultExtractor({
     ticketPatterns: config.extractors.ticketPatterns,
     prPatterns: config.extractors.prPatterns,
+    ticketPrefixes: config.jira.ticketPrefixes,
   });
   const linker = new WorkItemLinker(graph, [extractor]);
 
@@ -645,6 +774,7 @@ async function main(): Promise<void> {
     pipeline: null,
     platformAdapter: null,
     taskAdapter: null,
+    rateLimiters: { llm: llmLimiter, slack: slackLimiter, jira: jiraLimiter },
     startedAt: new Date(),
     lastPoll: null,
     processed: 0,
