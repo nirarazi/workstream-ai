@@ -36,15 +36,15 @@ function makeState(): EngineState {
     db,
     graph,
     classifier,
+    usageTracker: null,
     linker,
     pipeline: null,
-    messagingAdapter: null,
+    platformAdapter: null,
     taskAdapter: null,
     rateLimiters: {},
     startedAt: new Date(),
     lastPoll: null,
     processed: 0,
-    summarizer: null,
   } as any;
 }
 
@@ -273,5 +273,18 @@ describe("POST /api/setup", () => {
     // Either way, body should have an "ok" key.
     const body = await res.json();
     expect(body).toHaveProperty("ok");
+  });
+});
+
+describe("GET /api/status — llmUsage", () => {
+  it("returns null llmUsage when no tracker configured", async () => {
+    const state = makeState();
+    const app = createApp(state);
+    const res = await app.request("/api/status");
+    const body = await res.json();
+
+    // llmUsage should be null when no tracker is on the state
+    expect(body.llmUsage).toBeNull();
+    state.db.close();
   });
 });
