@@ -6,12 +6,6 @@ import { WorkItemLinker } from "../../core/graph/linker.js";
 import { DefaultExtractor } from "../../core/graph/extractors/default.js";
 import { createApp, type EngineState } from "../../core/server.js";
 
-// IMPORTANT: Import adapter modules so they self-register with the adapter registry.
-// Without these imports, getMessagingAdapterSetupInfo() and getTaskAdapterSetupInfo()
-// return empty arrays.
-import "../../core/adapters/messaging/slack/index.js";
-import "../../core/adapters/tasks/jira/index.js";
-
 function makeState(): EngineState {
   const db = new Database(":memory:");
   const graph = new ContextGraph(db);
@@ -25,9 +19,9 @@ function makeState(): EngineState {
   ]);
   return {
     config: {
-      messaging: { pollInterval: 30, channels: [] },
+      slack: { pollInterval: 30, channels: [] },
       classifier: { provider: { baseUrl: "http://localhost", model: "test" }, confidenceThreshold: 0.6 },
-      taskAdapter: { enabled: false, ticketPrefixes: [] },
+      jira: { enabled: false, ticketPrefixes: [] },
       extractors: { ticketPatterns: [], prPatterns: [] },
       mcp: { transport: "stdio" },
       server: { port: 9847, host: "127.0.0.1" },
@@ -48,73 +42,6 @@ function makeState(): EngineState {
   } as any;
 }
 
-describe("GET /api/setup/adapters", () => {
-  let state: EngineState;
-
-  beforeEach(() => {
-    state = makeState();
-  });
-
-  afterEach(() => {
-    state.db.close();
-  });
-
-  it("returns 200 with messaging and task arrays", async () => {
-    const app = createApp(state);
-    const res = await app.request("/api/setup/adapters");
-    expect(res.status).toBe(200);
-
-    const body = await res.json();
-    expect(body).toHaveProperty("messaging");
-    expect(body).toHaveProperty("task");
-    expect(Array.isArray(body.messaging)).toBe(true);
-    expect(Array.isArray(body.task)).toBe(true);
-  });
-
-  it("messaging array includes slack adapter with fields", async () => {
-    const app = createApp(state);
-    const res = await app.request("/api/setup/adapters");
-    const body = await res.json();
-
-    const slack = body.messaging.find((a: { name: string }) => a.name === "slack");
-    expect(slack).toBeDefined();
-    expect(slack.displayName).toBe("Slack");
-    expect(Array.isArray(slack.fields)).toBe(true);
-    expect(slack.fields.length).toBeGreaterThan(0);
-  });
-
-  it("task array includes jira adapter with 3 fields (email, token, baseUrl)", async () => {
-    const app = createApp(state);
-    const res = await app.request("/api/setup/adapters");
-    const body = await res.json();
-
-    const jira = body.task.find((a: { name: string }) => a.name === "jira");
-    expect(jira).toBeDefined();
-    expect(jira.displayName).toBe("Jira");
-    expect(jira.fields).toHaveLength(3);
-
-    const keys = jira.fields.map((f: { key: string }) => f.key);
-    expect(keys).toContain("email");
-    expect(keys).toContain("token");
-    expect(keys).toContain("baseUrl");
-  });
-
-  it("strips envVar from all fields in the response", async () => {
-    const app = createApp(state);
-    const res = await app.request("/api/setup/adapters");
-    const body = await res.json();
-
-    const allFields = [
-      ...body.messaging.flatMap((a: { fields: unknown[] }) => a.fields),
-      ...body.task.flatMap((a: { fields: unknown[] }) => a.fields),
-    ];
-
-    for (const field of allFields) {
-      expect(field).not.toHaveProperty("envVar");
-    }
-  });
-});
-
 describe("GET /api/setup/status", () => {
   let state: EngineState;
 
@@ -126,7 +53,7 @@ describe("GET /api/setup/status", () => {
     state.db.close();
   });
 
-  it("returns correct shape when no adapters connected", async () => {
+  it("returns correct shape when nothing configured", async () => {
     const app = createApp(state);
     const res = await app.request("/api/setup/status");
     expect(res.status).toBe(200);
@@ -134,32 +61,28 @@ describe("GET /api/setup/status", () => {
     const body = await res.json();
     expect(body).toHaveProperty("configured");
     expect(body).toHaveProperty("llm");
-    expect(body).toHaveProperty("adapters");
     expect(body).toHaveProperty("platformMeta");
 
     expect(body.configured).toBe(false);
-    expect(body.adapters.messaging).toBeNull();
-    expect(body.adapters.task).toBeNull();
     expect(body.platformMeta).toEqual({});
   });
 
-  it("returns adapter info and platformMeta when messaging adapter is set", async () => {
-    state.messagingAdapter = {
-      name: "slack",
-      displayName: "Slack",
-      getMetadata: () => ({ teamName: "Test" }),
-    } as any;
+  it("returns configured true when slack token and llm are set", async () => {
+    const origToken = process.env.ATC_SLACK_TOKEN;
+    process.env.ATC_SLACK_TOKEN = "xoxp-test";
 
     const app = createApp(state);
     const res = await app.request("/api/setup/status");
     expect(res.status).toBe(200);
 
     const body = await res.json();
-    expect(body.adapters.messaging).toEqual({ name: "slack", connected: true });
-    expect(body.platformMeta).toMatchObject({ teamName: "Test" });
-    // config.classifier.provider.baseUrl is "http://localhost" which contains "localhost",
-    // so llmConfigured is true. With messaging also connected, configured = true.
+    // llm is true (baseUrl contains "localhost"), slack token is set
     expect(body.configured).toBe(true);
+    expect(body.slack).toBe(true);
+    expect(body.llm).toBe(true);
+
+    if (origToken === undefined) delete process.env.ATC_SLACK_TOKEN;
+    else process.env.ATC_SLACK_TOKEN = origToken;
   });
 });
 
@@ -169,7 +92,6 @@ describe("GET /api/setup/prefill", () => {
 
   beforeEach(() => {
     state = makeState();
-    // Snapshot relevant env vars before each test
     originalEnv = {
       ATC_SLACK_TOKEN: process.env.ATC_SLACK_TOKEN,
       ATC_JIRA_EMAIL: process.env.ATC_JIRA_EMAIL,
@@ -179,7 +101,6 @@ describe("GET /api/setup/prefill", () => {
       ATC_LLM_BASE_URL: process.env.ATC_LLM_BASE_URL,
       ATC_LLM_MODEL: process.env.ATC_LLM_MODEL,
     };
-    // Clear all relevant env vars before each test
     delete process.env.ATC_SLACK_TOKEN;
     delete process.env.ATC_JIRA_EMAIL;
     delete process.env.ATC_JIRA_API_TOKEN;
@@ -191,13 +112,9 @@ describe("GET /api/setup/prefill", () => {
 
   afterEach(() => {
     state.db.close();
-    // Restore env vars
     for (const [key, value] of Object.entries(originalEnv)) {
-      if (value === undefined) {
-        delete process.env[key];
-      } else {
-        process.env[key] = value;
-      }
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
     }
   });
 
@@ -213,16 +130,7 @@ describe("GET /api/setup/prefill", () => {
     expect(body.llm.model).toBe("claude-sonnet-4-6");
   });
 
-  it("returns no messaging or task fields when no env vars are set", async () => {
-    const app = createApp(state);
-    const res = await app.request("/api/setup/prefill");
-    const body = await res.json();
-
-    expect(body.messaging).toBeUndefined();
-    expect(body.task).toBeUndefined();
-  });
-
-  it("returns messaging adapter fields when ATC_SLACK_TOKEN env var is set", async () => {
+  it("returns slackToken when ATC_SLACK_TOKEN env var is set", async () => {
     process.env.ATC_SLACK_TOKEN = "xoxp-test";
 
     const app = createApp(state);
@@ -230,9 +138,7 @@ describe("GET /api/setup/prefill", () => {
     expect(res.status).toBe(200);
 
     const body = await res.json();
-    expect(body.messaging).toBeDefined();
-    expect(body.messaging.adapter).toBe("slack");
-    expect(body.messaging.fields.token).toBe("xoxp-test");
+    expect(body.slackToken).toBe("xoxp-test");
   });
 });
 

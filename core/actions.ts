@@ -1,6 +1,6 @@
 // core/actions.ts — Backend logic for operator actions on work items
 
-import type { PlatformAdapter } from "./adapters/platforms/interface.js";
+import type { PlatformAdapter } from "./adapters/messaging/interface.js";
 import type { ContextGraph } from "./graph/index.js";
 import { createLogger } from "./logger.js";
 

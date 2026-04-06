@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import { createLogger } from "./logger.js";
 import type { Config } from "./config.js";
 import type { Classification, Message, Thread } from "./types.js";
-import type { PlatformAdapter } from "./adapters/platforms/interface.js";
+import type { PlatformAdapter } from "./adapters/messaging/interface.js";
 import type { TaskAdapter } from "./adapters/tasks/interface.js";
 import type { Classifier } from "./classifier/index.js";
 import type { ContextGraph } from "./graph/index.js";
