@@ -82,6 +82,15 @@ const ConfigSchema = z.object({
     maxToolCalls: 5,
     maxHistoryTurns: 10,
   }),
+  llmBudget: z.object({
+    dailyBudget: z.number().nullable(),
+    inputCostPerMillion: z.number().nullable(),
+    outputCostPerMillion: z.number().nullable(),
+  }).optional().default({
+    dailyBudget: null,
+    inputCostPerMillion: null,
+    outputCostPerMillion: null,
+  }),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;

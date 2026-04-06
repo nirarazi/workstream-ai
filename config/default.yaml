@@ -70,3 +70,8 @@ sidekick:
   enabled: true
   maxToolCalls: 5
   maxHistoryTurns: 10
+
+llmBudget:
+  dailyBudget: null              # USD per day, null = unlimited
+  inputCostPerMillion: null      # USD per 1M input tokens
+  outputCostPerMillion: null     # USD per 1M output tokens
