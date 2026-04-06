@@ -66,6 +66,21 @@ export function createApp(state: EngineState): Hono {
     const slackAdapter = state.platformAdapter as { isThrottling?: boolean } | null;
     const slackThrottled = slackAdapter?.isThrottling ?? false;
 
+    const llmUsage = state.usageTracker
+      ? (() => {
+          const today = state.usageTracker.getTodayUsage();
+          const budget = state.usageTracker.getBudgetStatus();
+          return {
+            inputTokens: today.inputTokens,
+            outputTokens: today.outputTokens,
+            cost: today.cost,
+            costSource: today.cost != null ? "configured" as const : null,
+            dailyBudget: budget.dailyBudget,
+            exhausted: budget.exhausted,
+          };
+        })()
+      : null;
+
     return c.json({
       ok: true,
       uptime,
@@ -81,6 +96,7 @@ export function createApp(state: EngineState): Hono {
         LLM: llmDegraded ? "degraded" as const : "ok" as const,
       },
       llmBackoff,
+      llmUsage,
     });
   });
 
@@ -626,6 +642,14 @@ export function createApp(state: EngineState): Hono {
       jiraToken?: string;
       jiraBaseUrl?: string;
       rateLimits?: Record<string, number>;
+      llm?: {
+        apiKey?: string;
+        baseUrl?: string;
+        model?: string;
+        dailyBudget?: number | null;
+        inputCostPerMillion?: number | null;
+        outputCostPerMillion?: number | null;
+      };
     }>();
 
     try {
@@ -648,6 +672,27 @@ export function createApp(state: EngineState): Hono {
             model: body.llmModel ?? state.config.classifier.provider.model,
           },
         };
+      }
+
+      if (body.llm) {
+        // Structured llm object — merge baseUrl/model if provided
+        if (body.llm.baseUrl || body.llm.model) {
+          localConfig.classifier = {
+            provider: {
+              baseUrl: body.llm.baseUrl ?? (localConfig.classifier as any)?.provider?.baseUrl ?? state.config.classifier.provider.baseUrl,
+              model: body.llm.model ?? (localConfig.classifier as any)?.provider?.model ?? state.config.classifier.provider.model,
+            },
+          };
+        }
+
+        // Budget config
+        if (body.llm.dailyBudget !== undefined || body.llm.inputCostPerMillion !== undefined || body.llm.outputCostPerMillion !== undefined) {
+          (localConfig as any).llmBudget = {
+            dailyBudget: body.llm.dailyBudget ?? null,
+            inputCostPerMillion: body.llm.inputCostPerMillion ?? null,
+            outputCostPerMillion: body.llm.outputCostPerMillion ?? null,
+          };
+        }
       }
 
       if (body.jiraBaseUrl) {
@@ -712,6 +757,10 @@ export function createApp(state: EngineState): Hono {
       // Reload config
       resetConfig();
       state.config = loadConfig(projectRoot);
+
+      if (state.usageTracker) {
+        state.usageTracker.updateConfig(state.config.llmBudget);
+      }
 
       // Stop existing pipeline
       if (state.pipeline) {
@@ -811,6 +860,14 @@ export function createApp(state: EngineState): Hono {
       jiraToken: process.env.ATC_JIRA_API_TOKEN ?? "",
       jiraBaseUrl: process.env.ATC_JIRA_BASE_URL ?? "",
       rateLimits,
+      llm: {
+        apiKey: process.env.ATC_LLM_API_KEY ?? "",
+        baseUrl: process.env.ATC_LLM_BASE_URL ?? "https://api.anthropic.com/v1",
+        model: process.env.ATC_LLM_MODEL ?? "claude-sonnet-4-6",
+        dailyBudget: state.config.llmBudget?.dailyBudget ?? null,
+        inputCostPerMillion: state.config.llmBudget?.inputCostPerMillion ?? null,
+        outputCostPerMillion: state.config.llmBudget?.outputCostPerMillion ?? null,
+      },
     });
   });
 
