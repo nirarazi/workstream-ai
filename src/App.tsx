@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback, type JSX } from "react";
-import { fetchSetupStatus, fetchStatus, type ServiceStatuses } from "./lib/api";
+import { fetchSetupStatus, fetchStatus, type ServiceStatuses, type LlmUsage } from "./lib/api";
 import Inbox from "./components/Inbox";
 import FleetBoard from "./components/FleetBoard";
 import Sidekick from "./components/Sidekick";
@@ -36,6 +36,7 @@ function App(): JSX.Element {
   const [retryVisible, setRetryVisible] = useState(false);
   const [sidekickOpen, setSidekickOpen] = useState(false);
   const [services, setServices] = useState<ServiceStatuses>(DEFAULT_SERVICES);
+  const [llmUsage, setLlmUsage] = useState<LlmUsage | null>(null);
   const statusInterval = useRef<ReturnType<typeof setInterval> | null>(null);
   const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -44,9 +45,11 @@ function App(): JSX.Element {
       const status = await fetchStatus();
       setConnected(true);
       setServices(status.services);
+      setLlmUsage(status.llmUsage ?? null);
     } catch {
       setConnected(false);
       setServices(DEFAULT_SERVICES);
+      setLlmUsage(null);
     }
   }, []);
 
@@ -139,6 +142,15 @@ function App(): JSX.Element {
             {Object.entries(services).map(([name, status]) => (
               <ServiceDot key={name} label={name} status={connected ? status : "disconnected"} />
             ))}
+            {llmUsage?.cost != null && (
+              <span className="text-[11px] text-gray-500">
+                ${llmUsage.cost.toFixed(2)}
+                {llmUsage.dailyBudget != null && ` / $${llmUsage.dailyBudget.toFixed(2)}`}
+                {llmUsage.exhausted && (
+                  <span className="text-amber-500"> (paused)</span>
+                )}
+              </span>
+            )}
           </div>
         </div>
       </header>
