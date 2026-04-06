@@ -2,7 +2,9 @@
 
 import type { Credentials, WorkItemDetail, WorkItemComment } from "../../../types.js";
 import type { TaskAdapter } from "../interface.js";
+import type { AdapterSetupInfo } from "../../setup.js";
 import { createLogger } from "../../../logger.js";
+import { registerTaskAdapter } from "../../registry.js";
 import type { RateLimiter } from "../../../rate-limiter.js";
 
 const log = createLogger("jira-adapter");
@@ -111,6 +113,49 @@ const ISSUE_FIELDS = "summary,status,assignee,labels,description";
 
 export class JiraAdapter implements TaskAdapter {
   name = "jira";
+  displayName = "Jira";
+
+  getSetupInfo(): AdapterSetupInfo {
+    return {
+      name: "jira",
+      displayName: "Jira",
+      helpUrl: "https://id.atlassian.com/manage-profile/security/api-tokens",
+      fields: [
+        {
+          key: "email",
+          label: "Email",
+          type: "email",
+          required: true,
+          placeholder: "you@company.com",
+          envVar: "ATC_JIRA_EMAIL",
+        },
+        {
+          key: "token",
+          label: "API Token",
+          type: "password",
+          required: true,
+          placeholder: "Jira API token",
+          envVar: "ATC_JIRA_API_TOKEN",
+        },
+        {
+          key: "baseUrl",
+          label: "Base URL",
+          type: "url",
+          required: true,
+          placeholder: "https://your-org.atlassian.net",
+          envVar: "ATC_JIRA_BASE_URL",
+        },
+      ],
+    };
+  }
+
+  prepareCredentials(fields: Record<string, string>): Record<string, string> {
+    const authToken = Buffer.from(`${fields.email}:${fields.token}`).toString("base64");
+    return {
+      token: authToken,
+      baseUrl: fields.baseUrl,
+    };
+  }
 
   private baseUrl = "";
   private authToken = "";
@@ -377,3 +422,6 @@ export class JiraAdapter implements TaskAdapter {
     }));
   }
 }
+
+// Self-register with the adapter registry
+registerTaskAdapter("jira", () => new JiraAdapter());
