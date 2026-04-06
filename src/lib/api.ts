@@ -115,7 +115,14 @@ export interface SetupStatus {
 export interface SetupPayload {
   messaging?: { adapter: string; fields: Record<string, string> };
   task?: { adapter: string; fields: Record<string, string> };
-  llm?: { apiKey: string; baseUrl: string; model: string };
+  llm?: {
+    apiKey: string;
+    baseUrl: string;
+    model: string;
+    dailyBudget?: number | null;
+    inputCostPerMillion?: number | null;
+    outputCostPerMillion?: number | null;
+  };
   rateLimits?: Record<string, number>;
 }
 
@@ -127,7 +134,14 @@ export interface RateLimitInfo {
 export interface SetupPrefill {
   messaging?: { adapter: string; fields: Record<string, string> };
   task?: { adapter: string; fields: Record<string, string> };
-  llm: { apiKey: string; baseUrl: string; model: string };
+  llm: {
+    apiKey: string;
+    baseUrl: string;
+    model: string;
+    dailyBudget?: number | null;
+    inputCostPerMillion?: number | null;
+    outputCostPerMillion?: number | null;
+  };
   rateLimits?: Record<string, RateLimitInfo>;
 }
 
@@ -136,6 +150,15 @@ export interface LlmBackoff {
   retryCount: number;
   nextRetryAt: string | null;
   lastError: string | null;
+}
+
+export interface LlmUsage {
+  inputTokens: number;
+  outputTokens: number;
+  cost: number | null;
+  costSource: "api" | "configured" | null;
+  dailyBudget: number | null;
+  exhausted: boolean;
 }
 
 export type ServiceStatus = "ok" | "degraded" | "disconnected";
@@ -149,6 +172,7 @@ export interface EngineStatus {
   pipeline: unknown;
   services: ServiceStatuses;
   llmBackoff: LlmBackoff | null;
+  llmUsage: LlmUsage | null;
 }
 
 export interface WorkItemDetail {
