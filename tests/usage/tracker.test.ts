@@ -1,6 +1,21 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import type { UsageRecord, DailyUsage, BudgetStatus, UsageConfig } from "../../core/usage/types.js";
 import { Database } from "../../core/graph/db.js";
+import { UsageTracker } from "../../core/usage/tracker.js";
+import type { ModelProvider, ClassificationResult } from "../../core/classifier/providers/interface.js";
+
+function mockProvider(result: ClassificationResult): ModelProvider {
+  return {
+    name: "mock",
+    classify: vi.fn().mockResolvedValue(result),
+  };
+}
+
+const DEFAULT_CONFIG: UsageConfig = {
+  dailyBudget: null,
+  inputCostPerMillion: 3.0,
+  outputCostPerMillion: 15.0,
+};
 
 describe("Usage types", () => {
   it("UsageRecord has required shape", () => {
@@ -91,6 +106,143 @@ describe("llm_usage table", () => {
     const names = indexes.map((i) => i.name);
     expect(names).toContain("idx_llm_usage_timestamp");
     expect(names).toContain("idx_llm_usage_caller");
+    db.close();
+  });
+});
+
+describe("UsageTracker", () => {
+  it("delegates classify() to the provider and records usage", async () => {
+    const db = new Database(":memory:");
+    const provider = mockProvider({
+      status: "completed",
+      confidence: 0.95,
+      reason: "done",
+      workItemIds: ["AI-1"],
+      title: "Deploy fix",
+    });
+
+    const tracker = new UsageTracker(provider, db, DEFAULT_CONFIG);
+    const result = await tracker.classify("AI-1: PR merged", "system prompt", [], "classifier");
+
+    expect(result.status).toBe("completed");
+    expect(provider.classify).toHaveBeenCalledWith("AI-1: PR merged", "system prompt", []);
+
+    // Check a record was persisted
+    const rows = db.db.prepare("SELECT * FROM llm_usage").all() as Array<Record<string, unknown>>;
+    expect(rows).toHaveLength(1);
+    expect(rows[0].caller).toBe("classifier");
+    expect(rows[0].token_source).toBe("estimated");
+    expect(typeof rows[0].input_tokens).toBe("number");
+    expect((rows[0].input_tokens as number)).toBeGreaterThan(0);
+    db.close();
+  });
+
+  it("calculates cost from configured rates", async () => {
+    const db = new Database(":memory:");
+    const provider = mockProvider({
+      status: "noise", confidence: 0.8, reason: "greeting", workItemIds: [], title: "",
+    });
+
+    const tracker = new UsageTracker(provider, db, {
+      dailyBudget: null,
+      inputCostPerMillion: 3.0,
+      outputCostPerMillion: 15.0,
+    });
+
+    await tracker.classify("Hello world", "sys", [], "classifier");
+
+    const rows = db.db.prepare("SELECT * FROM llm_usage").all() as Array<Record<string, unknown>>;
+    expect(rows[0].cost_source).toBe("configured");
+    expect(typeof rows[0].cost).toBe("number");
+    expect((rows[0].cost as number)).toBeGreaterThan(0);
+    db.close();
+  });
+
+  it("returns null cost when no pricing configured", async () => {
+    const db = new Database(":memory:");
+    const provider = mockProvider({
+      status: "noise", confidence: 0.8, reason: "greeting", workItemIds: [], title: "",
+    });
+
+    const tracker = new UsageTracker(provider, db, {
+      dailyBudget: null,
+      inputCostPerMillion: null,
+      outputCostPerMillion: null,
+    });
+
+    await tracker.classify("Hello world", "sys", [], "classifier");
+
+    const rows = db.db.prepare("SELECT * FROM llm_usage").all() as Array<Record<string, unknown>>;
+    expect(rows[0].cost).toBeNull();
+    expect(rows[0].cost_source).toBeNull();
+    db.close();
+  });
+
+  it("rejects classify() when daily budget is exhausted", async () => {
+    const db = new Database(":memory:");
+    const provider = mockProvider({
+      status: "completed", confidence: 0.95, reason: "done", workItemIds: [], title: "",
+    });
+
+    const tracker = new UsageTracker(provider, db, {
+      dailyBudget: 0.001,
+      inputCostPerMillion: 3.0,
+      outputCostPerMillion: 15.0,
+    });
+
+    // First call succeeds and exhausts the budget
+    await tracker.classify("Hello", "sys", [], "classifier");
+
+    // Second call should return budget-exhausted fallback
+    const result = await tracker.classify("World", "sys", [], "classifier");
+    expect(result.status).toBe("noise");
+    expect(result.confidence).toBe(0.1);
+    expect(result.reason).toContain("budget");
+
+    // Provider should NOT have been called for the second classify
+    expect(provider.classify).toHaveBeenCalledTimes(1);
+    db.close();
+  });
+
+  it("getTodayUsage() aggregates correctly", async () => {
+    const db = new Database(":memory:");
+    const provider = mockProvider({
+      status: "noise", confidence: 0.8, reason: "x", workItemIds: [], title: "",
+    });
+
+    const tracker = new UsageTracker(provider, db, DEFAULT_CONFIG);
+
+    await tracker.classify("msg1", "sys", [], "classifier");
+    await tracker.classify("msg2", "sys", [], "summarizer");
+
+    const usage = tracker.getTodayUsage();
+    expect(usage.inputTokens).toBeGreaterThan(0);
+    expect(Object.keys(usage.byCaller)).toContain("classifier");
+    expect(Object.keys(usage.byCaller)).toContain("summarizer");
+    expect(usage.byCaller.classifier.callCount).toBe(1);
+    expect(usage.byCaller.summarizer.callCount).toBe(1);
+    db.close();
+  });
+
+  it("getBudgetStatus() returns correct remaining", async () => {
+    const db = new Database(":memory:");
+    const provider = mockProvider({
+      status: "noise", confidence: 0.8, reason: "x", workItemIds: [], title: "",
+    });
+
+    const tracker = new UsageTracker(provider, db, {
+      dailyBudget: 10.0,
+      inputCostPerMillion: 3.0,
+      outputCostPerMillion: 15.0,
+    });
+
+    await tracker.classify("Hello world test message", "sys", [], "classifier");
+
+    const status = tracker.getBudgetStatus();
+    expect(status.dailyBudget).toBe(10.0);
+    expect(status.spent).toBeGreaterThan(0);
+    expect(status.remaining).toBeLessThan(10.0);
+    expect(status.exhausted).toBe(false);
     db.close();
   });
 });
