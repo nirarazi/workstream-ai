@@ -1,11 +1,18 @@
 import { useState, useEffect, type JSX, type FormEvent } from "react";
-import { postSetup, fetchSetupPrefill, openExternalUrl, type SetupConfig, type RateLimitInfo } from "../lib/api";
+import {
+  postSetup,
+  fetchSetupPrefill,
+  fetchSetupAdapters,
+  openExternalUrl,
+  type SetupPayload,
+  type RateLimitInfo,
+  type AdapterSetupInfo,
+} from "../lib/api";
+import AdapterFieldGroup from "./AdapterFieldGroup";
 
 interface SetupProps {
   onComplete: () => void;
 }
-
-// --- Provider presets ---
 
 type ProviderPreset = "anthropic" | "openai" | "openrouter" | "ollama" | "custom";
 
@@ -55,77 +62,119 @@ const PRESETS: Record<
   },
 };
 
-// --- Helper link opener ---
 function openExternal(url: string) {
   openExternalUrl(url);
 }
 
-// --- Env-prefilled badge ---
-function FromEnvBadge() {
-  return (
-    <span className="ml-2 rounded bg-green-900/50 px-1.5 py-0.5 text-[10px] font-medium text-green-400">
-      from env
-    </span>
-  );
-}
-
 export default function Setup({ onComplete }: SetupProps): JSX.Element {
-  const [form, setForm] = useState<SetupConfig>({
-    slackToken: "",
-    llmApiKey: "",
-    llmBaseUrl: PRESETS.anthropic.baseUrl,
-    llmModel: PRESETS.anthropic.models[0],
-    jiraEmail: "",
-    jiraToken: "",
-    jiraBaseUrl: "",
-  });
-  const [rateLimits, setRateLimits] = useState<Record<string, RateLimitInfo>>({});
-  const [envFields, setEnvFields] = useState<Partial<Record<keyof SetupConfig, boolean>>>({});
+  // Adapter schemas from server
+  const [messagingAdapters, setMessagingAdapters] = useState<AdapterSetupInfo[]>([]);
+  const [taskAdapters, setTaskAdapters] = useState<AdapterSetupInfo[]>([]);
+
+  // Selected adapter per category
+  const [selectedMessaging, setSelectedMessaging] = useState<string>("");
+  const [selectedTask, setSelectedTask] = useState<string>("");
+
+  // Field values per adapter
+  const [messagingFields, setMessagingFields] = useState<Record<string, string>>({});
+  const [taskFields, setTaskFields] = useState<Record<string, string>>({});
+  const [messagingEnv, setMessagingEnv] = useState<Record<string, boolean>>({});
+  const [taskEnv, setTaskEnv] = useState<Record<string, boolean>>({});
+
+  // LLM fields
+  const [llmApiKey, setLlmApiKey] = useState("");
+  const [llmBaseUrl, setLlmBaseUrl] = useState(PRESETS.anthropic.baseUrl);
+  const [llmModel, setLlmModel] = useState(PRESETS.anthropic.models[0]);
   const [preset, setPreset] = useState<ProviderPreset>("anthropic");
+  const [llmEnv, setLlmEnv] = useState<Record<string, boolean>>({});
+
+  // Rate limits
+  const [rateLimits, setRateLimits] = useState<Record<string, RateLimitInfo>>({});
+
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Pre-populate from env vars on mount
+  // Fetch adapter schemas + prefill on mount
   useEffect(() => {
-    fetchSetupPrefill()
-      .then((prefill) => {
-        const detected: Partial<Record<keyof SetupConfig, boolean>> = {};
-        setForm((prev) => {
-          const next = { ...prev };
-          for (const key of Object.keys(prefill) as (keyof SetupConfig)[]) {
-            if (key === "rateLimits") continue;
-            const val = prefill[key];
-            if (val) {
-              (next as Record<string, string>)[key] = val as string;
-              detected[key] = true;
+    Promise.all([fetchSetupAdapters(), fetchSetupPrefill()])
+      .then(([adapters, prefill]) => {
+        setMessagingAdapters(adapters.messaging);
+        setTaskAdapters(adapters.task);
+
+        const defaultMessaging = prefill.messaging?.adapter ?? adapters.messaging[0]?.name ?? "";
+        const defaultTask = prefill.task?.adapter ?? adapters.task[0]?.name ?? "";
+        setSelectedMessaging(defaultMessaging);
+        setSelectedTask(defaultTask);
+
+        if (prefill.messaging?.fields) {
+          setMessagingFields(prefill.messaging.fields);
+          const env: Record<string, boolean> = {};
+          for (const key of Object.keys(prefill.messaging.fields)) {
+            if (prefill.messaging.fields[key]) env[key] = true;
+          }
+          setMessagingEnv(env);
+        }
+
+        if (prefill.task?.fields) {
+          setTaskFields(prefill.task.fields);
+          const env: Record<string, boolean> = {};
+          for (const key of Object.keys(prefill.task.fields)) {
+            if (prefill.task.fields[key]) env[key] = true;
+          }
+          setTaskEnv(env);
+        }
+
+        if (prefill.llm) {
+          const envDetected: Record<string, boolean> = {};
+          if (prefill.llm.apiKey) {
+            setLlmApiKey(prefill.llm.apiKey);
+            envDetected.apiKey = true;
+          }
+          if (prefill.llm.baseUrl) {
+            setLlmBaseUrl(prefill.llm.baseUrl);
+            envDetected.baseUrl = true;
+            for (const [id, p] of Object.entries(PRESETS) as [ProviderPreset, typeof PRESETS[ProviderPreset]][]) {
+              if (p.baseUrl && prefill.llm.baseUrl.startsWith(p.baseUrl.replace("/v1", ""))) {
+                setPreset(id);
+                break;
+              }
             }
           }
-          return next;
-        });
-        setEnvFields(detected);
+          if (prefill.llm.model) {
+            setLlmModel(prefill.llm.model);
+            envDetected.model = true;
+          }
+          setLlmEnv(envDetected);
+        }
 
-        // Populate rate limits from server
-        if (prefill.rateLimits && typeof prefill.rateLimits === "object") {
+        if (prefill.rateLimits) {
           setRateLimits(prefill.rateLimits);
         }
-
-        // Detect preset from prefilled base URL
-        if (prefill.llmBaseUrl) {
-          for (const [id, p] of Object.entries(PRESETS) as [ProviderPreset, typeof PRESETS[ProviderPreset]][]) {
-            if (p.baseUrl && (prefill.llmBaseUrl as string).startsWith(p.baseUrl.replace("/v1", ""))) {
-              setPreset(id);
-              break;
-            }
-          }
-        }
       })
-      .catch(() => {/* prefill is best-effort */});
+      .catch(() => {});
   }, []);
 
-  function update(field: keyof SetupConfig, value: string) {
-    setForm((prev) => ({ ...prev, [field]: value }));
-    // Clear env badge if user edits the field
-    setEnvFields((prev) => ({ ...prev, [field]: false }));
+  const currentMessaging = messagingAdapters.find((a) => a.name === selectedMessaging);
+  const currentTask = taskAdapters.find((a) => a.name === selectedTask);
+  const currentPreset = PRESETS[preset];
+
+  function updateMessagingField(key: string, value: string) {
+    setMessagingFields((prev) => ({ ...prev, [key]: value }));
+    setMessagingEnv((prev) => ({ ...prev, [key]: false }));
+  }
+
+  function updateTaskField(key: string, value: string) {
+    setTaskFields((prev) => ({ ...prev, [key]: value }));
+    setTaskEnv((prev) => ({ ...prev, [key]: false }));
+  }
+
+  function applyPreset(id: ProviderPreset) {
+    setPreset(id);
+    const p = PRESETS[id];
+    setLlmBaseUrl(p.baseUrl || llmBaseUrl);
+    setLlmModel(p.models[0] ?? llmModel);
+    if (!p.needsKey) setLlmApiKey("(not required)");
+    setLlmEnv({});
   }
 
   function updateRateLimit(name: string, value: string) {
@@ -138,42 +187,62 @@ export default function Setup({ onComplete }: SetupProps): JSX.Element {
     }
   }
 
-  function applyPreset(id: ProviderPreset) {
-    setPreset(id);
-    const p = PRESETS[id];
-    setForm((prev) => ({
-      ...prev,
-      llmBaseUrl: p.baseUrl || prev.llmBaseUrl,
-      llmModel: p.models[0] ?? prev.llmModel,
-      llmApiKey: p.needsKey ? prev.llmApiKey : "(not required)",
-    }));
-  }
-
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
-    const needsKey = PRESETS[preset].needsKey;
-    const keyValue = form.llmApiKey === "(not required)" ? "" : form.llmApiKey;
-    if (!form.slackToken.trim() || (needsKey && !keyValue.trim())) {
-      setError(
-        needsKey
-          ? "Slack Token and LLM API Key are required."
-          : "Slack Token is required.",
-      );
+    setError(null);
+
+    if (currentMessaging) {
+      for (const field of currentMessaging.fields) {
+        if (field.required && !messagingFields[field.key]?.trim()) {
+          setError(`${currentMessaging.displayName}: ${field.label} is required.`);
+          return;
+        }
+      }
+    }
+
+    const needsKey = currentPreset.needsKey;
+    const keyValue = llmApiKey === "(not required)" ? "" : llmApiKey;
+    if (needsKey && !keyValue.trim()) {
+      setError("LLM API Key is required.");
       return;
     }
 
     setSubmitting(true);
-    setError(null);
     try {
-      const payload: SetupConfig = {
-        slackToken: form.slackToken.trim(),
-        llmApiKey: keyValue.trim(),
-        llmBaseUrl: form.llmBaseUrl.trim() || PRESETS.anthropic.baseUrl,
-        llmModel: form.llmModel.trim() || PRESETS.anthropic.models[0],
+      const payload: SetupPayload = {};
+
+      if (selectedMessaging && currentMessaging) {
+        const fields: Record<string, string> = {};
+        for (const field of currentMessaging.fields) {
+          const val = messagingFields[field.key]?.trim();
+          if (val) fields[field.key] = val;
+        }
+        if (Object.keys(fields).length > 0) {
+          payload.messaging = { adapter: selectedMessaging, fields };
+        }
+      }
+
+      if (selectedTask && currentTask) {
+        const fields: Record<string, string> = {};
+        let hasValues = false;
+        for (const field of currentTask.fields) {
+          const val = taskFields[field.key]?.trim();
+          if (val) {
+            fields[field.key] = val;
+            hasValues = true;
+          }
+        }
+        if (hasValues) {
+          payload.task = { adapter: selectedTask, fields };
+        }
+      }
+
+      payload.llm = {
+        apiKey: keyValue.trim(),
+        baseUrl: llmBaseUrl.trim() || PRESETS.anthropic.baseUrl,
+        model: llmModel.trim() || PRESETS.anthropic.models[0],
       };
-      if (form.jiraEmail?.trim()) payload.jiraEmail = form.jiraEmail.trim();
-      if (form.jiraToken?.trim()) payload.jiraToken = form.jiraToken.trim();
-      if (form.jiraBaseUrl?.trim()) payload.jiraBaseUrl = form.jiraBaseUrl.trim();
+
       if (Object.keys(rateLimits).length > 0) {
         const rl: Record<string, number> = {};
         for (const [name, info] of Object.entries(rateLimits)) {
@@ -196,19 +265,11 @@ export default function Setup({ onComplete }: SetupProps): JSX.Element {
   const selectClass =
     "w-full rounded border border-gray-700 bg-gray-800 px-3 py-2 text-sm text-gray-100 outline-none focus:border-gray-500";
 
-  const slackTokenLink = "https://api.slack.com/apps";
-  const jiraTokenLink = "https://id.atlassian.com/manage-profile/security/api-tokens";
-  const anthropicKeyLink = "https://console.anthropic.com/settings/keys";
-  const openaiKeyLink = "https://platform.openai.com/api-keys";
-  const openrouterKeyLink = "https://openrouter.ai/keys";
-  const ollamaLink = "https://ollama.com";
-
-  const currentPreset = PRESETS[preset];
   const apiKeyLink: Record<string, string> = {
-    anthropic: anthropicKeyLink,
-    openai: openaiKeyLink,
-    openrouter: openrouterKeyLink,
-    ollama: ollamaLink,
+    anthropic: "https://console.anthropic.com/settings/keys",
+    openai: "https://platform.openai.com/api-keys",
+    openrouter: "https://openrouter.ai/keys",
+    ollama: "https://ollama.com",
   };
   const currentKeyLink = apiKeyLink[preset] ?? null;
 
@@ -222,44 +283,65 @@ export default function Setup({ onComplete }: SetupProps): JSX.Element {
       </p>
 
       <form onSubmit={handleSubmit} className="space-y-5">
-        {/* ── Slack ─────────────────────────────────────────── */}
-        <fieldset className="space-y-3">
-          <div className="flex items-center justify-between mb-1">
-            <legend className="text-xs font-semibold uppercase tracking-widest text-gray-500">
-              Slack
-            </legend>
-            <button
-              type="button"
-              onClick={() => openExternal(slackTokenLink)}
-              className="text-[11px] text-blue-400 hover:text-blue-300"
-            >
-              Get token →
-            </button>
-          </div>
-          <div>
-            <label htmlFor="slackToken" className="flex items-center text-xs text-gray-400 mb-1">
-              Slack Token *
-              {envFields.slackToken && <FromEnvBadge />}
-            </label>
-            <input
-              id="slackToken"
-              type="password"
-              value={form.slackToken}
-              onChange={(e) => update("slackToken", e.target.value)}
-              placeholder="xoxp-..."
-              className={inputClass}
-            />
-            <p className="mt-1 text-[11px] text-gray-600">
-              Needs scopes: channels:history, channels:read, chat:write, users:read
-            </p>
-          </div>
-        </fieldset>
+        {/* ── Messaging ─────────────────────────────────────── */}
+        {messagingAdapters.length > 0 && (
+          <fieldset className="space-y-3">
+            <div className="flex items-center justify-between mb-1">
+              <legend className="text-xs font-semibold uppercase tracking-widest text-gray-500">
+                {messagingAdapters.length === 1
+                  ? messagingAdapters[0].displayName
+                  : "Messaging"}
+              </legend>
+              {currentMessaging?.helpUrl && (
+                <button
+                  type="button"
+                  onClick={() => openExternal(currentMessaging.helpUrl!)}
+                  className="text-[11px] text-blue-400 hover:text-blue-300"
+                >
+                  Get token →
+                </button>
+              )}
+            </div>
+
+            {messagingAdapters.length > 1 && (
+              <div className="flex gap-1.5">
+                {messagingAdapters.map((a) => (
+                  <button
+                    key={a.name}
+                    type="button"
+                    onClick={() => {
+                      setSelectedMessaging(a.name);
+                      setMessagingFields({});
+                      setMessagingEnv({});
+                    }}
+                    className={`flex-1 rounded border py-1.5 text-xs font-medium transition-colors ${
+                      selectedMessaging === a.name
+                        ? "border-blue-500 bg-blue-900/40 text-blue-300"
+                        : "border-gray-700 text-gray-500 hover:border-gray-600 hover:text-gray-400"
+                    }`}
+                  >
+                    {a.displayName}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {currentMessaging && (
+              <AdapterFieldGroup
+                fields={currentMessaging.fields}
+                values={messagingFields}
+                envFields={messagingEnv}
+                onChange={updateMessagingField}
+              />
+            )}
+          </fieldset>
+        )}
 
         {/* ── LLM Provider ──────────────────────────────────── */}
         <fieldset className="space-y-3">
           <div className="flex items-center justify-between mb-1">
             <legend className="text-xs font-semibold uppercase tracking-widest text-gray-500">
-              LLM Provider
+              {currentPreset.label}
             </legend>
             {currentKeyLink && (
               <button
@@ -272,7 +354,6 @@ export default function Setup({ onComplete }: SetupProps): JSX.Element {
             )}
           </div>
 
-          {/* Provider selector */}
           <div className="flex gap-1.5">
             {(Object.keys(PRESETS) as ProviderPreset[]).map((id) => (
               <button
@@ -290,18 +371,21 @@ export default function Setup({ onComplete }: SetupProps): JSX.Element {
             ))}
           </div>
 
-          {/* API Key — hidden for Ollama */}
           {currentPreset.needsKey && (
             <div>
               <label htmlFor="llmApiKey" className="flex items-center text-xs text-gray-400 mb-1">
                 API Key *
-                {envFields.llmApiKey && <FromEnvBadge />}
+                {llmEnv.apiKey && (
+                  <span className="ml-2 rounded bg-green-900/50 px-1.5 py-0.5 text-[10px] font-medium text-green-400">
+                    from env
+                  </span>
+                )}
               </label>
               <input
                 id="llmApiKey"
                 type="password"
-                value={form.llmApiKey}
-                onChange={(e) => update("llmApiKey", e.target.value)}
+                value={llmApiKey}
+                onChange={(e) => { setLlmApiKey(e.target.value); setLlmEnv((p) => ({ ...p, apiKey: false })); }}
                 placeholder={preset === "anthropic" ? "sk-ant-..." : "sk-..."}
                 className={inputClass}
               />
@@ -313,23 +397,24 @@ export default function Setup({ onComplete }: SetupProps): JSX.Element {
             </p>
           )}
 
-          {/* Model selector */}
           <div>
             <label htmlFor="llmModel" className="flex items-center text-xs text-gray-400 mb-1">
               Model
-              {envFields.llmModel && <FromEnvBadge />}
+              {llmEnv.model && (
+                <span className="ml-2 rounded bg-green-900/50 px-1.5 py-0.5 text-[10px] font-medium text-green-400">
+                  from env
+                </span>
+              )}
             </label>
             {currentPreset.models.length > 0 ? (
               <select
                 id="llmModel"
-                value={form.llmModel}
-                onChange={(e) => update("llmModel", e.target.value)}
+                value={llmModel}
+                onChange={(e) => { setLlmModel(e.target.value); setLlmEnv((p) => ({ ...p, model: false })); }}
                 className={selectClass}
               >
                 {currentPreset.models.map((m) => (
-                  <option key={m} value={m}>
-                    {m}
-                  </option>
+                  <option key={m} value={m}>{m}</option>
                 ))}
                 <option value="custom">Custom…</option>
               </select>
@@ -337,18 +422,17 @@ export default function Setup({ onComplete }: SetupProps): JSX.Element {
               <input
                 id="llmModel"
                 type="text"
-                value={form.llmModel}
-                onChange={(e) => update("llmModel", e.target.value)}
+                value={llmModel}
+                onChange={(e) => { setLlmModel(e.target.value); setLlmEnv((p) => ({ ...p, model: false })); }}
                 placeholder="model name"
                 className={inputClass}
               />
             )}
-            {/* Custom model text input when "custom" is selected in preset dropdown */}
-            {currentPreset.models.length > 0 && form.llmModel === "custom" && (
+            {currentPreset.models.length > 0 && llmModel === "custom" && (
               <input
                 type="text"
                 value=""
-                onChange={(e) => update("llmModel", e.target.value)}
+                onChange={(e) => setLlmModel(e.target.value)}
                 placeholder="Enter model name"
                 className={`${inputClass} mt-1.5`}
                 autoFocus
@@ -356,18 +440,21 @@ export default function Setup({ onComplete }: SetupProps): JSX.Element {
             )}
           </div>
 
-          {/* Base URL — only shown for custom or if user wants to override */}
           {(preset === "custom" || preset === "ollama") && (
             <div>
               <label htmlFor="llmBaseUrl" className="flex items-center text-xs text-gray-400 mb-1">
                 Base URL
-                {envFields.llmBaseUrl && <FromEnvBadge />}
+                {llmEnv.baseUrl && (
+                  <span className="ml-2 rounded bg-green-900/50 px-1.5 py-0.5 text-[10px] font-medium text-green-400">
+                    from env
+                  </span>
+                )}
               </label>
               <input
                 id="llmBaseUrl"
                 type="text"
-                value={form.llmBaseUrl}
-                onChange={(e) => update("llmBaseUrl", e.target.value)}
+                value={llmBaseUrl}
+                onChange={(e) => { setLlmBaseUrl(e.target.value); setLlmEnv((p) => ({ ...p, baseUrl: false })); }}
                 placeholder="http://localhost:11434/v1"
                 className={inputClass}
               />
@@ -375,63 +462,60 @@ export default function Setup({ onComplete }: SetupProps): JSX.Element {
           )}
         </fieldset>
 
-        {/* ── Jira (optional) ───────────────────────────────── */}
-        <fieldset className="space-y-3">
-          <div className="flex items-center justify-between mb-1">
-            <legend className="text-xs font-semibold uppercase tracking-widest text-gray-500">
-              Jira{" "}
-              <span className="normal-case text-gray-600">(optional)</span>
-            </legend>
-            <button
-              type="button"
-              onClick={() => openExternal(jiraTokenLink)}
-              className="text-[11px] text-blue-400 hover:text-blue-300"
-            >
-              Get token →
-            </button>
-          </div>
-          <div>
-            <label htmlFor="jiraEmail" className="flex items-center text-xs text-gray-400 mb-1">
-              Jira Email
-            </label>
-            <input
-              id="jiraEmail"
-              type="email"
-              value={form.jiraEmail}
-              onChange={(e) => update("jiraEmail", e.target.value)}
-              placeholder="you@company.com"
-              className={inputClass}
-            />
-          </div>
-          <div>
-            <label htmlFor="jiraToken" className="flex items-center text-xs text-gray-400 mb-1">
-              Jira API Token
-              {envFields.jiraToken && <FromEnvBadge />}
-            </label>
-            <input
-              id="jiraToken"
-              type="password"
-              value={form.jiraToken}
-              onChange={(e) => update("jiraToken", e.target.value)}
-              placeholder="Jira API token"
-              className={inputClass}
-            />
-          </div>
-          <div>
-            <label htmlFor="jiraBaseUrl" className="flex items-center text-xs text-gray-400 mb-1">
-              Jira Base URL
-              {envFields.jiraBaseUrl && <FromEnvBadge />}
-            </label>
-            <input
-              id="jiraBaseUrl"
-              type="text"
-              value={form.jiraBaseUrl}
-              onChange={(e) => update("jiraBaseUrl", e.target.value)}
-              placeholder="https://your-org.atlassian.net"
-              className={inputClass}
-            />
-          </div>
-        </fieldset>
+        {/* ── Task Adapter (optional) ──────────────────────── */}
+        {taskAdapters.length > 0 && (
+          <fieldset className="space-y-3">
+            <div className="flex items-center justify-between mb-1">
+              <legend className="text-xs font-semibold uppercase tracking-widest text-gray-500">
+                {taskAdapters.length === 1
+                  ? taskAdapters[0].displayName
+                  : "Task Manager"}{" "}
+                <span className="normal-case text-gray-600">(optional)</span>
+              </legend>
+              {currentTask?.helpUrl && (
+                <button
+                  type="button"
+                  onClick={() => openExternal(currentTask.helpUrl!)}
+                  className="text-[11px] text-blue-400 hover:text-blue-300"
+                >
+                  Get token →
+                </button>
+              )}
+            </div>
+
+            {taskAdapters.length > 1 && (
+              <div className="flex gap-1.5">
+                {taskAdapters.map((a) => (
+                  <button
+                    key={a.name}
+                    type="button"
+                    onClick={() => {
+                      setSelectedTask(a.name);
+                      setTaskFields({});
+                      setTaskEnv({});
+                    }}
+                    className={`flex-1 rounded border py-1.5 text-xs font-medium transition-colors ${
+                      selectedTask === a.name
+                        ? "border-blue-500 bg-blue-900/40 text-blue-300"
+                        : "border-gray-700 text-gray-500 hover:border-gray-600 hover:text-gray-400"
+                    }`}
+                  >
+                    {a.displayName}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {currentTask && (
+              <AdapterFieldGroup
+                fields={currentTask.fields}
+                values={taskFields}
+                envFields={taskEnv}
+                onChange={updateTaskField}
+              />
+            )}
+          </fieldset>
+        )}
 
         {/* ── Rate Limits (dynamic) ─────────────────────────── */}
         {rateLimitEntries.length > 0 && (
@@ -440,7 +524,7 @@ export default function Setup({ onComplete }: SetupProps): JSX.Element {
               Rate Limits{" "}
               <span className="normal-case text-gray-600">(requests/min)</span>
             </legend>
-            <div className={`grid gap-3`} style={{ gridTemplateColumns: `repeat(${Math.min(rateLimitEntries.length, 4)}, minmax(0, 1fr))` }}>
+            <div className="grid gap-3" style={{ gridTemplateColumns: `repeat(${Math.min(rateLimitEntries.length, 4)}, minmax(0, 1fr))` }}>
               {rateLimitEntries.map(([name, info]) => (
                 <div key={name}>
                   <label htmlFor={`rl-${name}`} className="text-xs text-gray-400 mb-1 block">
