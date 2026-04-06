@@ -248,6 +248,37 @@ describe("UsageTracker", () => {
   });
 });
 
+describe("Data retention", () => {
+  it("prunes records older than 365 days", () => {
+    const db = new Database(":memory:");
+    const provider = mockProvider({
+      status: "noise", confidence: 0.8, reason: "x", workItemIds: [], title: "",
+    });
+    const tracker = new UsageTracker(provider, db, DEFAULT_CONFIG);
+
+    // Insert an old record directly
+    const oldDate = new Date();
+    oldDate.setDate(oldDate.getDate() - 400);
+    db.db.prepare(`
+      INSERT INTO llm_usage (id, caller, timestamp, input_tokens, output_tokens, token_source, cost, cost_source, model)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run("old-1", "classifier", oldDate.toISOString(), 100, 50, "estimated", 0.001, "configured", "test");
+
+    // Insert a recent record
+    db.db.prepare(`
+      INSERT INTO llm_usage (id, caller, timestamp, input_tokens, output_tokens, token_source, cost, cost_source, model)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run("new-1", "classifier", new Date().toISOString(), 100, 50, "estimated", 0.001, "configured", "test");
+
+    const pruned = tracker.pruneOldRecords();
+    expect(pruned).toBe(1);
+
+    const remaining = db.db.prepare("SELECT COUNT(*) AS n FROM llm_usage").get() as { n: number };
+    expect(remaining.n).toBe(1);
+    db.close();
+  });
+});
+
 describe("Classifier with UsageTracker", () => {
   it("classify() goes through the tracker and records usage", async () => {
     const db = new Database(":memory:");
