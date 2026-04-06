@@ -80,22 +80,42 @@ export interface ActionableItem {
   thread: Thread | null;
 }
 
+export interface SetupField {
+  key: string;
+  label: string;
+  type: "text" | "password" | "email" | "url";
+  required: boolean;
+  placeholder?: string;
+  helpText?: string;
+  helpUrl?: string;
+}
+
+export interface AdapterSetupInfo {
+  name: string;
+  displayName: string;
+  fields: SetupField[];
+  helpUrl?: string;
+}
+
+export interface SetupAdaptersResponse {
+  messaging: AdapterSetupInfo[];
+  task: AdapterSetupInfo[];
+}
+
 export interface SetupStatus {
   configured: boolean;
-  slack: boolean;
   llm: boolean;
-  jira: boolean;
+  adapters: {
+    messaging: { name: string; connected: boolean } | null;
+    task: { name: string; connected: boolean } | null;
+  };
   platformMeta: Record<string, unknown>;
 }
 
-export interface SetupConfig {
-  slackToken: string;
-  llmApiKey: string;
-  llmBaseUrl: string;
-  llmModel: string;
-  jiraEmail?: string;
-  jiraToken?: string;
-  jiraBaseUrl?: string;
+export interface SetupPayload {
+  messaging?: { adapter: string; fields: Record<string, string> };
+  task?: { adapter: string; fields: Record<string, string> };
+  llm?: { apiKey: string; baseUrl: string; model: string };
   rateLimits?: Record<string, number>;
 }
 
@@ -104,7 +124,10 @@ export interface RateLimitInfo {
   displayName: string;
 }
 
-export interface SetupPrefill extends Omit<SetupConfig, "rateLimits"> {
+export interface SetupPrefill {
+  messaging?: { adapter: string; fields: Record<string, string> };
+  task?: { adapter: string; fields: Record<string, string> };
+  llm: { apiKey: string; baseUrl: string; model: string };
   rateLimits?: Record<string, RateLimitInfo>;
 }
 
@@ -376,7 +399,7 @@ export function postForward(params: {
   });
 }
 
-export function postSetup(config: SetupConfig): Promise<{ ok: boolean }> {
+export function postSetup(config: SetupPayload): Promise<{ ok: boolean }> {
   return apiFetch("/api/setup", {
     method: "POST",
     body: JSON.stringify(config),
@@ -385,6 +408,10 @@ export function postSetup(config: SetupConfig): Promise<{ ok: boolean }> {
 
 export function fetchSetupPrefill(): Promise<SetupPrefill> {
   return apiFetch("/api/setup/prefill");
+}
+
+export function fetchSetupAdapters(): Promise<SetupAdaptersResponse> {
+  return apiFetch("/api/setup/adapters");
 }
 
 // ---------------------------------------------------------------------------
