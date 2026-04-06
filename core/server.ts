@@ -6,7 +6,8 @@ import { createLogger } from "./logger.js";
 import { loadConfig, findProjectRoot, resetConfig, type Config } from "./config.js";
 import { Database } from "./graph/db.js";
 import { ContextGraph } from "./graph/index.js";
-import { Classifier } from "./classifier/index.js";
+import { Classifier, createProvider, loadPrompt, buildFewShotMessages } from "./classifier/index.js";
+import { UsageTracker } from "./usage/tracker.js";
 import { DefaultExtractor } from "./graph/extractors/default.js";
 import { WorkItemLinker } from "./graph/linker.js";
 import { SlackAdapter } from "./adapters/platforms/slack/index.js";
@@ -28,6 +29,7 @@ export interface EngineState {
   db: Database;
   graph: ContextGraph;
   classifier: Classifier;
+  usageTracker: UsageTracker | null;
   linker: WorkItemLinker;
   pipeline: Pipeline | null;
   platformAdapter: PlatformAdapter | null;
@@ -759,8 +761,13 @@ export function createApp(state: EngineState): Hono {
         log.info("Jira adapter reconnected");
       }
 
-      // Recreate classifier with new config
-      state.classifier = Classifier.fromConfig(state.config);
+      // Recreate classifier with new config, wired through a fresh UsageTracker
+      const newProvider = createProvider(state.config);
+      const newUsageTracker = new UsageTracker(newProvider, state.db, state.config.llmBudget);
+      state.usageTracker = newUsageTracker;
+      const newPrompt = loadPrompt(findProjectRoot());
+      const newFewShot = buildFewShotMessages(newPrompt.few_shot_examples);
+      state.classifier = new Classifier(newUsageTracker, newPrompt.system, newFewShot);
       if (newLimiters.llm) state.classifier.setRateLimiter(newLimiters.llm);
 
       // Restart pipeline if we have a platform adapter
@@ -890,7 +897,13 @@ async function main(): Promise<void> {
 
   // 4. Create core components
   const graph = new ContextGraph(db);
-  const classifier = Classifier.fromConfig(config, projectRoot);
+  const provider = createProvider(config);
+  const usageTracker = new UsageTracker(provider, db, config.llmBudget);
+  usageTracker.pruneOldRecords();
+
+  const prompt = loadPrompt(projectRoot);
+  const fewShot = buildFewShotMessages(prompt.few_shot_examples);
+  const classifier = new Classifier(usageTracker, prompt.system, fewShot);
   classifier.setRateLimiter(llmLimiter);
   const extractor = new DefaultExtractor({
     ticketPatterns: config.extractors.ticketPatterns,
@@ -905,6 +918,7 @@ async function main(): Promise<void> {
     db,
     graph,
     classifier,
+    usageTracker,
     linker,
     pipeline: null,
     platformAdapter: null,

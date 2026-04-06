@@ -20,7 +20,7 @@ const VALID_STATUSES: Set<string> = new Set([
   "noise",
 ]);
 
-interface PromptConfig {
+export interface PromptConfig {
   system: string;
   few_shot_examples: Array<{
     role: string;
@@ -29,13 +29,13 @@ interface PromptConfig {
   }>;
 }
 
-function loadPrompt(projectRoot: string): PromptConfig {
+export function loadPrompt(projectRoot: string): PromptConfig {
   const promptPath = resolve(projectRoot, "config", "prompts", "classify.yaml");
   const raw = readFileSync(promptPath, "utf-8");
   return parseYaml(raw) as PromptConfig;
 }
 
-function buildFewShotMessages(
+export function buildFewShotMessages(
   examples: PromptConfig["few_shot_examples"],
 ): Array<{ role: string; content: string }> {
   const messages: Array<{ role: string; content: string }> = [];

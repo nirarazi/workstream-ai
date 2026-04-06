@@ -3,6 +3,7 @@ import type { UsageRecord, DailyUsage, BudgetStatus, UsageConfig } from "../../c
 import { Database } from "../../core/graph/db.js";
 import { UsageTracker } from "../../core/usage/tracker.js";
 import type { ModelProvider, ClassificationResult } from "../../core/classifier/providers/interface.js";
+import { Classifier } from "../../core/classifier/index.js";
 
 function mockProvider(result: ClassificationResult): ModelProvider {
   return {
@@ -243,6 +244,28 @@ describe("UsageTracker", () => {
     expect(status.spent).toBeGreaterThan(0);
     expect(status.remaining).toBeLessThan(10.0);
     expect(status.exhausted).toBe(false);
+    db.close();
+  });
+});
+
+describe("Classifier with UsageTracker", () => {
+  it("classify() goes through the tracker and records usage", async () => {
+    const db = new Database(":memory:");
+    const provider = mockProvider({
+      status: "in_progress", confidence: 0.9, reason: "working", workItemIds: ["AI-5"], title: "Build feature",
+    });
+    const tracker = new UsageTracker(provider, db, DEFAULT_CONFIG);
+    const classifier = new Classifier(tracker, "You are a classifier.", [
+      { role: "user", content: "example" },
+      { role: "assistant", content: '{"status":"noise"}' },
+    ]);
+
+    const result = await classifier.classify("AI-5: still working on the feature");
+    expect(result.status).toBe("in_progress");
+
+    // Verify usage was recorded
+    const rows = db.db.prepare("SELECT * FROM llm_usage").all();
+    expect(rows).toHaveLength(1);
     db.close();
   });
 });
