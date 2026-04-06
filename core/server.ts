@@ -160,7 +160,7 @@ export function createApp(state: EngineState): Hono {
 
     // Create summarizer on demand from classifier config
     const { baseUrl, model, apiKey } = state.config.classifier.provider;
-    const summarizer = new Summarizer({ baseUrl, model, apiKey });
+    const summarizer = new Summarizer({ baseUrl, model, apiKey, usageTracker: state.usageTracker ?? undefined });
 
     const summary = await summarizer.summarize(events, id);
 
@@ -230,7 +230,7 @@ export function createApp(state: EngineState): Hono {
 
     const { baseUrl, model, apiKey } = state.config.classifier.provider;
     const sidekick = new Sidekick(
-      { baseUrl, model, apiKey, maxToolCalls: sidekickConfig.maxToolCalls },
+      { baseUrl, model, apiKey, maxToolCalls: sidekickConfig.maxToolCalls, usageTracker: state.usageTracker ?? undefined },
       state.graph,
     );
 

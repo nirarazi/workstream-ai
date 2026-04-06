@@ -2,6 +2,7 @@ import { createLogger } from "../logger.js";
 import { SIDEKICK_SYSTEM_PROMPT } from "./system-prompt.js";
 import { TOOL_SCHEMAS, executeTool } from "./tools.js";
 import type { ContextGraph } from "../graph/index.js";
+import type { UsageTracker } from "../usage/tracker.js";
 
 const log = createLogger("sidekick");
 
@@ -10,6 +11,7 @@ export interface SidekickConfig {
   model: string;
   apiKey?: string;
   maxToolCalls: number;
+  usageTracker?: UsageTracker;
 }
 
 export interface SidekickMessage {
@@ -45,11 +47,13 @@ export class Sidekick {
   private readonly config: SidekickConfig;
   private readonly graph: ContextGraph;
   private readonly isAnthropic: boolean;
+  private readonly usageTracker: UsageTracker | undefined;
 
   constructor(config: SidekickConfig, graph: ContextGraph) {
     this.config = config;
     this.graph = graph;
     this.isAnthropic = config.baseUrl.includes("anthropic");
+    this.usageTracker = config.usageTracker;
   }
 
   async ask(question: string, history: SidekickMessage[]): Promise<SidekickResult> {
@@ -141,7 +145,7 @@ export class Sidekick {
       headers["x-api-key"] = this.config.apiKey;
     }
 
-    const response = await fetch(url, {
+    const fetchOptions = {
       method: "POST",
       headers,
       body: JSON.stringify({
@@ -152,7 +156,10 @@ export class Sidekick {
         messages,
       }),
       signal: AbortSignal.timeout(60_000),
-    });
+    };
+    const response = this.usageTracker
+      ? await this.usageTracker.completionCall(url, fetchOptions, "sidekick")
+      : await fetch(url, fetchOptions);
 
     if (!response.ok) {
       const text = await response.text().catch(() => "");
@@ -191,7 +198,7 @@ export class Sidekick {
       })),
     ];
 
-    const response = await fetch(url, {
+    const fetchOptions = {
       method: "POST",
       headers,
       body: JSON.stringify({
@@ -201,7 +208,10 @@ export class Sidekick {
         temperature: 0,
       }),
       signal: AbortSignal.timeout(60_000),
-    });
+    };
+    const response = this.usageTracker
+      ? await this.usageTracker.completionCall(url, fetchOptions, "sidekick")
+      : await fetch(url, fetchOptions);
 
     if (!response.ok) {
       const text = await response.text().catch(() => "");
