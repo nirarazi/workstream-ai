@@ -26,7 +26,8 @@ function todayMidnightUTC(): string {
   return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())).toISOString();
 }
 
-export class UsageTracker {
+export class UsageTracker implements ModelProvider {
+  readonly name: string;
   private readonly provider: ModelProvider;
   private readonly db: Database;
   private config: UsageConfig;
@@ -36,6 +37,7 @@ export class UsageTracker {
   private readonly sumByCallerStmt;
 
   constructor(provider: ModelProvider, db: Database, config: UsageConfig) {
+    this.name = provider.name;
     this.provider = provider;
     this.db = db;
     this.config = config;
@@ -77,7 +79,7 @@ export class UsageTracker {
     message: string,
     systemPrompt: string,
     fewShotExamples: Array<{ role: string; content: string }>,
-    caller: string,
+    caller = "classifier",
   ): Promise<ClassificationResult> {
     if (this.isBudgetExhausted()) {
       log.warn("Daily LLM budget exhausted — returning fallback classification");
