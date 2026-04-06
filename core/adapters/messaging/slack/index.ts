@@ -1,9 +1,13 @@
-// core/adapters/platforms/slack/index.ts — Slack platform adapter
+// core/adapters/messaging/slack/index.ts — Slack messaging adapter
 
 import { WebClient } from "@slack/web-api";
-import type { PlatformAdapter } from "../interface.js";
+import type { MessagingAdapter } from "../interface.js";
+import type { AdapterSetupInfo } from "../../setup.js";
 import type { Credentials, Thread, Message } from "../../../types.js";
+import type { ContextGraph } from "../../../graph/index.js";
+import type { Database } from "../../../graph/db.js";
 import { createLogger } from "../../../logger.js";
+import { registerMessagingAdapter } from "../../registry.js";
 import { SlackRateLimiter } from "./rate-limiter.js";
 
 const log = createLogger("slack-adapter");
@@ -107,9 +111,29 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-export class SlackAdapter implements PlatformAdapter {
+export class SlackAdapter implements MessagingAdapter {
   readonly name = "slack";
   readonly displayName = "Slack";
+
+  getSetupInfo(): AdapterSetupInfo {
+    return {
+      name: "slack",
+      displayName: "Slack",
+      helpUrl: "https://api.slack.com/apps",
+      fields: [
+        {
+          key: "token",
+          label: "Token",
+          type: "password",
+          required: true,
+          placeholder: "xoxp-...",
+          helpText: "Needs scopes: channels:history, channels:read, chat:write, users:read",
+          envVar: "ATC_SLACK_TOKEN",
+        },
+      ],
+    };
+  }
+
   private client: WebClient | null = null;
   private userInfoMap: Map<string, UserInfo> = new Map();
   private channelMap: Map<string, { name: string; isPrivate: boolean }> = new Map();
@@ -341,6 +365,67 @@ export class SlackAdapter implements PlatformAdapter {
     return this.channelMap.get(channelId)?.isPrivate ?? false;
   }
 
+  /** Return platform metadata for the frontend (workspace URL, etc.) */
+  getMetadata(): Record<string, unknown> {
+    return { slackWorkspaceUrl: this.workspaceUrl };
+  }
+
+  /** Build a Slack thread URL from channel/thread IDs */
+  buildThreadUrl(channelId: string, threadTs?: string): string | null {
+    if (!this.workspaceUrl) return null;
+    const base = `${this.workspaceUrl}/archives/${channelId}`;
+    if (threadTs) {
+      return `${base}/p${threadTs.replace(".", "")}`;
+    }
+    return base;
+  }
+
+  /** Serialize a user ID into Slack mention format */
+  serializeMention(userId: string): string {
+    return `<@${userId}>`;
+  }
+
+  /** Backfill agent names/avatars from Slack user data */
+  async backfillAgents(graph: ContextGraph): Promise<number> {
+    const agents = graph.getAllAgents();
+    const users = await this.getUsers();
+    let backfilled = 0;
+    for (const agent of agents) {
+      const slackName = users.get(agent.platformUserId);
+      const avatar = this.getUserAvatar(agent.platformUserId);
+      const needsName = agent.name === agent.platformUserId && slackName;
+      const needsAvatar = !agent.avatarUrl && avatar;
+      if (needsName || needsAvatar) {
+        graph.upsertAgent({
+          id: agent.id,
+          name: needsName ? slackName! : agent.name,
+          platform: agent.platform,
+          platformUserId: agent.platformUserId,
+          avatarUrl: avatar || agent.avatarUrl,
+        });
+        backfilled++;
+      }
+    }
+    return backfilled;
+  }
+
+  /** Backfill channel privacy metadata for existing threads */
+  async backfillThreads(db: Database): Promise<number> {
+    const channelIds = db.db.prepare(
+      "SELECT DISTINCT channel_id FROM threads WHERE platform = 'slack' AND platform_meta = '{}'"
+    ).all() as Array<{ channel_id: string }>;
+    let updated = 0;
+    for (const { channel_id } of channelIds) {
+      if (this.isChannelPrivate(channel_id)) {
+        db.db.prepare(
+          "UPDATE threads SET platform_meta = '{\"isPrivate\":true}' WHERE channel_id = ?"
+        ).run(channel_id);
+        updated++;
+      }
+    }
+    return updated;
+  }
+
   // --- Private helpers ---
 
   private ensureConnected(): asserts this is { client: WebClient } {
@@ -539,3 +624,6 @@ export class SlackAdapter implements PlatformAdapter {
     });
   }
 }
+
+// Self-register with the adapter registry
+registerMessagingAdapter("slack", () => new SlackAdapter());
