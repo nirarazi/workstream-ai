@@ -78,10 +78,24 @@ CREATE TABLE IF NOT EXISTS summaries (
   latest_event_id TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS llm_usage (
+  id TEXT PRIMARY KEY,
+  caller TEXT NOT NULL,
+  timestamp TEXT NOT NULL,
+  input_tokens INTEGER NOT NULL,
+  output_tokens INTEGER NOT NULL,
+  token_source TEXT NOT NULL,
+  cost REAL,
+  cost_source TEXT,
+  model TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_events_thread_id ON events(thread_id);
 CREATE INDEX IF NOT EXISTS idx_events_work_item_id ON events(work_item_id);
 CREATE INDEX IF NOT EXISTS idx_threads_work_item_id ON threads(work_item_id);
 CREATE INDEX IF NOT EXISTS idx_enrichments_work_item_id ON enrichments(work_item_id);
+CREATE INDEX IF NOT EXISTS idx_llm_usage_timestamp ON llm_usage(timestamp);
+CREATE INDEX IF NOT EXISTS idx_llm_usage_caller ON llm_usage(caller);
 `;
 
 export class Database {
