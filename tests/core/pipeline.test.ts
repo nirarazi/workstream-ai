@@ -2,7 +2,7 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { Pipeline } from "../../core/pipeline.js";
-import type { PlatformAdapter } from "../../core/adapters/platforms/interface.js";
+import type { PlatformAdapter } from "../../core/adapters/messaging/interface.js";
 import type { TaskAdapter } from "../../core/adapters/tasks/interface.js";
 import type { Classifier } from "../../core/classifier/index.js";
 import type { ContextGraph } from "../../core/graph/index.js";

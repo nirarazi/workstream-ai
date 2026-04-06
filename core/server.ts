@@ -10,10 +10,10 @@ import { Classifier, createProvider, loadPrompt, buildFewShotMessages } from "./
 import { UsageTracker } from "./usage/tracker.js";
 import { DefaultExtractor } from "./graph/extractors/default.js";
 import { WorkItemLinker } from "./graph/linker.js";
-import { SlackAdapter } from "./adapters/platforms/slack/index.js";
+import { SlackAdapter } from "./adapters/messaging/slack/index.js";
 import { JiraAdapter } from "./adapters/tasks/jira/index.js";
 import { Pipeline } from "./pipeline.js";
-import type { PlatformAdapter } from "./adapters/platforms/interface.js";
+import type { PlatformAdapter } from "./adapters/messaging/interface.js";
 import type { TaskAdapter } from "./adapters/tasks/interface.js";
 import { createRateLimiter, type RateLimiter } from "./rate-limiter.js";
 import { Summarizer } from "./summarizer/index.js";
@@ -883,7 +883,7 @@ export function createApp(state: EngineState): Hono {
 
     const platformMeta: Record<string, unknown> = {};
     if (state.platformAdapter?.name === "slack") {
-      const slack = state.platformAdapter as import("./adapters/platforms/slack/index.js").SlackAdapter;
+      const slack = state.platformAdapter as import("./adapters/messaging/slack/index.js").SlackAdapter;
       platformMeta.slackWorkspaceUrl = slack.getWorkspaceUrl?.() ?? null;
     }
 

@@ -4,7 +4,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { Database } from "../../core/graph/db.js";
 import { ContextGraph } from "../../core/graph/index.js";
 import { ActionHandler } from "../../core/actions.js";
-import type { PlatformAdapter } from "../../core/adapters/platforms/interface.js";
+import type { PlatformAdapter } from "../../core/adapters/messaging/interface.js";
 
 function createMockAdapter(overrides?: Partial<PlatformAdapter>): PlatformAdapter {
   return {

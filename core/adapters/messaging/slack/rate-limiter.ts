@@ -1,4 +1,4 @@
-// core/adapters/platforms/slack/rate-limiter.ts
+// core/adapters/messaging/slack/rate-limiter.ts
 //
 // Slack-specific rate limiter: per-method sliding-window buckets matching
 // Slack's actual tier limits, plus a global 429 backoff that pauses ALL
