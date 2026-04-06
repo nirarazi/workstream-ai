@@ -1,6 +1,7 @@
 import { createLogger } from "../logger.js";
 import { SUMMARIZER_SYSTEM_PROMPT, buildSummarizationPrompt } from "./prompt.js";
 import type { Event } from "../types.js";
+import type { UsageTracker } from "../usage/tracker.js";
 
 const log = createLogger("summarizer");
 
@@ -8,6 +9,7 @@ export interface SummarizerConfig {
   baseUrl: string;
   model: string;
   apiKey?: string;
+  usageTracker?: UsageTracker;
 }
 
 export class Summarizer {
@@ -15,12 +17,14 @@ export class Summarizer {
   private readonly model: string;
   private readonly apiKey: string | undefined;
   private readonly isAnthropic: boolean;
+  private readonly usageTracker: UsageTracker | undefined;
 
   constructor(config: SummarizerConfig) {
     this.baseUrl = config.baseUrl.replace(/\/+$/, "");
     this.model = config.model;
     this.apiKey = config.apiKey;
     this.isAnthropic = this.baseUrl.includes("anthropic");
+    this.usageTracker = config.usageTracker;
   }
 
   async summarize(events: Event[], workItemId: string): Promise<string> {
@@ -51,7 +55,7 @@ export class Summarizer {
       headers["x-api-key"] = this.apiKey;
     }
 
-    const response = await fetch(url, {
+    const fetchOptions = {
       method: "POST",
       headers,
       body: JSON.stringify({
@@ -61,7 +65,10 @@ export class Summarizer {
         messages: [{ role: "user", content: userPrompt }],
       }),
       signal: AbortSignal.timeout(30_000),
-    });
+    };
+    const response = this.usageTracker
+      ? await this.usageTracker.completionCall(url, fetchOptions, "summarizer")
+      : await fetch(url, fetchOptions);
 
     if (!response.ok) {
       const text = await response.text().catch(() => "");
@@ -81,7 +88,7 @@ export class Summarizer {
       headers["Authorization"] = `Bearer ${this.apiKey}`;
     }
 
-    const response = await fetch(url, {
+    const fetchOptions = {
       method: "POST",
       headers,
       body: JSON.stringify({
@@ -93,7 +100,10 @@ export class Summarizer {
         temperature: 0,
       }),
       signal: AbortSignal.timeout(30_000),
-    });
+    };
+    const response = this.usageTracker
+      ? await this.usageTracker.completionCall(url, fetchOptions, "summarizer")
+      : await fetch(url, fetchOptions);
 
     if (!response.ok) {
       const text = await response.text().catch(() => "");
