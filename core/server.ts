@@ -10,10 +10,9 @@ import { Classifier, createProvider, loadPrompt, buildFewShotMessages } from "./
 import { UsageTracker } from "./usage/tracker.js";
 import { DefaultExtractor } from "./graph/extractors/default.js";
 import { WorkItemLinker } from "./graph/linker.js";
-import { SlackAdapter } from "./adapters/messaging/slack/index.js";
-import { JiraAdapter } from "./adapters/tasks/jira/index.js";
+import { createMessagingAdapter, createTaskAdapter, getMessagingAdapterSetupInfo, getTaskAdapterSetupInfo } from "./adapters/registry.js";
 import { Pipeline } from "./pipeline.js";
-import type { PlatformAdapter } from "./adapters/messaging/interface.js";
+import type { MessagingAdapter } from "./adapters/messaging/interface.js";
 import type { TaskAdapter } from "./adapters/tasks/interface.js";
 import { createRateLimiter, type RateLimiter } from "./rate-limiter.js";
 import { Summarizer } from "./summarizer/index.js";
@@ -32,7 +31,7 @@ export interface EngineState {
   usageTracker: UsageTracker | null;
   linker: WorkItemLinker;
   pipeline: Pipeline | null;
-  platformAdapter: PlatformAdapter | null;
+  messagingAdapter: MessagingAdapter | null;
   taskAdapter: TaskAdapter | null;
   rateLimiters: Record<string, RateLimiter>;
   startedAt: Date;
@@ -45,11 +44,11 @@ export interface EngineState {
 export function createApp(state: EngineState): Hono {
   const app = new Hono();
 
-  // CORS for Vite dev server
+  // CORS for Vite dev server and Tauri WebView
   app.use(
     "/api/*",
     cors({
-      origin: "http://localhost:5173",
+      origin: ["http://localhost:5173", "https://tauri.localhost", "http://tauri.localhost"],
       allowMethods: ["GET", "POST", "OPTIONS"],
       allowHeaders: ["Content-Type"],
     }),
@@ -62,9 +61,8 @@ export function createApp(state: EngineState): Hono {
     const llmThrottled = state.rateLimiters.llm?.isThrottling ?? false;
     const llmDegraded = llmBackoff?.active || llmThrottled;
 
-    // Check Slack adapter's own per-method throttling state
-    const slackAdapter = state.platformAdapter as { isThrottling?: boolean } | null;
-    const slackThrottled = slackAdapter?.isThrottling ?? false;
+    // Check messaging adapter's own throttling state
+    const platformThrottled = state.messagingAdapter?.isThrottling ?? false;
 
     const llmUsage = state.usageTracker
       ? (() => {
@@ -89,8 +87,8 @@ export function createApp(state: EngineState): Hono {
         processed: state.processed,
       },
       services: {
-        ...(state.platformAdapter
-          ? { [state.platformAdapter.displayName]: slackThrottled ? "degraded" as const : "ok" as const }
+        ...(state.messagingAdapter
+          ? { [state.messagingAdapter.displayName]: platformThrottled ? "degraded" as const : "ok" as const }
           : {}),
         ...(state.taskAdapter ? { [state.taskAdapter.displayName]: "ok" as const } : {}),
         LLM: llmDegraded ? "degraded" as const : "ok" as const,
@@ -264,8 +262,8 @@ export function createApp(state: EngineState): Hono {
 
   // --- POST /api/reply ---
   app.post("/api/reply", async (c) => {
-    if (!state.platformAdapter) {
-      return c.json({ ok: false, error: "No platform adapter configured" }, 503);
+    if (!state.messagingAdapter) {
+      return c.json({ ok: false, error: "No messaging adapter configured" }, 503);
     }
 
     const body = await c.req.json<{
@@ -283,20 +281,20 @@ export function createApp(state: EngineState): Hono {
     try {
       // Case 1: Reply to existing thread (original behavior)
       if (body.threadId && body.channelId) {
-        await state.platformAdapter.replyToThread(body.threadId, body.channelId, body.message);
+        await state.messagingAdapter.replyToThread(body.threadId, body.channelId, body.message);
         return c.json({ ok: true });
       }
 
       // Case 2: New top-level message in a channel
       if (body.channelId && !body.threadId) {
-        const result = await state.platformAdapter.postMessage(body.channelId, body.message);
+        const result = await state.messagingAdapter.postMessage(body.channelId, body.message);
         // Proactively link to work item if provided
         if (body.workItemId) {
           state.graph.upsertThread({
             id: result.threadId,
             channelId: body.channelId,
             channelName: "",
-            platform: state.platformAdapter.name,
+            platform: state.messagingAdapter.name,
             workItemId: body.workItemId,
             lastActivity: new Date().toISOString(),
             messageCount: 1,
@@ -307,13 +305,13 @@ export function createApp(state: EngineState): Hono {
 
       // Case 3: DM to a user
       if (body.targetUserId) {
-        const result = await state.platformAdapter.sendDirectMessage(body.targetUserId, body.message);
+        const result = await state.messagingAdapter.sendDirectMessage(body.targetUserId, body.message);
         if (body.workItemId) {
           state.graph.upsertThread({
             id: result.threadId,
             channelId: result.channelId,
             channelName: "",
-            platform: state.platformAdapter.name,
+            platform: state.messagingAdapter.name,
             workItemId: body.workItemId,
             lastActivity: new Date().toISOString(),
             messageCount: 1,
@@ -372,16 +370,16 @@ export function createApp(state: EngineState): Hono {
     if (!state.graph.getWorkItemById(id)) {
       return c.json({ error: "Work item not found" }, 404);
     }
-    if (!state.platformAdapter) {
-      return c.json({ error: "No platform adapter configured" }, 503);
+    if (!state.messagingAdapter) {
+      return c.json({ error: "No messaging adapter configured" }, 503);
     }
     const body = await c.req.json<{ url: string }>();
     if (!body.url) {
       return c.json({ error: "Missing url" }, 400);
     }
 
-    // Delegate URL parsing to the platform adapter
-    const parsed = state.platformAdapter.parseThreadUrl?.(body.url);
+    // Delegate URL parsing to the messaging adapter
+    const parsed = state.messagingAdapter.parseThreadUrl?.(body.url);
     if (!parsed) {
       return c.json({ error: "Unrecognized thread URL format" }, 400);
     }
@@ -390,12 +388,12 @@ export function createApp(state: EngineState): Hono {
     // Fetch thread if not already in graph
     if (!state.graph.getThreadById(threadTs)) {
       try {
-        const messages = await state.platformAdapter.getThreadMessages(threadTs, channelId);
+        const messages = await state.messagingAdapter.getThreadMessages(threadTs, channelId);
         state.graph.upsertThread({
           id: threadTs,
           channelId,
           channelName: "",
-          platform: state.platformAdapter.name,
+          platform: state.messagingAdapter.name,
           lastActivity: messages[0]?.timestamp ?? new Date().toISOString(),
           messageCount: messages.length,
         });
@@ -411,8 +409,8 @@ export function createApp(state: EngineState): Hono {
 
   // --- POST /api/forward ---
   app.post("/api/forward", async (c) => {
-    if (!state.platformAdapter) {
-      return c.json({ ok: false, error: "No platform adapter configured" }, 503);
+    if (!state.messagingAdapter) {
+      return c.json({ ok: false, error: "No messaging adapter configured" }, 503);
     }
 
     const body = await c.req.json<{
@@ -451,7 +449,7 @@ export function createApp(state: EngineState): Hono {
           parts.push(`> Forwarded from #${channelName}:\n> "${lastEvent.rawText}"`);
         }
       } else {
-        const messages = await state.platformAdapter.getThreadMessages(
+        const messages = await state.messagingAdapter.getThreadMessages(
           body.sourceThreadId, body.sourceChannelId,
         );
         const quoted = messages
@@ -471,10 +469,10 @@ export function createApp(state: EngineState): Hono {
 
       let result: { threadId: string; channelId: string };
       if (body.targetType === "channel") {
-        const r = await state.platformAdapter.postMessage(body.targetId, composedMessage);
+        const r = await state.messagingAdapter.postMessage(body.targetId, composedMessage);
         result = { threadId: r.threadId, channelId: body.targetId };
       } else {
-        const r = await state.platformAdapter.sendDirectMessage(body.targetId, composedMessage);
+        const r = await state.messagingAdapter.sendDirectMessage(body.targetId, composedMessage);
         result = { threadId: r.threadId, channelId: r.channelId };
       }
 
@@ -484,7 +482,7 @@ export function createApp(state: EngineState): Hono {
           id: result.threadId,
           channelId: result.channelId,
           channelName: "",
-          platform: state.platformAdapter.name,
+          platform: state.messagingAdapter.name,
           workItemId: sourceThread.workItemId,
           lastActivity: new Date().toISOString(),
           messageCount: 1,
@@ -558,9 +556,9 @@ export function createApp(state: EngineState): Hono {
           if (!state.taskAdapter?.createWorkItem) {
             return c.json({ ok: false, error: "No task adapter with ticket creation support" }, 400);
           }
-          const projectKey = body.projectKey ?? state.config.jira?.defaultProject;
+          const projectKey = body.projectKey ?? state.config.taskAdapter?.defaultProject;
           if (!projectKey) {
-            return c.json({ ok: false, error: "projectKey required (or set jira.defaultProject in config)" }, 400);
+            return c.json({ ok: false, error: "projectKey required (or set taskAdapter.defaultProject in config)" }, 400);
           }
           // Build description from conversation history
           const events = state.graph.getEventsForWorkItem(body.workItemId);
@@ -614,12 +612,12 @@ export function createApp(state: EngineState): Hono {
         }
       }
 
-      // If there's a message and a platform adapter, post it to the related thread
-      if (body.message && state.platformAdapter) {
+      // If there's a message and a messaging adapter, post it to the related thread
+      if (body.message && state.messagingAdapter) {
         const threads = state.graph.getThreadsForWorkItem(body.workItemId);
         if (threads.length > 0) {
           const thread = threads[0];
-          await state.platformAdapter.replyToThread(thread.id, thread.channelId, body.message);
+          await state.messagingAdapter.replyToThread(thread.id, thread.channelId, body.message);
         }
       }
 
@@ -631,17 +629,34 @@ export function createApp(state: EngineState): Hono {
     }
   });
 
+  // --- GET /api/setup/adapters ---
+  // Returns registered adapter schemas for dynamic setup form rendering.
+  // envVar is stripped — it's server-internal for prefill logic.
+  app.get("/api/setup/adapters", (c) => {
+    function stripEnvVar(infos: ReturnType<typeof getMessagingAdapterSetupInfo>) {
+      return infos.map((info) => ({
+        ...info,
+        fields: info.fields.map(({ envVar, ...rest }) => rest),
+      }));
+    }
+
+    return c.json({
+      messaging: stripEnvVar(getMessagingAdapterSetupInfo()),
+      task: stripEnvVar(getTaskAdapterSetupInfo()),
+    });
+  });
+
   // --- POST /api/setup ---
   app.post("/api/setup", async (c) => {
     const body = await c.req.json<{
-      slackToken?: string;
-      llmApiKey?: string;
-      llmBaseUrl?: string;
-      llmModel?: string;
-      jiraEmail?: string;
-      jiraToken?: string;
-      jiraBaseUrl?: string;
-      rateLimits?: Record<string, number>;
+      messaging?: {
+        adapter: string;
+        fields: Record<string, string>;
+      };
+      task?: {
+        adapter: string;
+        fields: Record<string, string>;
+      };
       llm?: {
         apiKey?: string;
         baseUrl?: string;
@@ -650,12 +665,11 @@ export function createApp(state: EngineState): Hono {
         inputCostPerMillion?: number | null;
         outputCostPerMillion?: number | null;
       };
+      rateLimits?: Record<string, number>;
     }>();
 
     try {
       const projectRoot = findProjectRoot();
-
-      // Write local.yaml with non-sensitive config
       const { writeFileSync, mkdirSync } = await import("node:fs");
       const { resolve } = await import("node:path");
       const { stringify: toYaml } = await import("yaml");
@@ -664,26 +678,21 @@ export function createApp(state: EngineState): Hono {
       mkdirSync(configDir, { recursive: true });
 
       const localConfig: Record<string, unknown> = {};
+      const envLines: string[] = [];
 
-      if (body.llmBaseUrl || body.llmModel) {
-        localConfig.classifier = {
-          provider: {
-            baseUrl: body.llmBaseUrl ?? state.config.classifier.provider.baseUrl,
-            model: body.llmModel ?? state.config.classifier.provider.model,
-          },
-        };
-      }
-
+      // --- LLM ---
       if (body.llm) {
-        // Structured llm object — merge baseUrl/model if provided
         if (body.llm.baseUrl || body.llm.model) {
           localConfig.classifier = {
             provider: {
-              baseUrl: body.llm.baseUrl ?? (localConfig.classifier as any)?.provider?.baseUrl ?? state.config.classifier.provider.baseUrl,
-              model: body.llm.model ?? (localConfig.classifier as any)?.provider?.model ?? state.config.classifier.provider.model,
+              baseUrl: body.llm.baseUrl ?? state.config.classifier.provider.baseUrl,
+              model: body.llm.model ?? state.config.classifier.provider.model,
             },
           };
         }
+        if (body.llm.apiKey) envLines.push(`ATC_LLM_API_KEY=${body.llm.apiKey}`);
+        if (body.llm.baseUrl) envLines.push(`ATC_LLM_BASE_URL=${body.llm.baseUrl}`);
+        if (body.llm.model) envLines.push(`ATC_LLM_MODEL=${body.llm.model}`);
 
         // Budget config
         if (body.llm.dailyBudget !== undefined || body.llm.inputCostPerMillion !== undefined || body.llm.outputCostPerMillion !== undefined) {
@@ -695,14 +704,59 @@ export function createApp(state: EngineState): Hono {
         }
       }
 
-      if (body.jiraBaseUrl) {
-        localConfig.jira = {
-          enabled: true,
-          baseUrl: body.jiraBaseUrl,
-        };
+      // --- Messaging adapter ---
+      if (body.messaging) {
+        const adapterName = body.messaging.adapter;
+        const fields = body.messaging.fields;
+
+        // Look up adapter to get envVar mappings
+        const adapter = createMessagingAdapter(adapterName);
+        const setupInfo = adapter.getSetupInfo();
+
+        // Write env vars using the declared envVar names
+        for (const fieldDef of setupInfo.fields) {
+          if (fieldDef.envVar && fields[fieldDef.key]) {
+            envLines.push(`${fieldDef.envVar}=${fields[fieldDef.key]}`);
+          }
+        }
       }
 
-      // Rate limits — dynamic: persist whatever the client sends
+      // --- Task adapter ---
+      if (body.task) {
+        const adapterName = body.task.adapter;
+        const fields = body.task.fields;
+
+        const adapter = createTaskAdapter(adapterName);
+        const setupInfo = adapter.getSetupInfo();
+
+        // Write env vars using the declared envVar names
+        for (const fieldDef of setupInfo.fields) {
+          if (fieldDef.envVar && fields[fieldDef.key]) {
+            envLines.push(`${fieldDef.envVar}=${fields[fieldDef.key]}`);
+          }
+        }
+
+        // Prepare credentials (e.g. Jira base64 encoding)
+        const prepared = adapter.prepareCredentials
+          ? adapter.prepareCredentials(fields)
+          : fields;
+
+        // Write the computed auth token env var if adapter produces one
+        // For Jira: the base64 token goes to ATC_JIRA_TOKEN
+        if (adapterName === "jira" && prepared.token !== fields.token) {
+          envLines.push(`ATC_JIRA_TOKEN=${prepared.token}`);
+        }
+
+        // Write non-sensitive config
+        if (fields.baseUrl) {
+          localConfig.taskAdapter = {
+            enabled: true,
+            baseUrl: fields.baseUrl,
+          };
+        }
+      }
+
+      // --- Rate limits ---
       if (body.rateLimits && Object.keys(body.rateLimits).length > 0) {
         const rlConfig: Record<string, { maxPerMinute: number }> = {};
         for (const [name, maxPerMinute] of Object.entries(body.rateLimits)) {
@@ -715,43 +769,22 @@ export function createApp(state: EngineState): Hono {
         }
       }
 
+      // Write config/local.yaml
       writeFileSync(resolve(configDir, "local.yaml"), toYaml(localConfig), "utf-8");
       log.info("Wrote config/local.yaml");
 
-      // Write .env with all values
-      const envLines: string[] = [];
-      if (body.slackToken) envLines.push(`ATC_SLACK_TOKEN=${body.slackToken}`);
-      if (body.llmApiKey) envLines.push(`ATC_LLM_API_KEY=${body.llmApiKey}`);
-      if (body.llmBaseUrl) envLines.push(`ATC_LLM_BASE_URL=${body.llmBaseUrl}`);
-      if (body.llmModel) envLines.push(`ATC_LLM_MODEL=${body.llmModel}`);
-
-      // Jira: base64-encode email:token for Basic auth
-      // ATC_JIRA_API_TOKEN stores the raw API token; ATC_JIRA_TOKEN stores the computed Basic auth credential.
-      let jiraAuthToken: string | undefined;
-      if (body.jiraToken && body.jiraEmail) {
-        jiraAuthToken = Buffer.from(`${body.jiraEmail}:${body.jiraToken}`).toString("base64");
-      } else if (body.jiraToken && !body.jiraEmail) {
-        // No email provided — treat the token as already base64-encoded (legacy path)
-        jiraAuthToken = body.jiraToken;
-      }
-      if (body.jiraEmail) envLines.push(`ATC_JIRA_EMAIL=${body.jiraEmail}`);
-      if (body.jiraToken) envLines.push(`ATC_JIRA_API_TOKEN=${body.jiraToken}`);
-      if (jiraAuthToken) envLines.push(`ATC_JIRA_TOKEN=${jiraAuthToken}`);
-      if (body.jiraBaseUrl) envLines.push(`ATC_JIRA_BASE_URL=${body.jiraBaseUrl}`);
-
+      // Write .env
       if (envLines.length > 0) {
         writeFileSync(resolve(projectRoot, ".env"), envLines.join("\n") + "\n", "utf-8");
         log.info("Wrote .env");
 
-        // Also set env vars in current process so config reload picks them up
-        if (body.slackToken) process.env.ATC_SLACK_TOKEN = body.slackToken;
-        if (body.llmApiKey) process.env.ATC_LLM_API_KEY = body.llmApiKey;
-        if (body.llmBaseUrl) process.env.ATC_LLM_BASE_URL = body.llmBaseUrl;
-        if (body.llmModel) process.env.ATC_LLM_MODEL = body.llmModel;
-        if (body.jiraEmail) process.env.ATC_JIRA_EMAIL = body.jiraEmail;
-        if (body.jiraToken) process.env.ATC_JIRA_API_TOKEN = body.jiraToken;
-        if (jiraAuthToken) process.env.ATC_JIRA_TOKEN = jiraAuthToken;
-        if (body.jiraBaseUrl) process.env.ATC_JIRA_BASE_URL = body.jiraBaseUrl;
+        // Set env vars in current process
+        for (const line of envLines) {
+          const eqIndex = line.indexOf("=");
+          if (eqIndex !== -1) {
+            process.env[line.slice(0, eqIndex)] = line.slice(eqIndex + 1);
+          }
+        }
       }
 
       // Reload config
@@ -768,13 +801,12 @@ export function createApp(state: EngineState): Hono {
         state.pipeline = null;
       }
 
-      // Recreate rate limiters — known defaults + any extras from config
+      // Recreate rate limiters
       const rlDefaults: Record<string, { maxPerMinute: number; displayName: string }> = {
         llm: { maxPerMinute: 4, displayName: "LLM" },
         slack: { maxPerMinute: 25, displayName: "Slack" },
         jira: { maxPerMinute: 30, displayName: "Jira" },
       };
-      // Carry over display names from existing limiters (community adapters may have registered theirs)
       for (const [name, limiter] of Object.entries(state.rateLimiters)) {
         if (!rlDefaults[name]) {
           rlDefaults[name] = { maxPerMinute: limiter.limit, displayName: limiter.displayName };
@@ -793,21 +825,32 @@ export function createApp(state: EngineState): Hono {
       }
       state.rateLimiters = newLimiters;
 
-      // Reconnect adapters
-      if (body.slackToken) {
-        const slack = new SlackAdapter();
-        if (newLimiters.slack) slack.setRateLimiter(newLimiters.slack);
-        await slack.connect({ token: body.slackToken });
-        state.platformAdapter = slack;
-        log.info("Slack adapter reconnected");
+      // Reconnect messaging adapter
+      if (body.messaging) {
+        const adapter = createMessagingAdapter(body.messaging.adapter);
+        (adapter as { setRateLimiter?: (l: unknown) => void }).setRateLimiter?.(
+          newLimiters[body.messaging.adapter],
+        );
+        const creds = adapter.prepareCredentials
+          ? adapter.prepareCredentials(body.messaging.fields)
+          : body.messaging.fields;
+        await adapter.connect(creds as Record<string, string> & { token: string });
+        state.messagingAdapter = adapter;
+        log.info("Messaging adapter reconnected");
       }
 
-      if (jiraAuthToken && body.jiraBaseUrl) {
-        const jira = new JiraAdapter();
-        if (newLimiters.jira) jira.setRateLimiter(newLimiters.jira);
-        await jira.connect({ token: jiraAuthToken, baseUrl: body.jiraBaseUrl });
-        state.taskAdapter = jira;
-        log.info("Jira adapter reconnected");
+      // Reconnect task adapter
+      if (body.task) {
+        const adapter = createTaskAdapter(body.task.adapter);
+        (adapter as { setRateLimiter?: (l: unknown) => void }).setRateLimiter?.(
+          newLimiters[body.task.adapter],
+        );
+        const creds = adapter.prepareCredentials
+          ? adapter.prepareCredentials(body.task.fields)
+          : body.task.fields;
+        await adapter.connect(creds as Record<string, string> & { token: string });
+        state.taskAdapter = adapter;
+        log.info("Task adapter reconnected");
       }
 
       // Recreate classifier with new config, wired through a fresh UsageTracker
@@ -819,10 +862,10 @@ export function createApp(state: EngineState): Hono {
       state.classifier = new Classifier(newUsageTracker, newPrompt.system, newFewShot);
       if (newLimiters.llm) state.classifier.setRateLimiter(newLimiters.llm);
 
-      // Restart pipeline if we have a platform adapter
-      if (state.platformAdapter) {
+      // Restart pipeline if we have a messaging adapter
+      if (state.messagingAdapter) {
         state.pipeline = new Pipeline(
-          state.platformAdapter,
+          state.messagingAdapter,
           state.classifier,
           state.graph,
           state.linker,
@@ -842,56 +885,93 @@ export function createApp(state: EngineState): Hono {
   });
 
   // --- GET /api/setup/prefill ---
-  // Returns env var values to pre-populate the setup form.
-  // Safe to expose over localhost — values are already on this machine.
   app.get("/api/setup/prefill", (c) => {
-    // Build rate limits from whichever limiters are registered
+    const result: Record<string, unknown> = {};
+
+    // Messaging adapters — check env vars for each registered adapter
+    const messagingInfos = getMessagingAdapterSetupInfo();
+    for (const info of messagingInfos) {
+      const fields: Record<string, string> = {};
+      let hasValues = false;
+      for (const field of info.fields) {
+        if (field.envVar) {
+          const val = process.env[field.envVar] ?? "";
+          if (val) {
+            fields[field.key] = val;
+            hasValues = true;
+          }
+        }
+      }
+      if (hasValues) {
+        result.messaging = { adapter: info.name, fields };
+        break;
+      }
+    }
+
+    // Task adapters
+    const taskInfos = getTaskAdapterSetupInfo();
+    for (const info of taskInfos) {
+      const fields: Record<string, string> = {};
+      let hasValues = false;
+      for (const field of info.fields) {
+        if (field.envVar) {
+          const val = process.env[field.envVar] ?? "";
+          if (val) {
+            fields[field.key] = val;
+            hasValues = true;
+          }
+        }
+      }
+      if (hasValues) {
+        result.task = { adapter: info.name, fields };
+        break;
+      }
+    }
+
+    // LLM
+    result.llm = {
+      apiKey: process.env.ATC_LLM_API_KEY ?? "",
+      baseUrl: process.env.ATC_LLM_BASE_URL ?? "https://api.anthropic.com/v1",
+      model: process.env.ATC_LLM_MODEL ?? "claude-sonnet-4-6",
+      dailyBudget: state.config.llmBudget?.dailyBudget ?? null,
+      inputCostPerMillion: state.config.llmBudget?.inputCostPerMillion ?? null,
+      outputCostPerMillion: state.config.llmBudget?.outputCostPerMillion ?? null,
+    };
+
+    // Rate limits
     const rateLimits: Record<string, { maxPerMinute: number; displayName: string }> = {};
     for (const [name, limiter] of Object.entries(state.rateLimiters)) {
       rateLimits[name] = { maxPerMinute: limiter.limit, displayName: limiter.displayName };
     }
+    result.rateLimits = rateLimits;
 
-    return c.json({
-      slackToken: process.env.ATC_SLACK_TOKEN ?? "",
-      llmApiKey: process.env.ATC_LLM_API_KEY ?? "",
-      llmBaseUrl: process.env.ATC_LLM_BASE_URL ?? "https://api.anthropic.com/v1",
-      llmModel: process.env.ATC_LLM_MODEL ?? "claude-sonnet-4-6",
-      jiraEmail: process.env.ATC_JIRA_EMAIL ?? "",
-      jiraToken: process.env.ATC_JIRA_API_TOKEN ?? "",
-      jiraBaseUrl: process.env.ATC_JIRA_BASE_URL ?? "",
-      rateLimits,
-      llm: {
-        apiKey: process.env.ATC_LLM_API_KEY ?? "",
-        baseUrl: process.env.ATC_LLM_BASE_URL ?? "https://api.anthropic.com/v1",
-        model: process.env.ATC_LLM_MODEL ?? "claude-sonnet-4-6",
-        dailyBudget: state.config.llmBudget?.dailyBudget ?? null,
-        inputCostPerMillion: state.config.llmBudget?.inputCostPerMillion ?? null,
-        outputCostPerMillion: state.config.llmBudget?.outputCostPerMillion ?? null,
-      },
-    });
+    return c.json(result);
   });
 
   // --- GET /api/setup/status ---
   app.get("/api/setup/status", (c) => {
-    const slackConfigured = !!process.env.ATC_SLACK_TOKEN;
     const llmConfigured = !!(
       state.config.classifier.provider.apiKey ||
       state.config.classifier.provider.baseUrl.includes("localhost") ||
       state.config.classifier.provider.baseUrl.includes("127.0.0.1")
     );
-    const jiraConfigured = !!(state.config.jira.enabled && process.env.ATC_JIRA_TOKEN);
 
-    const platformMeta: Record<string, unknown> = {};
-    if (state.platformAdapter?.name === "slack") {
-      const slack = state.platformAdapter as import("./adapters/messaging/slack/index.js").SlackAdapter;
-      platformMeta.slackWorkspaceUrl = slack.getWorkspaceUrl?.() ?? null;
-    }
+    const messagingConnected = !!state.messagingAdapter;
+    const taskConnected = !!state.taskAdapter;
+
+    const platformMeta: Record<string, unknown> = state.messagingAdapter?.getMetadata?.() ?? {};
 
     return c.json({
-      configured: slackConfigured && llmConfigured,
-      slack: slackConfigured,
+      configured: messagingConnected && llmConfigured,
       llm: llmConfigured,
-      jira: jiraConfigured,
+      adapters: {
+        messaging: messagingConnected
+          ? { name: state.messagingAdapter!.name, connected: true }
+          : null,
+        task: taskConnected
+          ? { name: state.taskAdapter!.name, connected: true }
+          : null,
+      },
       platformMeta,
     });
   });
@@ -935,22 +1015,28 @@ async function main(): Promise<void> {
   // 2. Open/create SQLite database
   const db = new Database("atc.db");
 
-  // 3. Create rate limiters
-  const llmLimiter = createRateLimiter({
-    name: "llm",
-    displayName: "LLM",
-    maxPerMinute: config.rateLimits?.llm?.maxPerMinute ?? 4,
-  });
-  const slackLimiter = createRateLimiter({
-    name: "slack",
-    displayName: "Slack",
-    maxPerMinute: config.rateLimits?.slack?.maxPerMinute ?? 25,
-  });
-  const jiraLimiter = createRateLimiter({
-    name: "jira",
-    displayName: "Jira",
-    maxPerMinute: config.rateLimits?.jira?.maxPerMinute ?? 30,
-  });
+  // 3. Create rate limiters from config (dynamic — not hardcoded per adapter)
+  const defaultRateLimits: Record<string, { maxPerMinute: number; displayName: string }> = {
+    llm: { maxPerMinute: 4, displayName: "LLM" },
+    slack: { maxPerMinute: 25, displayName: "Slack" },
+    jira: { maxPerMinute: 30, displayName: "Jira" },
+  };
+  const rateLimiters: Record<string, RateLimiter> = {};
+  // Merge config overrides into defaults
+  if (config.rateLimits) {
+    for (const [name, cfg] of Object.entries(config.rateLimits)) {
+      if (cfg?.maxPerMinute) {
+        defaultRateLimits[name] = {
+          ...defaultRateLimits[name],
+          maxPerMinute: cfg.maxPerMinute,
+          displayName: defaultRateLimits[name]?.displayName ?? name,
+        };
+      }
+    }
+  }
+  for (const [name, entry] of Object.entries(defaultRateLimits)) {
+    rateLimiters[name] = createRateLimiter({ name, ...entry });
+  }
 
   // 4. Create core components
   const graph = new ContextGraph(db);
@@ -961,11 +1047,11 @@ async function main(): Promise<void> {
   const prompt = loadPrompt(projectRoot);
   const fewShot = buildFewShotMessages(prompt.few_shot_examples);
   const classifier = new Classifier(usageTracker, prompt.system, fewShot);
-  classifier.setRateLimiter(llmLimiter);
+  classifier.setRateLimiter(rateLimiters.llm);
   const extractor = new DefaultExtractor({
     ticketPatterns: config.extractors.ticketPatterns,
     prPatterns: config.extractors.prPatterns,
-    ticketPrefixes: config.jira.ticketPrefixes,
+    ticketPrefixes: config.taskAdapter.ticketPrefixes,
   });
   const linker = new WorkItemLinker(graph, [extractor]);
 
@@ -978,94 +1064,66 @@ async function main(): Promise<void> {
     usageTracker,
     linker,
     pipeline: null,
-    platformAdapter: null,
+    messagingAdapter: null,
     taskAdapter: null,
-    rateLimiters: { llm: llmLimiter, slack: slackLimiter, jira: jiraLimiter },
+    rateLimiters,
     startedAt: new Date(),
     lastPoll: null,
     processed: 0,
   };
 
-  // 5. If Slack configured, create adapter and connect
+  // 5. If messaging adapter configured, create and connect via registry
+  // Import adapter modules so they self-register with the registry
+  await import("./adapters/messaging/slack/index.js");
+  await import("./adapters/tasks/jira/index.js");
+
   const slackToken = process.env.ATC_SLACK_TOKEN;
   if (slackToken) {
     try {
-      const slack = new SlackAdapter();
-      slack.setRateLimiter(slackLimiter);
-      await slack.connect({ token: slackToken });
-      state.platformAdapter = slack;
-      log.info("Slack adapter connected");
+      const adapter = createMessagingAdapter("slack");
+      (adapter as { setRateLimiter?: (l: unknown) => void }).setRateLimiter?.(rateLimiters.slack);
+      await adapter.connect({ token: slackToken });
+      state.messagingAdapter = adapter;
+      log.info(`${adapter.displayName} adapter connected`);
 
-      // Backfill agent names and avatars from Slack user data.
-      // Agents whose name is still a raw Slack user ID (e.g. "U0399K5KCQ3") get
-      // their display name resolved. Agents missing avatars get them filled in.
-      const agents = graph.getAllAgents();
-      const users = await slack.getUsers();
-      let backfilled = 0;
-      for (const agent of agents) {
-        const slackName = users.get(agent.platformUserId);
-        const avatar = slack.getUserAvatar(agent.platformUserId);
-        const needsName = agent.name === agent.platformUserId && slackName;
-        const needsAvatar = !agent.avatarUrl && avatar;
-        if (needsName || needsAvatar) {
-          graph.upsertAgent({
-            id: agent.id,
-            name: needsName ? slackName! : agent.name,
-            platform: agent.platform,
-            platformUserId: agent.platformUserId,
-            avatarUrl: avatar || agent.avatarUrl,
-          });
-          backfilled++;
-        }
-      }
-      if (backfilled > 0) {
-        log.info(`Backfilled names/avatars for ${backfilled} agents`);
+      // Backfill agent data from platform
+      const agentsBackfilled = await adapter.backfillAgents?.(graph) ?? 0;
+      if (agentsBackfilled > 0) {
+        log.info(`Backfilled names/avatars for ${agentsBackfilled} agents`);
       }
 
-      // Backfill channel privacy into platform_meta for existing threads
-      // This runs a direct SQL update for efficiency — no need to load each thread
-      const channelIds = db.db.prepare(
-        "SELECT DISTINCT channel_id FROM threads WHERE platform = 'slack' AND platform_meta = '{}'"
-      ).all() as Array<{ channel_id: string }>;
-      let privUpdated = 0;
-      for (const { channel_id } of channelIds) {
-        if (slack.isChannelPrivate(channel_id)) {
-          db.db.prepare(
-            "UPDATE threads SET platform_meta = '{\"isPrivate\":true}' WHERE channel_id = ?"
-          ).run(channel_id);
-          privUpdated++;
-        }
-      }
-      if (privUpdated > 0) {
-        log.info(`Backfilled private flag for ${privUpdated} channels`);
+      // Backfill thread metadata from platform
+      const threadsBackfilled = await adapter.backfillThreads?.(db) ?? 0;
+      if (threadsBackfilled > 0) {
+        log.info(`Backfilled metadata for ${threadsBackfilled} channels`);
       }
     } catch (err) {
-      log.error("Failed to connect Slack adapter", err);
+      log.error("Failed to connect messaging adapter", err);
     }
   } else {
-    log.warn("No ATC_SLACK_TOKEN set — Slack adapter disabled");
+    log.warn("No ATC_SLACK_TOKEN set — messaging adapter disabled");
   }
 
-  // 6. If Jira configured, create adapter and connect
-  if (config.jira.enabled && process.env.ATC_JIRA_TOKEN) {
+  // 6. If task adapter configured, create and connect via registry
+  if (config.taskAdapter.enabled && process.env.ATC_JIRA_TOKEN) {
     try {
-      const jira = new JiraAdapter();
-      jira.setRateLimiter(jiraLimiter);
-      await jira.connect({
+      const adapter = createTaskAdapter("jira");
+      (adapter as { setRateLimiter?: (l: unknown) => void }).setRateLimiter?.(rateLimiters.jira);
+      await adapter.connect({
         token: process.env.ATC_JIRA_TOKEN,
-        baseUrl: process.env.ATC_JIRA_BASE_URL ?? config.jira.baseUrl ?? "",
+        baseUrl: process.env.ATC_JIRA_BASE_URL ?? config.taskAdapter.baseUrl ?? "",
       });
-      state.taskAdapter = jira;
-      log.info("Jira adapter connected");
+      state.taskAdapter = adapter;
+      log.info(`${adapter.displayName} adapter connected`);
     } catch (err) {
-      log.error("Failed to connect Jira adapter", err);
+      log.error("Failed to connect task adapter", err);
     }
   }
 
-  // 6. Create pipeline if platform adapter is available
-  if (state.platformAdapter) {
+  // 7. Create pipeline if messaging adapter is available
+  if (state.messagingAdapter) {
     state.pipeline = new Pipeline(
-      state.platformAdapter,
+      state.messagingAdapter,
       state.classifier,
       state.graph,
       state.linker,
@@ -1073,10 +1131,10 @@ async function main(): Promise<void> {
       state.config,
     );
   } else {
-    log.warn("No platform adapter available — pipeline not started (configure via POST /api/setup)");
+    log.warn("No messaging adapter available — pipeline not started (configure via POST /api/setup)");
   }
 
-  // 7. Create and start Hono server — before pipeline polling so the server
+  // 8. Create and start Hono server — before pipeline polling so the server
   //    is reachable immediately (initial poll can block for minutes with rate limiting)
   const app = createApp(state);
 

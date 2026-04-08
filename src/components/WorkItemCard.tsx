@@ -5,9 +5,9 @@ import { timeAgo } from "../lib/time";
 import StatusBadge from "./StatusBadge";
 import Tooltip from "./Tooltip";
 import MentionInput from "./MentionInput";
-import MessageRenderer from "../platforms/MessageRenderer";
-import ChannelLabel from "../platforms/ChannelLabel";
-import { slackSerializeMention } from "../platforms/slack/mentions";
+import MessageRenderer from "../messaging/MessageRenderer";
+import ChannelLabel from "../messaging/ChannelLabel";
+import { getSerializeMention } from "../messaging/registry";
 
 interface WorkItemCardProps {
   item: ActionableItem;
@@ -85,7 +85,7 @@ export default function WorkItemCard({ item, platformMeta, userMap, mentionables
   const pendingReply = useRef("");
 
   // Pick the right mention serializer based on platform
-  const serializeMention = thread?.platform === "slack" ? slackSerializeMention : (id: string) => `@${id}`;
+  const serializeMention = getSerializeMention(thread?.platform ?? "");
 
   async function handleAction(action: ActionKind) {
     setActing(action);
@@ -249,7 +249,7 @@ export default function WorkItemCard({ item, platformMeta, userMap, mentionables
 
           {/* Create Ticket — only for inferred/unticketed work items */}
           {isInferred && (
-            <Tooltip text="Create a Jira ticket from this conversation">
+            <Tooltip text="Create a ticket from this conversation">
               <button
                 onClick={handleCreateTicket}
                 disabled={busy}

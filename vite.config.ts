@@ -14,6 +14,9 @@ export default defineConfig({
     watch: {
       ignored: ["**/src-tauri/**", "**/core/**"],
     },
+    proxy: {
+      "/api": "http://127.0.0.1:9847",
+    },
   },
   build: {
     target: "esnext",

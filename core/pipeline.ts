@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import { createLogger } from "./logger.js";
 import type { Config } from "./config.js";
 import type { Classification, Message, Thread } from "./types.js";
-import type { PlatformAdapter } from "./adapters/messaging/interface.js";
+import type { MessagingAdapter } from "./adapters/messaging/interface.js";
 import type { TaskAdapter } from "./adapters/tasks/interface.js";
 import type { Classifier } from "./classifier/index.js";
 import type { ContextGraph } from "./graph/index.js";
@@ -23,7 +23,7 @@ export interface ProcessResult {
 }
 
 export class Pipeline {
-  private platformAdapter: PlatformAdapter;
+  private messagingAdapter: MessagingAdapter;
   private classifier: Classifier;
   private graph: ContextGraph;
   private linker: WorkItemLinker;
@@ -35,14 +35,14 @@ export class Pipeline {
   private readonly MAX_CONTENT_HASHES = 1000;
 
   constructor(
-    platformAdapter: PlatformAdapter,
+    messagingAdapter: MessagingAdapter,
     classifier: Classifier,
     graph: ContextGraph,
     linker: WorkItemLinker,
     taskAdapter?: TaskAdapter,
     config?: Config,
   ) {
-    this.platformAdapter = platformAdapter;
+    this.messagingAdapter = messagingAdapter;
     this.classifier = classifier;
     this.graph = graph;
     this.linker = linker;
@@ -64,7 +64,7 @@ export class Pipeline {
     log.info("Initial poll complete", result);
 
     // Set up the polling interval
-    const intervalSeconds = this.config?.slack?.pollInterval ?? DEFAULT_POLL_INTERVAL;
+    const intervalSeconds = this.config?.messaging?.pollInterval ?? DEFAULT_POLL_INTERVAL;
     this.intervalHandle = setInterval(async () => {
       try {
         const r = await this.processOnce();
@@ -87,7 +87,7 @@ export class Pipeline {
   }
 
   async processOnce(): Promise<ProcessResult> {
-    const channels = this.config?.slack?.channels ?? [];
+    const channels = this.config?.messaging?.channels ?? [];
     let processed = 0;
     let classified = 0;
     let errors = 0;
@@ -97,9 +97,9 @@ export class Pipeline {
 
     let threads: Thread[];
     try {
-      threads = await this.platformAdapter.readThreads(since, channels.length > 0 ? channels : undefined);
+      threads = await this.messagingAdapter.readThreads(since, channels.length > 0 ? channels : undefined);
     } catch (err) {
-      log.error("Failed to read threads from platform adapter", err);
+      log.error("Failed to read threads from messaging adapter", err);
       return { processed: 0, classified: 0, errors: 1 };
     }
 

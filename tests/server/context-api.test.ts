@@ -19,9 +19,9 @@ function makeState(overrides: Partial<EngineState> = {}): EngineState {
   ]);
   return {
     config: {
-      slack: { pollInterval: 30, channels: [] },
+      messaging: { pollInterval: 30, channels: [] },
       classifier: { provider: { baseUrl: "http://localhost", model: "test", apiKey: "" }, confidenceThreshold: 0.6 },
-      jira: { enabled: false, ticketPrefixes: [] },
+      taskAdapter: { enabled: false, ticketPrefixes: [] },
       extractors: { ticketPatterns: [], prPatterns: [] },
       mcp: { transport: "stdio" },
       server: { port: 9847, host: "127.0.0.1" },
@@ -35,7 +35,7 @@ function makeState(overrides: Partial<EngineState> = {}): EngineState {
     classifier,
     linker,
     pipeline: null,
-    platformAdapter: null,
+    messagingAdapter: null,
     taskAdapter: null,
     startedAt: new Date(),
     lastPoll: null,

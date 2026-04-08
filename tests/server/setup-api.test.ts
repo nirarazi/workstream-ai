@@ -19,9 +19,9 @@ function makeState(): EngineState {
   ]);
   return {
     config: {
-      slack: { pollInterval: 30, channels: [] },
+      messaging: { pollInterval: 30, channels: [] },
       classifier: { provider: { baseUrl: "http://localhost", model: "test" }, confidenceThreshold: 0.6 },
-      jira: { enabled: false, ticketPrefixes: [] },
+      taskAdapter: { enabled: false, ticketPrefixes: [] },
       extractors: { ticketPatterns: [], prPatterns: [] },
       mcp: { transport: "stdio" },
       server: { port: 9847, host: "127.0.0.1" },
@@ -33,7 +33,7 @@ function makeState(): EngineState {
     usageTracker: null,
     linker,
     pipeline: null,
-    platformAdapter: null,
+    messagingAdapter: null,
     taskAdapter: null,
     rateLimiters: {},
     startedAt: new Date(),
@@ -62,27 +62,39 @@ describe("GET /api/setup/status", () => {
     expect(body).toHaveProperty("configured");
     expect(body).toHaveProperty("llm");
     expect(body).toHaveProperty("platformMeta");
+    expect(body).toHaveProperty("adapters");
 
     expect(body.configured).toBe(false);
     expect(body.platformMeta).toEqual({});
+    expect(body.adapters.messaging).toBeNull();
+    expect(body.adapters.task).toBeNull();
   });
 
-  it("returns configured true when slack token and llm are set", async () => {
-    const origToken = process.env.ATC_SLACK_TOKEN;
-    process.env.ATC_SLACK_TOKEN = "xoxp-test";
+  it("returns configured true when messaging adapter connected and llm are set", async () => {
+    // Simulate a connected messaging adapter
+    state.messagingAdapter = {
+      name: "slack",
+      displayName: "Slack",
+      getSetupInfo: () => ({ name: "slack", displayName: "Slack", fields: [] }),
+      connect: async () => {},
+      readThreads: async () => [],
+      replyToThread: async () => {},
+      postMessage: async () => ({ threadId: "t1" }),
+      sendDirectMessage: async () => ({ channelId: "c1", threadId: "t1" }),
+      streamMessages: () => {},
+      getUsers: async () => new Map(),
+      getThreadMessages: async () => [],
+    } as any;
 
     const app = createApp(state);
     const res = await app.request("/api/setup/status");
     expect(res.status).toBe(200);
 
     const body = await res.json();
-    // llm is true (baseUrl contains "localhost"), slack token is set
+    // llm is true (baseUrl contains "localhost"), messaging adapter is connected
     expect(body.configured).toBe(true);
-    expect(body.slack).toBe(true);
     expect(body.llm).toBe(true);
-
-    if (origToken === undefined) delete process.env.ATC_SLACK_TOKEN;
-    else process.env.ATC_SLACK_TOKEN = origToken;
+    expect(body.adapters.messaging).toEqual({ name: "slack", connected: true });
   });
 });
 
@@ -130,7 +142,10 @@ describe("GET /api/setup/prefill", () => {
     expect(body.llm.model).toBe("claude-sonnet-4-6");
   });
 
-  it("returns slackToken when ATC_SLACK_TOKEN env var is set", async () => {
+  it("returns messaging adapter fields when ATC_SLACK_TOKEN env var is set", async () => {
+    // Import the slack adapter module so it self-registers
+    await import("../../core/adapters/messaging/slack/index.js");
+
     process.env.ATC_SLACK_TOKEN = "xoxp-test";
 
     const app = createApp(state);
@@ -138,7 +153,9 @@ describe("GET /api/setup/prefill", () => {
     expect(res.status).toBe(200);
 
     const body = await res.json();
-    expect(body.slackToken).toBe("xoxp-test");
+    expect(body.messaging).toBeDefined();
+    expect(body.messaging.adapter).toBe("slack");
+    expect(body.messaging.fields.token).toBe("xoxp-test");
   });
 });
 
