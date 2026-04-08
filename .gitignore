@@ -4,7 +4,8 @@ target/
 *.db
 *.db-wal
 *.db-shm
-.env
+.env*
 config/local.yaml
 .DS_Store
 .superpowers/
+.claude/

@@ -20,7 +20,7 @@ function writeLocalYaml(root: string, content: string): void {
 }
 
 const MINIMAL_YAML = `
-slack:
+messaging:
   pollInterval: 30
   channels: []
 classifier:
@@ -28,7 +28,7 @@ classifier:
     baseUrl: https://api.example.com
     model: test-model
   confidenceThreshold: 0.6
-jira:
+taskAdapter:
   enabled: false
   ticketPrefixes:
     - "AI-"
@@ -68,30 +68,30 @@ describe("config", () => {
   it("loads a valid default config", () => {
     writeDefaultYaml(tempRoot, MINIMAL_YAML);
     const cfg = loadConfig(tempRoot);
-    expect(cfg.slack.pollInterval).toBe(30);
+    expect(cfg.messaging.pollInterval).toBe(30);
     expect(cfg.classifier.provider.model).toBe("test-model");
     expect(cfg.server.port).toBe(9847);
-    expect(cfg.jira.enabled).toBe(false);
+    expect(cfg.taskAdapter.enabled).toBe(false);
   });
 
   it("merges local.yaml overlay on top of default", () => {
     writeDefaultYaml(tempRoot, MINIMAL_YAML);
     writeLocalYaml(tempRoot, `
-slack:
+messaging:
   pollInterval: 10
   channels:
     - general
 `);
     const cfg = loadConfig(tempRoot);
-    expect(cfg.slack.pollInterval).toBe(10);
-    expect(cfg.slack.channels).toEqual(["general"]);
+    expect(cfg.messaging.pollInterval).toBe(10);
+    expect(cfg.messaging.channels).toEqual(["general"]);
     // Non-overridden values are preserved
     expect(cfg.server.port).toBe(9847);
   });
 
   it("substitutes env vars with ${VAR:-default} syntax", () => {
     writeDefaultYaml(tempRoot, `
-slack:
+messaging:
   pollInterval: 30
   channels: []
 classifier:
@@ -99,7 +99,7 @@ classifier:
     baseUrl: \${TEST_BASE_URL:-https://fallback.com}
     model: \${TEST_MODEL:-fallback-model}
   confidenceThreshold: 0.6
-jira:
+taskAdapter:
   enabled: false
   ticketPrefixes: []
 extractors:
@@ -133,7 +133,7 @@ server:
 
   it("throws on invalid config shape", () => {
     writeDefaultYaml(tempRoot, `
-slack:
+messaging:
   pollInterval: "not a number"
   channels: []
 `);
@@ -148,13 +148,13 @@ slack:
     // Just verify getConfig doesn't throw when pointed at the real project
     const cfg1 = loadConfig(projectRoot);
     expect(cfg1).toBeDefined();
-    expect(cfg1.slack).toBeDefined();
+    expect(cfg1.messaging).toBeDefined();
   });
 
   it("works with the actual project default.yaml", () => {
     const projectRoot = resolve(import.meta.dirname, "../..");
     const cfg = loadConfig(projectRoot);
-    expect(cfg.slack.pollInterval).toBe(30);
+    expect(cfg.messaging.pollInterval).toBe(30);
     expect(cfg.mcp.transport).toBe("stdio");
     expect(cfg.server.port).toBe(9847);
   });

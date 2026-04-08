@@ -6,13 +6,14 @@ import { DefaultExtractor } from "../../core/graph/extractors/default.js";
 const defaultConfig = {
   ticketPatterns: ["\\b([A-Z]{2,6}-\\d+)\\b"],
   prPatterns: ["PR\\s*#?(\\d+)", "#(\\d+)"],
+  ticketPrefixes: ["AI-", "IT-", "MS-"],
 };
 
 describe("DefaultExtractor", () => {
   const extractor = new DefaultExtractor(defaultConfig);
 
   describe("ticket extraction", () => {
-    it("extracts standard Jira-style tickets", () => {
+    it("extracts tickets matching known prefixes", () => {
       const ids = extractor.extractWorkItemIds("Working on AI-382 now");
       expect(ids).toContain("AI-382");
     });
@@ -24,26 +25,19 @@ describe("DefaultExtractor", () => {
       expect(ids).toContain("MS-112");
     });
 
-    it("handles 2-letter prefixes", () => {
-      const ids = extractor.extractWorkItemIds("Fix for IT-5");
-      expect(ids).toContain("IT-5");
-    });
-
-    it("handles 6-letter prefixes", () => {
-      const ids = extractor.extractWorkItemIds("See DEPLOY-123");
-      expect(ids).toContain("DEPLOY-123");
+    it("rejects tickets with unknown prefixes", () => {
+      const ids = extractor.extractWorkItemIds("See DEPLOY-123 and UI-5");
+      expect(ids).toHaveLength(0);
     });
 
     it("ignores lowercase prefixes", () => {
       const ids = extractor.extractWorkItemIds("working on ai-382");
-      const tickets = ids.filter((id) => !id.startsWith("PR-"));
-      expect(tickets).toHaveLength(0);
+      expect(ids).toHaveLength(0);
     });
 
     it("deduplicates repeated ticket IDs", () => {
       const ids = extractor.extractWorkItemIds("AI-1 is related to AI-1");
-      const tickets = ids.filter((id) => !id.startsWith("PR-"));
-      expect(tickets).toEqual(["AI-1"]);
+      expect(ids).toEqual(["AI-1"]);
     });
 
     it("handles tickets at start and end of text", () => {
@@ -60,40 +54,29 @@ describe("DefaultExtractor", () => {
     });
   });
 
-  describe("PR extraction", () => {
-    it("extracts PR #NNN format", () => {
+  describe("PR patterns no longer extracted by regex", () => {
+    it("does not extract PR #NNN — left to LLM classifier", () => {
       const ids = extractor.extractWorkItemIds("Review PR #716");
-      expect(ids).toContain("PR-716");
+      expect(ids).toHaveLength(0);
     });
 
-    it("extracts PR NNN format (no hash)", () => {
-      const ids = extractor.extractWorkItemIds("Review PR 42");
-      expect(ids).toContain("PR-42");
+    it("does not extract #NNN — avoids false positives like 'restart #2'", () => {
+      const ids = extractor.extractWorkItemIds("Gateway restart #2");
+      expect(ids).toHaveLength(0);
     });
 
-    it("extracts #NNN format", () => {
+    it("does not extract bare #NNN from natural language", () => {
       const ids = extractor.extractWorkItemIds("See #42 for details");
-      expect(ids).toContain("PR-42");
-    });
-
-    it("extracts multiple PRs", () => {
-      const ids = extractor.extractWorkItemIds("PR #1 and PR #2 are ready");
-      expect(ids).toContain("PR-1");
-      expect(ids).toContain("PR-2");
-    });
-
-    it("deduplicates PR references matched by different patterns", () => {
-      const ids = extractor.extractWorkItemIds("PR #42 see #42");
-      const prIds = ids.filter((id) => id.startsWith("PR-"));
-      expect(prIds).toEqual(["PR-42"]);
+      expect(ids).toHaveLength(0);
     });
   });
 
   describe("mixed extraction", () => {
-    it("extracts both tickets and PRs from the same text", () => {
+    it("extracts only known-prefix tickets, ignores PR references", () => {
       const ids = extractor.extractWorkItemIds("AI-382: submitted PR #716 for review");
       expect(ids).toContain("AI-382");
-      expect(ids).toContain("PR-716");
+      expect(ids).not.toContain("PR-716");
+      expect(ids).toHaveLength(1);
     });
 
     it("handles multiline text", () => {
@@ -104,7 +87,7 @@ describe("DefaultExtractor", () => {
       const ids = extractor.extractWorkItemIds(text);
       expect(ids).toContain("AI-100");
       expect(ids).toContain("IT-200");
-      expect(ids).toContain("PR-50");
+      expect(ids).toHaveLength(2); // PR-50 not extracted
     });
   });
 
@@ -117,20 +100,31 @@ describe("DefaultExtractor", () => {
       expect(extractor.extractWorkItemIds("   \n\t  ")).toHaveLength(0);
     });
 
-    it("does not match partial patterns", () => {
-      // Single letter prefix should not match
+    it("does not match single-letter prefixes", () => {
       const ids = extractor.extractWorkItemIds("A-123");
-      const tickets = ids.filter((id) => !id.startsWith("PR-"));
-      expect(tickets).toHaveLength(0);
+      expect(ids).toHaveLength(0);
     });
 
-    it("works with custom patterns", () => {
-      const custom = new DefaultExtractor({
-        ticketPatterns: ["\\b(FEAT-\\d+)\\b"],
+    it("accepts all ticket patterns when no prefixes configured", () => {
+      const noPrefixes = new DefaultExtractor({
+        ticketPatterns: ["\\b([A-Z]{2,6}-\\d+)\\b"],
         prPatterns: [],
+        ticketPrefixes: [],
       });
-      const ids = custom.extractWorkItemIds("Working on FEAT-42");
+      const ids = noPrefixes.extractWorkItemIds("DEPLOY-123 and UI-5");
+      expect(ids).toContain("DEPLOY-123");
+      expect(ids).toContain("UI-5");
+    });
+
+    it("works with custom prefixes", () => {
+      const custom = new DefaultExtractor({
+        ticketPatterns: ["\\b([A-Z]{2,6}-\\d+)\\b"],
+        prPatterns: [],
+        ticketPrefixes: ["FEAT-"],
+      });
+      const ids = custom.extractWorkItemIds("Working on FEAT-42 and AI-100");
       expect(ids).toContain("FEAT-42");
+      expect(ids).not.toContain("AI-100");
     });
   });
 });

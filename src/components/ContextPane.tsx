@@ -15,8 +15,8 @@ import {
 import { timeAgo } from "../lib/time";
 import StatusBadge from "./StatusBadge";
 import MentionInput from "./MentionInput";
-import MessageRenderer from "../platforms/MessageRenderer";
-import { slackSerializeMention } from "../platforms/slack/mentions";
+import MessageRenderer from "../messaging/MessageRenderer";
+import { getSerializeMention } from "../messaging/registry";
 
 interface ContextPaneProps {
   workItemId: string;
@@ -285,11 +285,9 @@ export default function ContextPane({
   if (!context) return <></>;
 
   const { workItem, events, enrichments, quickReplies, threads } = context;
-  const jiraEnrichment = enrichments.find((e) => e.source === "jira");
+  const taskEnrichment = enrichments[0]; // Show first available enrichment from any task adapter
   const thread = threads[0];
-  const serializeMention = thread?.platform === "slack"
-    ? slackSerializeMention
-    : (id: string) => `@${id}`;
+  const serializeMention = getSerializeMention(thread?.platform ?? "");
 
   return (
     <div className="fixed inset-0 z-[60] flex justify-end" onClick={handleBackdropClick}>
@@ -313,7 +311,7 @@ export default function ContextPane({
           )}
           {workItem.externalStatus && (
             <p className="mt-0.5 text-xs text-gray-500">
-              Jira: {workItem.externalStatus}
+              {workItem.externalStatus}
               {workItem.assignee && ` \u00B7 ${workItem.assignee}`}
             </p>
           )}
@@ -336,26 +334,26 @@ export default function ContextPane({
             )}
           </section>
 
-          {/* Jira Context */}
-          {jiraEnrichment && (
+          {/* Task Adapter Enrichment */}
+          {taskEnrichment && (
             <section>
               <h3 className="text-xs font-semibold uppercase tracking-widest text-gray-500 mb-2">
-                Jira
+                {taskEnrichment.source.charAt(0).toUpperCase() + taskEnrichment.source.slice(1)}
               </h3>
               <div className="rounded border border-gray-800 bg-gray-900 p-3 text-sm space-y-1">
-                {(jiraEnrichment.data as Record<string, unknown>).description && (
+                {(taskEnrichment.data as Record<string, unknown>).description && (
                   <p className="text-gray-300">
-                    {String((jiraEnrichment.data as Record<string, unknown>).description).slice(0, 500)}
+                    {String((taskEnrichment.data as Record<string, unknown>).description).slice(0, 500)}
                   </p>
                 )}
-                {(jiraEnrichment.data as Record<string, unknown>).status && (
+                {(taskEnrichment.data as Record<string, unknown>).status && (
                   <p className="text-xs text-gray-500">
-                    Status: {String((jiraEnrichment.data as Record<string, unknown>).status)}
+                    Status: {String((taskEnrichment.data as Record<string, unknown>).status)}
                   </p>
                 )}
-                {((jiraEnrichment.data as Record<string, unknown>).labels as string[] | undefined)?.length ? (
+                {((taskEnrichment.data as Record<string, unknown>).labels as string[] | undefined)?.length ? (
                   <p className="text-xs text-gray-500">
-                    Labels: {((jiraEnrichment.data as Record<string, unknown>).labels as string[]).join(", ")}
+                    Labels: {((taskEnrichment.data as Record<string, unknown>).labels as string[]).join(", ")}
                   </p>
                 ) : null}
               </div>

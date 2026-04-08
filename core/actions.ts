@@ -1,6 +1,6 @@
 // core/actions.ts — Backend logic for operator actions on work items
 
-import type { PlatformAdapter } from "./adapters/platforms/interface.js";
+import type { MessagingAdapter } from "./adapters/messaging/interface.js";
 import type { ContextGraph } from "./graph/index.js";
 import { createLogger } from "./logger.js";
 
@@ -16,7 +16,7 @@ export interface ActionResult {
 export class ActionHandler {
   constructor(
     private graph: ContextGraph,
-    private platformAdapter?: PlatformAdapter,
+    private messagingAdapter?: MessagingAdapter,
   ) {}
 
   async execute(
@@ -51,14 +51,14 @@ export class ActionHandler {
   }
 
   private async sendThreadMessage(workItemId: string, text: string): Promise<void> {
-    if (!this.platformAdapter) return;
+    if (!this.messagingAdapter) return;
 
     const threads = this.graph.getThreadsForWorkItem(workItemId);
     if (threads.length === 0) return;
 
     const latestThread = threads[0]; // Already sorted by last_activity DESC
     try {
-      await this.platformAdapter.replyToThread(latestThread.id, latestThread.channelId, text);
+      await this.messagingAdapter.replyToThread(latestThread.id, latestThread.channelId, text);
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err);
       log.error("Failed to send thread message", errorMessage);

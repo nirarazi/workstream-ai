@@ -8,7 +8,8 @@ import { DefaultExtractor } from "../../core/graph/extractors/default.js";
 
 const defaultConfig = {
   ticketPatterns: ["\\b([A-Z]{2,6}-\\d+)\\b"],
-  prPatterns: ["PR\\s*#?(\\d+)", "#(\\d+)"],
+  prPatterns: [],
+  ticketPrefixes: [],
 };
 
 describe("WorkItemLinker", () => {
@@ -77,24 +78,22 @@ describe("WorkItemLinker", () => {
     expect(ids).toHaveLength(0);
   });
 
-  it("handles PR references", () => {
+  it("does not extract PR references — left to LLM classifier", () => {
     graph.upsertThread({ id: "t1", channelId: "C1", platform: "slack" });
 
     const ids = linker.linkMessage("Submitted PR #716 for review", "t1");
-    expect(ids).toContain("PR-716");
-
-    const wi = graph.getWorkItemById("PR-716");
-    expect(wi).not.toBeNull();
+    expect(ids).toHaveLength(0);
   });
 
-  it("handles mixed ticket and PR references", () => {
+  it("extracts only ticket IDs, ignores PR references", () => {
     graph.upsertThread({ id: "t1", channelId: "C1", platform: "slack" });
 
     const ids = linker.linkMessage("AI-382: PR #716 ready for review", "t1");
     expect(ids).toContain("AI-382");
-    expect(ids).toContain("PR-716");
+    expect(ids).not.toContain("PR-716");
+    expect(ids).toHaveLength(1);
 
-    // Thread should be linked to first ID (AI-382)
+    // Thread should be linked to AI-382
     const thread = graph.getThreadById("t1");
     expect(thread!.workItemId).toBe("AI-382");
   });

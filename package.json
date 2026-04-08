@@ -13,7 +13,7 @@
     "test:watch": "vitest",
     "classify": "tsx core/classifier/cli.ts",
     "mcp": "tsx core/mcp/cli.ts",
-    "engine": "tsx core/server.ts",
+    "engine": "tsx watch core/server.ts",
     "dev:web": "concurrently \"tsx watch core/server.ts\" \"vite\"",
     "start:web": "vite build && ATC_SERVE_STATIC=true tsx core/server.ts"
   },
@@ -37,6 +37,7 @@
     "@tailwindcss/vite": "^4.2.2",
     "@tauri-apps/api": "^2.10.1",
     "@tauri-apps/cli": "^2.10.1",
+    "@tauri-apps/plugin-shell": "^2.3.5",
     "@testing-library/react": "^16.3.2",
     "@types/better-sqlite3": "^7.6.13",
     "@types/react": "^19.2.14",
