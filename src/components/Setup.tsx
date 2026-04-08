@@ -616,7 +616,7 @@ export default function Setup({ onComplete }: SetupProps): JSX.Element {
         <button
           type="submit"
           disabled={submitting}
-          className="w-full rounded bg-gray-100 px-4 py-2 text-sm font-semibold text-gray-950 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+          className="cursor-pointer w-full rounded bg-gray-100 px-4 py-2 text-sm font-semibold text-gray-950 hover:opacity-85 disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {submitting ? "Saving..." : "Save & Continue"}
         </button>

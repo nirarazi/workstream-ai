@@ -30,7 +30,7 @@ const ACTION_BUTTONS: {
   {
     action: "unblock",
     label: "Unblock",
-    classes: "bg-blue-700/80 hover:bg-blue-600 text-blue-100",
+    classes: "bg-blue-700/80 hover:bg-blue-700 text-blue-100",
     tooltip: "Unblock the agent \u2014 your reply lets them continue",
     primary: true,
   },
