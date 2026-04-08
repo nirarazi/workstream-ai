@@ -80,6 +80,7 @@ export default function WorkItemCard({ item, platformMeta, userMap, mentionables
   const [sending, setSending] = useState(false);
   const [done, setDone] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [creatingTicket, setCreatingTicket] = useState(false);
   // Pending reply text set by MentionInput's onSubmit (Enter key = reply-only)
   // Action buttons read and clear this via a ref to avoid stale closures
   const pendingReply = useRef("");
@@ -117,17 +118,7 @@ export default function WorkItemCard({ item, platformMeta, userMap, mentionables
     }
   }
 
-  // Fade out after action
-  if (done) {
-    return (
-      <div className="rounded border border-gray-800 bg-gray-900/50 p-4 opacity-40 transition-opacity duration-300">
-        <p className="text-sm text-gray-500 text-center">Done</p>
-      </div>
-    );
-  }
-
   const isInferred = workItem.source === "inferred" || workItem.id.startsWith("thread:");
-  const [creatingTicket, setCreatingTicket] = useState(false);
 
   async function handleCreateTicket() {
     setCreatingTicket(true);
@@ -148,7 +139,11 @@ export default function WorkItemCard({ item, platformMeta, userMap, mentionables
 
   const busy = acting !== null || sending || creatingTicket;
 
-  return (
+  return done ? (
+    <div className="rounded border border-gray-800 bg-gray-900/50 p-4 opacity-40 transition-opacity duration-300">
+      <p className="text-sm text-gray-500 text-center">Done</p>
+    </div>
+  ) : (
     <div
       className="rounded border border-gray-800 bg-gray-900 p-4 cursor-pointer hover:border-gray-700 transition-colors"
       onClick={() => onSelect?.(workItem.id)}
