@@ -1,5 +1,6 @@
 // core/pipeline.ts — Central orchestration loop: read → classify → link → store → enrich
 
+import { createHash } from "node:crypto";
 import { createLogger } from "./logger.js";
 import type { Config } from "./config.js";
 import type { Classification, Message, Thread } from "./types.js";
@@ -30,6 +31,8 @@ export class Pipeline {
   private config?: Config;
   private intervalHandle: ReturnType<typeof setInterval> | null = null;
   private running = false;
+  private recentContentHashes = new Map<string, Classification>();
+  private readonly MAX_CONTENT_HASHES = 1000;
 
   constructor(
     messagingAdapter: MessagingAdapter,
@@ -174,6 +177,10 @@ export class Pipeline {
 
   // --- Private helpers ---
 
+  private getContentHash(text: string, threadId: string): string {
+    return createHash("sha256").update(`${threadId}:${text}`).digest("hex");
+  }
+
   private getSinceDate(channels: string[]): Date {
     // Find the earliest poll cursor across all channels, or fall back to 7 days ago
     let earliest: Date | null = null;
@@ -221,6 +228,66 @@ export class Pipeline {
       allWorkItemIds.add(inheritedWorkItemId);
     }
 
+    // Step 0c: Skip classification if the work item is already completed
+    if (inheritedWorkItemId) {
+      const existingWI = this.graph.getWorkItemById(inheritedWorkItemId);
+      if (existingWI?.currentAtcStatus === "completed") {
+        log.debug("Skipping classification for completed work item", inheritedWorkItemId);
+        // Still record the event so the message isn't lost
+        this.graph.upsertAgent({
+          id: message.userId,
+          name: message.userName,
+          platform: message.platform,
+          platformUserId: message.userId,
+          avatarUrl: message.userAvatarUrl ?? null,
+        });
+        this.graph.insertEvent({
+          threadId: thread.id,
+          messageId: message.id,
+          workItemId: inheritedWorkItemId,
+          agentId: message.userId,
+          status: "noise",
+          confidence: 0,
+          reason: "Work item already completed — skipping classification",
+          rawText: message.text,
+          timestamp: message.timestamp,
+        });
+        return {
+          status: "noise",
+          confidence: 0,
+          reason: "Work item already completed — skipping classification",
+          workItemIds: [inheritedWorkItemId],
+          title: "",
+        };
+      }
+    }
+
+    // Step 0d: Skip classification for duplicate message content
+    const contentHash = this.getContentHash(message.text, thread.id);
+    if (this.recentContentHashes.has(contentHash)) {
+      log.debug("Skipping duplicate message content", message.id);
+      const cachedResult = this.recentContentHashes.get(contentHash)!;
+      this.graph.upsertAgent({
+        id: message.userId,
+        name: message.userName,
+        platform: message.platform,
+        platformUserId: message.userId,
+        avatarUrl: message.userAvatarUrl ?? null,
+      });
+      this.graph.insertEvent({
+        threadId: thread.id,
+        messageId: message.id,
+        workItemId: inheritedWorkItemId,
+        agentId: message.userId,
+        status: cachedResult.status,
+        confidence: cachedResult.confidence,
+        reason: cachedResult.reason + " (deduplicated)",
+        rawText: message.text,
+        timestamp: message.timestamp,
+      });
+      return cachedResult;
+    }
+
     // Step 1: Link work items from message text (regex — only known prefixes)
     const extractedIds = this.linker.linkMessage(message.text, thread.id);
 
@@ -244,6 +311,14 @@ export class Pipeline {
         });
       }
       allWorkItemIds.add(llmId);
+    }
+
+    // Cache the classification for content deduplication
+    const hash = this.getContentHash(message.text, thread.id);
+    this.recentContentHashes.set(hash, classification);
+    if (this.recentContentHashes.size > this.MAX_CONTENT_HASHES) {
+      const firstKey = this.recentContentHashes.keys().next().value;
+      if (firstKey) this.recentContentHashes.delete(firstKey);
     }
 
     // Step 2b: If no work item IDs found and this isn't noise, create a synthetic work item

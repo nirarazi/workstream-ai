@@ -174,4 +174,13 @@ messaging:
     expect(config.anomalies.staleThresholdHours).toBe(4);
     expect(config.anomalies.silentAgentThresholdHours).toBe(2);
   });
+
+  it("loads default llmBudget with null values", () => {
+    const projectRoot = resolve(import.meta.dirname, "../..");
+    const config = loadConfig(projectRoot);
+    expect(config.llmBudget).toBeDefined();
+    expect(config.llmBudget.dailyBudget).toBeNull();
+    expect(config.llmBudget.inputCostPerMillion).toBeNull();
+    expect(config.llmBudget.outputCostPerMillion).toBeNull();
+  });
 });
