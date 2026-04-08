@@ -1,7 +1,7 @@
 // tests/adapters/slack-rate-limiter.test.ts — Tests for Slack per-method rate limiter
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { SlackRateLimiter } from "../../core/adapters/platforms/slack/rate-limiter.js";
+import { SlackRateLimiter } from "../../core/adapters/messaging/slack/rate-limiter.js";
 
 describe("SlackRateLimiter", () => {
   let limiter: SlackRateLimiter;

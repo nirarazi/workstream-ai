@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback, type JSX } from "react";
-import { fetchInbox, fetchRecent, fetchAgents, agentsToMentionables, type ActionableItem, type Mentionable } from "../lib/api";
+import { fetchInbox, fetchRecent, fetchAgents, agentsToMentionables, setBadgeCount, type ActionableItem, type Mentionable } from "../lib/api";
 import WorkItemCard from "./WorkItemCard";
 import ContextPane from "./ContextPane";
 
@@ -28,6 +28,7 @@ export default function Inbox({ platformMeta }: InboxProps): JSX.Element {
       ]);
       setActionable(inboxRes.items);
       setRecent(recentRes.items);
+      setBadgeCount(inboxRes.items.length);
 
       const map = new Map<string, string>();
       for (const a of agentsRes.agents) {

@@ -1,4 +1,4 @@
-slack:
+messaging:
   # Polling interval in seconds
   pollInterval: 30
   # Channels to monitor (empty = all channels the user is in)
@@ -13,7 +13,7 @@ classifier:
   # Confidence threshold — below this, classify as "noise"
   confidenceThreshold: 0.6
 
-jira:
+taskAdapter:
   # baseUrl loaded from ATC_JIRA_BASE_URL env var
   # token loaded from ATC_JIRA_TOKEN env var
   enabled: false

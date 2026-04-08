@@ -1,13 +1,24 @@
 /**
  * Relative time formatting utility.
  * No external dependencies — pure Date math.
+ * Handles both ISO 8601 strings and Slack epoch timestamps.
  */
 
-export function timeAgo(isoString: string): string {
+export function timeAgo(timestamp: string): string {
   const now = Date.now();
-  const then = new Date(isoString).getTime();
-  const diffMs = now - then;
+  let then = new Date(timestamp).getTime();
 
+  // Fallback: try parsing as Slack epoch (e.g. "1774958531.590819")
+  if (Number.isNaN(then)) {
+    const epoch = parseFloat(timestamp);
+    if (!Number.isNaN(epoch)) {
+      then = epoch * 1000;
+    } else {
+      return "";
+    }
+  }
+
+  const diffMs = now - then;
   if (diffMs < 0) return "just now";
 
   const seconds = Math.floor(diffMs / 1000);

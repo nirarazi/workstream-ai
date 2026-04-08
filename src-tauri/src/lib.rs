@@ -18,6 +18,15 @@ fn get_engine_url() -> String {
     "http://127.0.0.1:9847".to_string()
 }
 
+#[tauri::command]
+fn set_badge_count(app: tauri::AppHandle, count: u32) {
+    let label = if count == 0 { None } else { Some(count.to_string()) };
+    // set_badge_label lives on Window, not AppHandle — grab the main window
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.set_badge_label(label);
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -31,11 +40,29 @@ pub fn run() {
                 )?;
             }
 
-            // Spawn the Node.js engine server as a sidecar process
-            let child = Command::new("npx")
-                .arg("tsx")
-                .arg("core/server.ts")
-                .spawn();
+            // Spawn the Node.js engine server as a sidecar process.
+            // Resolve project root: walk up from cwd until we find package.json
+            let mut project_root = std::env::current_dir().unwrap_or_default();
+            loop {
+                if project_root.join("package.json").exists() {
+                    break;
+                }
+                if !project_root.pop() {
+                    // Fallback: assume cwd is correct
+                    project_root = std::env::current_dir().unwrap_or_default();
+                    break;
+                }
+            }
+
+            // In debug (dev) mode, use `tsx watch` for hot-reloading.
+            // In release mode, run the server directly.
+            let mut cmd = Command::new("npx");
+            cmd.arg("tsx");
+            if cfg!(debug_assertions) {
+                cmd.arg("watch");
+            }
+            cmd.arg("core/server.ts").current_dir(&project_root);
+            let child = cmd.spawn();
 
             match child {
                 Ok(child) => {
@@ -50,7 +77,7 @@ pub fn run() {
 
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![get_engine_url])
+        .invoke_handler(tauri::generate_handler![get_engine_url, set_badge_count])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
