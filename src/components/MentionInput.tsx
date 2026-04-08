@@ -238,13 +238,17 @@ export default function MentionInput({
   }
 
   // Attach beforeinput event (React doesn't have a synthetic version for InputEvent)
+  // Use a ref-based handler so we don't re-attach on every render
+  const handleBeforeInputRef = useRef(handleBeforeInput);
+  handleBeforeInputRef.current = handleBeforeInput;
+
   useEffect(() => {
     const el = editorRef.current;
     if (!el) return;
-    const handler = (e: Event) => handleBeforeInput(e as InputEvent);
+    const handler = (e: Event) => handleBeforeInputRef.current(e as InputEvent);
     el.addEventListener("beforeinput", handler);
     return () => el.removeEventListener("beforeinput", handler);
-  });
+  }, []);
 
   return (
     <div className="relative">
