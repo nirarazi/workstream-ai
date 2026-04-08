@@ -116,6 +116,30 @@ describe("Classifier", () => {
     expect(result.workItemIds).toEqual([]);
   });
 
+  it("passes through and validates breakdown from provider", async () => {
+    const provider = mockProvider({
+      status: "noise",
+      confidence: 0.9,
+      reason: "Morning summary",
+      workItemIds: ["AI-382", "IT-205"],
+      title: "Morning briefing",
+      breakdown: [
+        { workItemId: "AI-382", status: "completed", confidence: 0.95, reason: "PR merged", title: "PR done" },
+        { workItemId: "IT-205", status: "invalid_status", confidence: 1.5, reason: "Bad status", title: "Test" },
+      ],
+    });
+    const classifier = new Classifier(provider, SYSTEM_PROMPT, FEW_SHOT);
+
+    const result = await classifier.classify("Morning briefing...");
+
+    expect(result.breakdown).toHaveLength(2);
+    expect(result.breakdown![0].status).toBe("completed");
+    expect(result.breakdown![0].confidence).toBe(0.95);
+    // Invalid status mapped to noise, confidence clamped to 1
+    expect(result.breakdown![1].status).toBe("noise");
+    expect(result.breakdown![1].confidence).toBe(1);
+  });
+
   it("handles all valid status categories", async () => {
     const statuses = ["completed", "in_progress", "blocked_on_human", "needs_decision", "noise"] as const;
 
@@ -383,6 +407,71 @@ describe("OpenAICompatibleProvider", () => {
 
     fetchSpy.mockRestore();
   }, 30_000);
+
+  it("parses breakdown array from summary message response", async () => {
+    const mockResponse = {
+      status: "noise",
+      confidence: 0.9,
+      reason: "Morning summary",
+      workItemIds: ["AI-382", "IT-205"],
+      title: "Morning briefing",
+      breakdown: [
+        { workItemId: "AI-382", status: "completed", confidence: 0.95, reason: "PR merged", title: "PR deployment" },
+        { workItemId: "IT-205", status: "blocked_on_human", confidence: 0.9, reason: "Waiting on creds", title: "API credentials needed" },
+      ],
+    };
+
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          choices: [{ message: { content: JSON.stringify(mockResponse) } }],
+        }),
+        { status: 200 },
+      ),
+    );
+
+    const provider = new OpenAICompatibleProvider({
+      name: "test",
+      baseUrl: "http://localhost:11434/v1",
+      model: "llama3",
+    });
+
+    const result = await provider.classify("Morning briefing...", "sys", []);
+    expect(result.status).toBe("noise");
+    expect(result.breakdown).toHaveLength(2);
+    expect(result.breakdown![0]).toEqual({
+      workItemId: "AI-382",
+      status: "completed",
+      confidence: 0.95,
+      reason: "PR merged",
+      title: "PR deployment",
+    });
+    expect(result.breakdown![1].status).toBe("blocked_on_human");
+
+    fetchSpy.mockRestore();
+  });
+
+  it("omits breakdown when not present in response", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          choices: [{ message: { content: '{"status":"completed","confidence":0.9,"reason":"done","workItemIds":["AI-1"],"title":"Done"}' } }],
+        }),
+        { status: 200 },
+      ),
+    );
+
+    const provider = new OpenAICompatibleProvider({
+      name: "test",
+      baseUrl: "http://localhost:11434/v1",
+      model: "llama3",
+    });
+
+    const result = await provider.classify("AI-1 is done", "sys", []);
+    expect(result.breakdown).toBeUndefined();
+
+    fetchSpy.mockRestore();
+  });
 
   it("handles partial/missing fields in parsed JSON gracefully", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(

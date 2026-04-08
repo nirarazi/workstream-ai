@@ -113,6 +113,13 @@ export class Classifier {
         reason: result.reason,
         workItemIds: result.workItemIds,
         title: result.title,
+        breakdown: result.breakdown?.map((b) => ({
+          workItemId: b.workItemId,
+          status: (VALID_STATUSES.has(b.status) ? b.status : "noise") as StatusCategory,
+          confidence: Math.max(0, Math.min(1, b.confidence)),
+          reason: b.reason,
+          title: b.title,
+        })),
       };
     } catch (error) {
       log.warn("Classification failed, returning default noise classification", error);

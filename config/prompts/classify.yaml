@@ -16,10 +16,23 @@ system: |
   - **needs_decision**: A choice is required before the agent can continue. Look for: "should I", "which option", "two approaches", presenting alternatives, requesting direction.
   - **noise**: Status update, system message, greeting, or informational — no action needed. Look for: greetings, acknowledgments, "ok", system notifications, routine status without new information.
 
+  ## Summary / Brief Messages
+
+  If a message is a summary, morning brief, shift report, or status round-up that mentions **multiple work items with different statuses**, you MUST include a "breakdown" array in your response. Each entry has:
+  - workItemId: the ticket/PR ID
+  - status: the status for THAT specific item
+  - confidence: confidence for that item
+  - reason: brief reason
+  - title: short title for that item
+
+  For summary messages, set the top-level status to "noise" (the summary itself is not actionable), but the breakdown items carry the real per-item statuses. This ensures blocked items inside a summary are not missed.
+
+  If the message is about a single topic or a single work item, omit the "breakdown" field entirely.
+
   ## Important Rules
 
   1. When in doubt between "blocked_on_human" and "needs_decision", choose "needs_decision" if the agent is presenting options, "blocked_on_human" if waiting for something specific.
-  2. Morning summaries or shift reports are "noise" unless they contain a specific request.
+  2. Morning summaries or shift reports have top-level status "noise" but MUST include a "breakdown" when they mention specific work items with distinct statuses.
   3. If the agent says "done" but mentions a follow-up task, classify as "completed" (the follow-up is a new work item).
   4. Error messages from agents that include a request for help are "blocked_on_human", not "noise".
 
@@ -79,3 +92,33 @@ few_shot_examples:
       reason: "Agent raising an infrastructure concern that needs human action"
       workItemIds: []
       title: "Staging database disk space low"
+
+  - role: user
+    content: "Morning briefing: AI-382 PR merged and deployed to prod — done. IT-205 is blocked waiting for the client to provide API credentials. MS-112 is about 60% through implementation, on track. AI-401 needs your decision on whether to use REST or GraphQL for the new endpoint."
+    expected:
+      status: noise
+      confidence: 0.9
+      reason: "Morning summary covering multiple work items with different statuses"
+      workItemIds: ["AI-382", "IT-205", "MS-112", "AI-401"]
+      title: "Morning briefing"
+      breakdown:
+        - workItemId: "AI-382"
+          status: completed
+          confidence: 0.95
+          reason: "PR merged and deployed to prod"
+          title: "PR merge and prod deployment"
+        - workItemId: "IT-205"
+          status: blocked_on_human
+          confidence: 0.9
+          reason: "Waiting for client to provide API credentials"
+          title: "Client API credentials needed"
+        - workItemId: "MS-112"
+          status: in_progress
+          confidence: 0.85
+          reason: "60% through implementation, on track"
+          title: "Implementation in progress"
+        - workItemId: "AI-401"
+          status: needs_decision
+          confidence: 0.9
+          reason: "Decision needed on REST vs GraphQL"
+          title: "REST vs GraphQL endpoint decision"
