@@ -15,7 +15,7 @@ const RateLimitSchema = z.object({
 });
 
 const ConfigSchema = z.object({
-  slack: z.object({
+  messaging: z.object({
     pollInterval: z.number(),
     channels: z.array(z.string()),
   }),
@@ -27,7 +27,7 @@ const ConfigSchema = z.object({
     }),
     confidenceThreshold: z.number(),
   }),
-  jira: z.object({
+  taskAdapter: z.object({
     enabled: z.boolean(),
     baseUrl: z.string().optional(),
     token: z.string().optional(),
@@ -38,11 +38,7 @@ const ConfigSchema = z.object({
     ticketPatterns: z.array(z.string()),
     prPatterns: z.array(z.string()),
   }),
-  rateLimits: z.object({
-    llm: RateLimitSchema,
-    slack: RateLimitSchema,
-    jira: RateLimitSchema,
-  }).optional(),
+  rateLimits: z.record(z.string(), RateLimitSchema).optional(),
   lookback: z.object({
     initialDays: z.number(),
     maxThreadsPerPoll: z.number(),
@@ -81,6 +77,15 @@ const ConfigSchema = z.object({
     enabled: true,
     maxToolCalls: 5,
     maxHistoryTurns: 10,
+  }),
+  llmBudget: z.object({
+    dailyBudget: z.number().nullable(),
+    inputCostPerMillion: z.number().nullable(),
+    outputCostPerMillion: z.number().nullable(),
+  }).optional().default({
+    dailyBudget: null,
+    inputCostPerMillion: null,
+    outputCostPerMillion: null,
   }),
 });
 
@@ -135,6 +140,35 @@ function deepMerge(base: Record<string, unknown>, overlay: Record<string, unknow
   return result;
 }
 
+// --- Backwards-compat migration for deprecated config keys ---
+
+function migrateDeprecatedKeys(raw: Record<string, unknown>): void {
+  // slack: → messaging:
+  if ("slack" in raw) {
+    raw.messaging = raw.messaging
+      ? deepMerge(raw.messaging as Record<string, unknown>, raw.slack as Record<string, unknown>)
+      : raw.slack;
+    delete raw.slack;
+    log.warn("Config key 'slack' is deprecated — rename to 'messaging'");
+  }
+  // platform: → messaging:
+  if ("platform" in raw) {
+    raw.messaging = raw.messaging
+      ? deepMerge(raw.messaging as Record<string, unknown>, raw.platform as Record<string, unknown>)
+      : raw.platform;
+    delete raw.platform;
+    log.warn("Config key 'platform' is deprecated — rename to 'messaging'");
+  }
+  // jira: → taskAdapter:
+  if ("jira" in raw) {
+    raw.taskAdapter = raw.taskAdapter
+      ? deepMerge(raw.taskAdapter as Record<string, unknown>, raw.jira as Record<string, unknown>)
+      : raw.jira;
+    delete raw.jira;
+    log.warn("Config key 'jira' is deprecated — rename to 'taskAdapter'");
+  }
+}
+
 // --- Loader ---
 
 export function findProjectRoot(): string {
@@ -172,6 +206,7 @@ export function loadConfig(projectRoot?: string): Config {
     log.debug("Merged local config overlay", localPath);
   }
 
+  migrateDeprecatedKeys(merged);
   const substituted = substituteEnvVars(merged) as Record<string, unknown>;
   const parsed = ConfigSchema.parse(substituted);
   log.info("Config loaded successfully");

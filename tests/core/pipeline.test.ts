@@ -2,7 +2,7 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { Pipeline } from "../../core/pipeline.js";
-import type { PlatformAdapter } from "../../core/adapters/platforms/interface.js";
+import type { MessagingAdapter } from "../../core/adapters/messaging/interface.js";
 import type { TaskAdapter } from "../../core/adapters/tasks/interface.js";
 import type { Classifier } from "../../core/classifier/index.js";
 import type { ContextGraph } from "../../core/graph/index.js";
@@ -54,12 +54,12 @@ function makeClassification(overrides: Partial<Classification> = {}): Classifica
 
 function makeConfig(overrides: Partial<Config> = {}): Config {
   return {
-    slack: { pollInterval: 30, channels: ["C-1"] },
+    messaging: { pollInterval: 30, channels: ["C-1"] },
     classifier: {
       provider: { baseUrl: "http://localhost", model: "test", apiKey: "key" },
       confidenceThreshold: 0.5,
     },
-    jira: { enabled: false, ticketPrefixes: [] },
+    taskAdapter: { enabled: false, ticketPrefixes: [] },
     extractors: { ticketPatterns: [], prPatterns: [] },
     mcp: { transport: "stdio" },
     server: { port: 3000, host: "localhost" },
@@ -69,7 +69,7 @@ function makeConfig(overrides: Partial<Config> = {}): Config {
 
 // --- Mocks ---
 
-function createMockPlatformAdapter(): PlatformAdapter {
+function createMockMessagingAdapter(): MessagingAdapter {
   return {
     name: "mock-slack",
     connect: vi.fn().mockResolvedValue(undefined),
@@ -172,7 +172,7 @@ function createMockTaskAdapter(): TaskAdapter {
 // --- Tests ---
 
 describe("Pipeline", () => {
-  let adapter: PlatformAdapter;
+  let adapter: MessagingAdapter;
   let classifier: ReturnType<typeof createMockClassifier>;
   let graph: ContextGraph;
   let linker: WorkItemLinker;
@@ -180,7 +180,7 @@ describe("Pipeline", () => {
   let pipeline: Pipeline;
 
   beforeEach(() => {
-    adapter = createMockPlatformAdapter();
+    adapter = createMockMessagingAdapter();
     classifier = createMockClassifier();
     graph = createMockGraph();
     linker = createMockLinker();

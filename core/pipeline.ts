@@ -1,9 +1,10 @@
 // core/pipeline.ts — Central orchestration loop: read → classify → link → store → enrich
 
+import { createHash } from "node:crypto";
 import { createLogger } from "./logger.js";
 import type { Config } from "./config.js";
 import type { Classification, Message, Thread } from "./types.js";
-import type { PlatformAdapter } from "./adapters/platforms/interface.js";
+import type { MessagingAdapter } from "./adapters/messaging/interface.js";
 import type { TaskAdapter } from "./adapters/tasks/interface.js";
 import type { Classifier } from "./classifier/index.js";
 import type { ContextGraph } from "./graph/index.js";
@@ -22,7 +23,7 @@ export interface ProcessResult {
 }
 
 export class Pipeline {
-  private platformAdapter: PlatformAdapter;
+  private messagingAdapter: MessagingAdapter;
   private classifier: Classifier;
   private graph: ContextGraph;
   private linker: WorkItemLinker;
@@ -30,16 +31,18 @@ export class Pipeline {
   private config?: Config;
   private intervalHandle: ReturnType<typeof setInterval> | null = null;
   private running = false;
+  private recentContentHashes = new Map<string, Classification>();
+  private readonly MAX_CONTENT_HASHES = 1000;
 
   constructor(
-    platformAdapter: PlatformAdapter,
+    messagingAdapter: MessagingAdapter,
     classifier: Classifier,
     graph: ContextGraph,
     linker: WorkItemLinker,
     taskAdapter?: TaskAdapter,
     config?: Config,
   ) {
-    this.platformAdapter = platformAdapter;
+    this.messagingAdapter = messagingAdapter;
     this.classifier = classifier;
     this.graph = graph;
     this.linker = linker;
@@ -61,7 +64,7 @@ export class Pipeline {
     log.info("Initial poll complete", result);
 
     // Set up the polling interval
-    const intervalSeconds = this.config?.slack?.pollInterval ?? DEFAULT_POLL_INTERVAL;
+    const intervalSeconds = this.config?.messaging?.pollInterval ?? DEFAULT_POLL_INTERVAL;
     this.intervalHandle = setInterval(async () => {
       try {
         const r = await this.processOnce();
@@ -84,7 +87,7 @@ export class Pipeline {
   }
 
   async processOnce(): Promise<ProcessResult> {
-    const channels = this.config?.slack?.channels ?? [];
+    const channels = this.config?.messaging?.channels ?? [];
     let processed = 0;
     let classified = 0;
     let errors = 0;
@@ -94,9 +97,9 @@ export class Pipeline {
 
     let threads: Thread[];
     try {
-      threads = await this.platformAdapter.readThreads(since, channels.length > 0 ? channels : undefined);
+      threads = await this.messagingAdapter.readThreads(since, channels.length > 0 ? channels : undefined);
     } catch (err) {
-      log.error("Failed to read threads from platform adapter", err);
+      log.error("Failed to read threads from messaging adapter", err);
       return { processed: 0, classified: 0, errors: 1 };
     }
 
@@ -174,6 +177,10 @@ export class Pipeline {
 
   // --- Private helpers ---
 
+  private getContentHash(text: string, threadId: string): string {
+    return createHash("sha256").update(`${threadId}:${text}`).digest("hex");
+  }
+
   private getSinceDate(channels: string[]): Date {
     // Find the earliest poll cursor across all channels, or fall back to 7 days ago
     let earliest: Date | null = null;
@@ -221,6 +228,66 @@ export class Pipeline {
       allWorkItemIds.add(inheritedWorkItemId);
     }
 
+    // Step 0c: Skip classification if the work item is already completed
+    if (inheritedWorkItemId) {
+      const existingWI = this.graph.getWorkItemById(inheritedWorkItemId);
+      if (existingWI?.currentAtcStatus === "completed") {
+        log.debug("Skipping classification for completed work item", inheritedWorkItemId);
+        // Still record the event so the message isn't lost
+        this.graph.upsertAgent({
+          id: message.userId,
+          name: message.userName,
+          platform: message.platform,
+          platformUserId: message.userId,
+          avatarUrl: message.userAvatarUrl ?? null,
+        });
+        this.graph.insertEvent({
+          threadId: thread.id,
+          messageId: message.id,
+          workItemId: inheritedWorkItemId,
+          agentId: message.userId,
+          status: "noise",
+          confidence: 0,
+          reason: "Work item already completed — skipping classification",
+          rawText: message.text,
+          timestamp: message.timestamp,
+        });
+        return {
+          status: "noise",
+          confidence: 0,
+          reason: "Work item already completed — skipping classification",
+          workItemIds: [inheritedWorkItemId],
+          title: "",
+        };
+      }
+    }
+
+    // Step 0d: Skip classification for duplicate message content
+    const contentHash = this.getContentHash(message.text, thread.id);
+    if (this.recentContentHashes.has(contentHash)) {
+      log.debug("Skipping duplicate message content", message.id);
+      const cachedResult = this.recentContentHashes.get(contentHash)!;
+      this.graph.upsertAgent({
+        id: message.userId,
+        name: message.userName,
+        platform: message.platform,
+        platformUserId: message.userId,
+        avatarUrl: message.userAvatarUrl ?? null,
+      });
+      this.graph.insertEvent({
+        threadId: thread.id,
+        messageId: message.id,
+        workItemId: inheritedWorkItemId,
+        agentId: message.userId,
+        status: cachedResult.status,
+        confidence: cachedResult.confidence,
+        reason: cachedResult.reason + " (deduplicated)",
+        rawText: message.text,
+        timestamp: message.timestamp,
+      });
+      return cachedResult;
+    }
+
     // Step 1: Link work items from message text (regex — only known prefixes)
     const extractedIds = this.linker.linkMessage(message.text, thread.id);
 
@@ -244,6 +311,14 @@ export class Pipeline {
         });
       }
       allWorkItemIds.add(llmId);
+    }
+
+    // Cache the classification for content deduplication
+    const hash = this.getContentHash(message.text, thread.id);
+    this.recentContentHashes.set(hash, classification);
+    if (this.recentContentHashes.size > this.MAX_CONTENT_HASHES) {
+      const firstKey = this.recentContentHashes.keys().next().value;
+      if (firstKey) this.recentContentHashes.delete(firstKey);
     }
 
     // Step 2b: If no work item IDs found and this isn't noise, create a synthetic work item
