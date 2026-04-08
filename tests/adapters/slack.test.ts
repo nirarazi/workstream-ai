@@ -1,7 +1,7 @@
 // tests/adapters/slack.test.ts — Tests for SlackAdapter
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { SlackAdapter } from "../../core/adapters/platforms/slack/index.js";
+import { SlackAdapter } from "../../core/adapters/messaging/slack/index.js";
 
 // --- Mock @slack/web-api ---
 

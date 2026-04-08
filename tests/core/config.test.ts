@@ -68,10 +68,10 @@ describe("config", () => {
   it("loads a valid default config", () => {
     writeDefaultYaml(tempRoot, MINIMAL_YAML);
     const cfg = loadConfig(tempRoot);
-    expect(cfg.slack.pollInterval).toBe(30);
+    expect(cfg.messaging.pollInterval).toBe(30);
     expect(cfg.classifier.provider.model).toBe("test-model");
     expect(cfg.server.port).toBe(9847);
-    expect(cfg.jira.enabled).toBe(false);
+    expect(cfg.taskAdapter.enabled).toBe(false);
   });
 
   it("merges local.yaml overlay on top of default", () => {
@@ -83,8 +83,8 @@ slack:
     - general
 `);
     const cfg = loadConfig(tempRoot);
-    expect(cfg.slack.pollInterval).toBe(10);
-    expect(cfg.slack.channels).toEqual(["general"]);
+    expect(cfg.messaging.pollInterval).toBe(10);
+    expect(cfg.messaging.channels).toEqual(["general"]);
     // Non-overridden values are preserved
     expect(cfg.server.port).toBe(9847);
   });
@@ -148,13 +148,13 @@ slack:
     // Just verify getConfig doesn't throw when pointed at the real project
     const cfg1 = loadConfig(projectRoot);
     expect(cfg1).toBeDefined();
-    expect(cfg1.slack).toBeDefined();
+    expect(cfg1.messaging).toBeDefined();
   });
 
   it("works with the actual project default.yaml", () => {
     const projectRoot = resolve(import.meta.dirname, "../..");
     const cfg = loadConfig(projectRoot);
-    expect(cfg.slack.pollInterval).toBe(30);
+    expect(cfg.messaging.pollInterval).toBe(30);
     expect(cfg.mcp.transport).toBe("stdio");
     expect(cfg.server.port).toBe(9847);
   });
@@ -173,5 +173,14 @@ slack:
     expect(config.anomalies).toBeDefined();
     expect(config.anomalies.staleThresholdHours).toBe(4);
     expect(config.anomalies.silentAgentThresholdHours).toBe(2);
+  });
+
+  it("loads default llmBudget with null values", () => {
+    const projectRoot = resolve(import.meta.dirname, "../..");
+    const config = loadConfig(projectRoot);
+    expect(config.llmBudget).toBeDefined();
+    expect(config.llmBudget.dailyBudget).toBeNull();
+    expect(config.llmBudget.inputCostPerMillion).toBeNull();
+    expect(config.llmBudget.outputCostPerMillion).toBeNull();
   });
 });
