@@ -3,6 +3,9 @@ import {
   fetchWorkItemContext,
   generateSummary,
   postReply,
+  postAction,
+  createTicket,
+  openExternalUrl,
   postForward,
   linkThread as apiLinkThread,
   unlinkThread as apiUnlinkThread,
@@ -12,6 +15,7 @@ import {
   type Mentionable,
   type Thread,
 } from "../lib/api";
+import Tooltip from "./Tooltip";
 import { timeAgo } from "../lib/time";
 import StatusBadge from "./StatusBadge";
 import MentionInput from "./MentionInput";
@@ -57,6 +61,7 @@ export default function ContextPane({
   const [newThreadTargetType, setNewThreadTargetType] = useState<"user" | "channel">("channel");
   const [newThreadMessage, setNewThreadMessage] = useState("");
   const [sendingNewThread, setSendingNewThread] = useState(false);
+  const [creatingTicket, setCreatingTicket] = useState(false);
   const paneRef = useRef<HTMLDivElement>(null);
 
   // Fetch context on mount
@@ -109,8 +114,16 @@ export default function ContextPane({
     [onClose],
   );
 
-  async function handleQuickReply(text: string) {
+  const [prefill, setPrefill] = useState<{ text: string; key: number } | undefined>(undefined);
+
+  async function handleQuickReply(text: string, shiftHeld: boolean) {
     if (!context?.threads[0]) return;
+    if (!shiftHeld) {
+      // Populate the input for review
+      setPrefill({ text, key: Date.now() });
+      return;
+    }
+    // Shift+click: send immediately
     setActing(true);
     try {
       const thread = context.threads[0];
@@ -133,6 +146,37 @@ export default function ContextPane({
       setError(err instanceof Error ? err.message : "Reply failed");
     } finally {
       setActing(false);
+    }
+  }
+
+  async function handlePaneAction(action: string, serverAction: string) {
+    setActing(true);
+    setError(null);
+    try {
+      await postAction(workItemId, serverAction, undefined, action === "snooze" ? 3600 : undefined);
+      onActioned?.();
+      onClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Action failed");
+    } finally {
+      setActing(false);
+    }
+  }
+
+  async function handleCreateTicket() {
+    setCreatingTicket(true);
+    setError(null);
+    try {
+      const result = await createTicket(workItemId);
+      if (result.ticketUrl) {
+        openExternalUrl(result.ticketUrl);
+      }
+      onActioned?.();
+      onClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to create ticket");
+    } finally {
+      setCreatingTicket(false);
     }
   }
 
@@ -666,14 +710,17 @@ export default function ContextPane({
           {/* Quick Replies */}
           {quickReplies.length > 0 && (
             <section>
-              <h3 className="text-xs font-semibold uppercase tracking-widest text-gray-500 mb-2">
-                Quick Replies
-              </h3>
+              <div className="flex items-baseline gap-2 mb-2">
+                <h3 className="text-xs font-semibold uppercase tracking-widest text-gray-500">
+                  Quick Replies
+                </h3>
+                <span className="text-[10px] text-gray-600">Click to draft. Shift+click to send.</span>
+              </div>
               <div className="flex flex-wrap gap-2">
                 {quickReplies.map((reply) => (
                   <button
                     key={reply}
-                    onClick={() => handleQuickReply(reply)}
+                    onClick={(e) => handleQuickReply(reply, e.shiftKey)}
                     disabled={acting}
                     className="cursor-pointer rounded-full border border-gray-700 px-3 py-1 text-xs text-gray-300 hover:bg-gray-800 hover:border-gray-600 disabled:opacity-40"
                   >
@@ -684,16 +731,38 @@ export default function ContextPane({
             </section>
           )}
 
-          {/* Reply Input */}
+          {/* Reply Input + Action Buttons */}
           {thread && (
-            <section>
+            <section className="space-y-2">
               <MentionInput
                 placeholder="Reply to thread..."
                 disabled={acting}
                 mentionables={mentionables}
                 serializeMention={serializeMention}
                 onSubmit={handleReplySubmit}
+                prefill={prefill}
               />
+              <div className="flex items-center gap-2 flex-wrap">
+                <Tooltip text="Unblock the agent — your reply lets them continue">
+                  <button onClick={() => handlePaneAction("unblock", "redirect")} disabled={acting} className="cursor-pointer rounded px-3.5 py-1 text-xs font-medium bg-blue-700/80 hover:bg-blue-700 text-blue-100 disabled:opacity-40 disabled:cursor-not-allowed">Unblock</button>
+                </Tooltip>
+                <Tooltip text="Mark as complete — work is finished or approved">
+                  <button onClick={() => handlePaneAction("done", "approve")} disabled={acting} className="cursor-pointer rounded px-2.5 py-1 text-xs font-medium bg-green-800/70 hover:bg-green-700 text-green-200 disabled:opacity-40 disabled:cursor-not-allowed">Done</button>
+                </Tooltip>
+                <Tooltip text="Dismiss — not relevant or a false positive">
+                  <button onClick={() => handlePaneAction("dismiss", "close")} disabled={acting} className="cursor-pointer rounded px-2.5 py-1 text-xs font-medium bg-gray-700/70 hover:bg-gray-600 text-gray-300 disabled:opacity-40 disabled:cursor-not-allowed">Dismiss</button>
+                </Tooltip>
+                <Tooltip text="Snooze for 1 hour — revisit later">
+                  <button onClick={() => handlePaneAction("snooze", "snooze")} disabled={acting} className="cursor-pointer rounded px-2.5 py-1 text-xs font-medium bg-amber-800/70 hover:bg-amber-700 text-amber-200 disabled:opacity-40 disabled:cursor-not-allowed">Snooze</button>
+                </Tooltip>
+                {(workItem.source === "inferred" || workItem.id.startsWith("thread:")) && (
+                  <Tooltip text="Create a ticket from this conversation">
+                    <button onClick={handleCreateTicket} disabled={acting || creatingTicket} className="cursor-pointer rounded px-2.5 py-1 text-xs font-medium bg-purple-800/70 hover:bg-purple-700 text-purple-200 disabled:opacity-40 disabled:cursor-not-allowed">
+                      {creatingTicket ? "..." : "Create Ticket"}
+                    </button>
+                  </Tooltip>
+                )}
+              </div>
             </section>
           )}
 

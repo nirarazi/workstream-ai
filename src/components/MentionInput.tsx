@@ -9,6 +9,8 @@ interface MentionInputProps {
   /** Convert a user ID to the platform's wire format (e.g. Slack → "<@USERID>") */
   serializeMention: (userId: string) => string;
   onSubmit: (serializedText: string) => void;
+  /** When set, populates the editor with this text and focuses it. Increment the key to re-trigger. */
+  prefill?: { text: string; key: number };
 }
 
 // Unicode zero-width space — used as a cursor landing pad after mention pills
@@ -27,12 +29,28 @@ export default function MentionInput({
   mentionables,
   serializeMention,
   onSubmit,
+  prefill,
 }: MentionInputProps): JSX.Element {
   const editorRef = useRef<HTMLDivElement>(null);
   const [showDropdown, setShowDropdown] = useState(false);
   const [mentionQuery, setMentionQuery] = useState("");
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [isEmpty, setIsEmpty] = useState(true);
+
+  // Prefill editor when requested
+  useEffect(() => {
+    if (!prefill?.text || !editorRef.current) return;
+    editorRef.current.textContent = prefill.text;
+    setIsEmpty(false);
+    editorRef.current.focus();
+    // Move cursor to end
+    const range = document.createRange();
+    range.selectNodeContents(editorRef.current);
+    range.collapse(false);
+    const sel = window.getSelection();
+    sel?.removeAllRanges();
+    sel?.addRange(range);
+  }, [prefill?.key]);
 
   // --- Serialization ---
 
