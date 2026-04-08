@@ -78,6 +78,15 @@ const ConfigSchema = z.object({
     maxToolCalls: 5,
     maxHistoryTurns: 10,
   }),
+  llmBudget: z.object({
+    dailyBudget: z.number().nullable(),
+    inputCostPerMillion: z.number().nullable(),
+    outputCostPerMillion: z.number().nullable(),
+  }).optional().default({
+    dailyBudget: null,
+    inputCostPerMillion: null,
+    outputCostPerMillion: null,
+  }),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;
@@ -197,6 +206,7 @@ export function loadConfig(projectRoot?: string): Config {
     log.debug("Merged local config overlay", localPath);
   }
 
+  migrateDeprecatedKeys(merged);
   const substituted = substituteEnvVars(merged) as Record<string, unknown>;
   migrateDeprecatedKeys(substituted);
   const parsed = ConfigSchema.parse(substituted);

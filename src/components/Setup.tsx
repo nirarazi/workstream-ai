@@ -88,6 +88,11 @@ export default function Setup({ onComplete }: SetupProps): JSX.Element {
   const [preset, setPreset] = useState<ProviderPreset>("anthropic");
   const [llmEnv, setLlmEnv] = useState<Record<string, boolean>>({});
 
+  // LLM Budget
+  const [dailyBudget, setDailyBudget] = useState<string>("");
+  const [inputCostPerMillion, setInputCostPerMillion] = useState<string>("");
+  const [outputCostPerMillion, setOutputCostPerMillion] = useState<string>("");
+
   // Rate limits
   const [rateLimits, setRateLimits] = useState<Record<string, RateLimitInfo>>({});
 
@@ -144,6 +149,9 @@ export default function Setup({ onComplete }: SetupProps): JSX.Element {
             setLlmModel(prefill.llm.model);
             envDetected.model = true;
           }
+          if (prefill.llm.dailyBudget != null) setDailyBudget(String(prefill.llm.dailyBudget));
+          if (prefill.llm.inputCostPerMillion != null) setInputCostPerMillion(String(prefill.llm.inputCostPerMillion));
+          if (prefill.llm.outputCostPerMillion != null) setOutputCostPerMillion(String(prefill.llm.outputCostPerMillion));
           setLlmEnv(envDetected);
         }
 
@@ -241,6 +249,9 @@ export default function Setup({ onComplete }: SetupProps): JSX.Element {
         apiKey: keyValue.trim(),
         baseUrl: llmBaseUrl.trim() || PRESETS.anthropic.baseUrl,
         model: llmModel.trim() || PRESETS.anthropic.models[0],
+        dailyBudget: dailyBudget ? parseFloat(dailyBudget) : null,
+        inputCostPerMillion: inputCostPerMillion ? parseFloat(inputCostPerMillion) : null,
+        outputCostPerMillion: outputCostPerMillion ? parseFloat(outputCostPerMillion) : null,
       };
 
       if (Object.keys(rateLimits).length > 0) {
@@ -460,6 +471,58 @@ export default function Setup({ onComplete }: SetupProps): JSX.Element {
               />
             </div>
           )}
+
+          {/* ── Budget (optional) ─── */}
+          <div className="grid grid-cols-3 gap-2">
+            <div>
+              <label htmlFor="dailyBudget" className="text-xs text-gray-400 mb-1 block">
+                Daily Budget ($)
+              </label>
+              <input
+                id="dailyBudget"
+                type="number"
+                step="0.01"
+                min="0"
+                value={dailyBudget}
+                onChange={(e) => setDailyBudget(e.target.value)}
+                placeholder="20.00"
+                className={inputClass}
+              />
+            </div>
+            <div>
+              <label htmlFor="inputCost" className="text-xs text-gray-400 mb-1 block">
+                Input $/1M tok
+              </label>
+              <input
+                id="inputCost"
+                type="number"
+                step="0.01"
+                min="0"
+                value={inputCostPerMillion}
+                onChange={(e) => setInputCostPerMillion(e.target.value)}
+                placeholder="3.00"
+                className={inputClass}
+              />
+            </div>
+            <div>
+              <label htmlFor="outputCost" className="text-xs text-gray-400 mb-1 block">
+                Output $/1M tok
+              </label>
+              <input
+                id="outputCost"
+                type="number"
+                step="0.01"
+                min="0"
+                value={outputCostPerMillion}
+                onChange={(e) => setOutputCostPerMillion(e.target.value)}
+                placeholder="15.00"
+                className={inputClass}
+              />
+            </div>
+          </div>
+          <p className="text-[11px] text-gray-600">
+            Leave empty if your API returns cost data, or if you don't need cost tracking.
+          </p>
         </fieldset>
 
         {/* ── Task Adapter (optional) ──────────────────────── */}

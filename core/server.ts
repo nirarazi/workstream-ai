@@ -6,13 +6,14 @@ import { createLogger } from "./logger.js";
 import { loadConfig, findProjectRoot, resetConfig, type Config } from "./config.js";
 import { Database } from "./graph/db.js";
 import { ContextGraph } from "./graph/index.js";
-import { Classifier } from "./classifier/index.js";
+import { Classifier, createProvider, loadPrompt, buildFewShotMessages } from "./classifier/index.js";
+import { UsageTracker } from "./usage/tracker.js";
 import { DefaultExtractor } from "./graph/extractors/default.js";
 import { WorkItemLinker } from "./graph/linker.js";
+import { createMessagingAdapter, createTaskAdapter, getMessagingAdapterSetupInfo, getTaskAdapterSetupInfo } from "./adapters/registry.js";
 import { Pipeline } from "./pipeline.js";
 import type { MessagingAdapter } from "./adapters/messaging/interface.js";
 import type { TaskAdapter } from "./adapters/tasks/interface.js";
-import { createMessagingAdapter, createTaskAdapter, getMessagingAdapterSetupInfo, getTaskAdapterSetupInfo } from "./adapters/registry.js";
 import { createRateLimiter, type RateLimiter } from "./rate-limiter.js";
 import { Summarizer } from "./summarizer/index.js";
 import { detectAnomalies, type FleetItemInput } from "./graph/anomalies.js";
@@ -27,6 +28,7 @@ export interface EngineState {
   db: Database;
   graph: ContextGraph;
   classifier: Classifier;
+  usageTracker: UsageTracker | null;
   linker: WorkItemLinker;
   pipeline: Pipeline | null;
   messagingAdapter: MessagingAdapter | null;
@@ -42,11 +44,11 @@ export interface EngineState {
 export function createApp(state: EngineState): Hono {
   const app = new Hono();
 
-  // CORS for Vite dev server
+  // CORS for Vite dev server and Tauri WebView
   app.use(
     "/api/*",
     cors({
-      origin: "http://localhost:5173",
+      origin: ["http://localhost:5173", "https://tauri.localhost", "http://tauri.localhost"],
       allowMethods: ["GET", "POST", "OPTIONS"],
       allowHeaders: ["Content-Type"],
     }),
@@ -61,6 +63,21 @@ export function createApp(state: EngineState): Hono {
 
     // Check messaging adapter's own throttling state
     const platformThrottled = state.messagingAdapter?.isThrottling ?? false;
+
+    const llmUsage = state.usageTracker
+      ? (() => {
+          const today = state.usageTracker.getTodayUsage();
+          const budget = state.usageTracker.getBudgetStatus();
+          return {
+            inputTokens: today.inputTokens,
+            outputTokens: today.outputTokens,
+            cost: today.cost,
+            costSource: today.cost != null ? "configured" as const : null,
+            dailyBudget: budget.dailyBudget,
+            exhausted: budget.exhausted,
+          };
+        })()
+      : null;
 
     return c.json({
       ok: true,
@@ -77,6 +94,7 @@ export function createApp(state: EngineState): Hono {
         LLM: llmDegraded ? "degraded" as const : "ok" as const,
       },
       llmBackoff,
+      llmUsage,
     });
   });
 
@@ -156,7 +174,7 @@ export function createApp(state: EngineState): Hono {
 
     // Create summarizer on demand from classifier config
     const { baseUrl, model, apiKey } = state.config.classifier.provider;
-    const summarizer = new Summarizer({ baseUrl, model, apiKey });
+    const summarizer = new Summarizer({ baseUrl, model, apiKey, usageTracker: state.usageTracker ?? undefined });
 
     const summary = await summarizer.summarize(events, id);
 
@@ -226,7 +244,7 @@ export function createApp(state: EngineState): Hono {
 
     const { baseUrl, model, apiKey } = state.config.classifier.provider;
     const sidekick = new Sidekick(
-      { baseUrl, model, apiKey, maxToolCalls: sidekickConfig.maxToolCalls },
+      { baseUrl, model, apiKey, maxToolCalls: sidekickConfig.maxToolCalls, usageTracker: state.usageTracker ?? undefined },
       state.graph,
     );
 
@@ -640,9 +658,12 @@ export function createApp(state: EngineState): Hono {
         fields: Record<string, string>;
       };
       llm?: {
-        apiKey: string;
-        baseUrl: string;
-        model: string;
+        apiKey?: string;
+        baseUrl?: string;
+        model?: string;
+        dailyBudget?: number | null;
+        inputCostPerMillion?: number | null;
+        outputCostPerMillion?: number | null;
       };
       rateLimits?: Record<string, number>;
     }>();
@@ -672,6 +693,15 @@ export function createApp(state: EngineState): Hono {
         if (body.llm.apiKey) envLines.push(`ATC_LLM_API_KEY=${body.llm.apiKey}`);
         if (body.llm.baseUrl) envLines.push(`ATC_LLM_BASE_URL=${body.llm.baseUrl}`);
         if (body.llm.model) envLines.push(`ATC_LLM_MODEL=${body.llm.model}`);
+
+        // Budget config
+        if (body.llm.dailyBudget !== undefined || body.llm.inputCostPerMillion !== undefined || body.llm.outputCostPerMillion !== undefined) {
+          (localConfig as any).llmBudget = {
+            dailyBudget: body.llm.dailyBudget ?? null,
+            inputCostPerMillion: body.llm.inputCostPerMillion ?? null,
+            outputCostPerMillion: body.llm.outputCostPerMillion ?? null,
+          };
+        }
       }
 
       // --- Messaging adapter ---
@@ -761,6 +791,10 @@ export function createApp(state: EngineState): Hono {
       resetConfig();
       state.config = loadConfig(projectRoot);
 
+      if (state.usageTracker) {
+        state.usageTracker.updateConfig(state.config.llmBudget);
+      }
+
       // Stop existing pipeline
       if (state.pipeline) {
         state.pipeline.stop();
@@ -819,8 +853,13 @@ export function createApp(state: EngineState): Hono {
         log.info("Task adapter reconnected");
       }
 
-      // Recreate classifier
-      state.classifier = Classifier.fromConfig(state.config);
+      // Recreate classifier with new config, wired through a fresh UsageTracker
+      const newProvider = createProvider(state.config);
+      const newUsageTracker = new UsageTracker(newProvider, state.db, state.config.llmBudget);
+      state.usageTracker = newUsageTracker;
+      const newPrompt = loadPrompt(findProjectRoot());
+      const newFewShot = buildFewShotMessages(newPrompt.few_shot_examples);
+      state.classifier = new Classifier(newUsageTracker, newPrompt.system, newFewShot);
       if (newLimiters.llm) state.classifier.setRateLimiter(newLimiters.llm);
 
       // Restart pipeline if we have a messaging adapter
@@ -894,6 +933,9 @@ export function createApp(state: EngineState): Hono {
       apiKey: process.env.ATC_LLM_API_KEY ?? "",
       baseUrl: process.env.ATC_LLM_BASE_URL ?? "https://api.anthropic.com/v1",
       model: process.env.ATC_LLM_MODEL ?? "claude-sonnet-4-6",
+      dailyBudget: state.config.llmBudget?.dailyBudget ?? null,
+      inputCostPerMillion: state.config.llmBudget?.inputCostPerMillion ?? null,
+      outputCostPerMillion: state.config.llmBudget?.outputCostPerMillion ?? null,
     };
 
     // Rate limits
@@ -998,7 +1040,13 @@ async function main(): Promise<void> {
 
   // 4. Create core components
   const graph = new ContextGraph(db);
-  const classifier = Classifier.fromConfig(config, projectRoot);
+  const provider = createProvider(config);
+  const usageTracker = new UsageTracker(provider, db, config.llmBudget);
+  usageTracker.pruneOldRecords();
+
+  const prompt = loadPrompt(projectRoot);
+  const fewShot = buildFewShotMessages(prompt.few_shot_examples);
+  const classifier = new Classifier(usageTracker, prompt.system, fewShot);
   classifier.setRateLimiter(rateLimiters.llm);
   const extractor = new DefaultExtractor({
     ticketPatterns: config.extractors.ticketPatterns,
@@ -1013,6 +1061,7 @@ async function main(): Promise<void> {
     db,
     graph,
     classifier,
+    usageTracker,
     linker,
     pipeline: null,
     messagingAdapter: null,
@@ -1071,7 +1120,7 @@ async function main(): Promise<void> {
     }
   }
 
-  // 6. Create pipeline if messaging adapter is available
+  // 7. Create pipeline if messaging adapter is available
   if (state.messagingAdapter) {
     state.pipeline = new Pipeline(
       state.messagingAdapter,
@@ -1085,7 +1134,7 @@ async function main(): Promise<void> {
     log.warn("No messaging adapter available — pipeline not started (configure via POST /api/setup)");
   }
 
-  // 7. Create and start Hono server — before pipeline polling so the server
+  // 8. Create and start Hono server — before pipeline polling so the server
   //    is reachable immediately (initial poll can block for minutes with rate limiting)
   const app = createApp(state);
 
