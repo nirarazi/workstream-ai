@@ -232,6 +232,20 @@ export class OpenAICompatibleProvider implements ModelProvider {
 
     const title = typeof parsed.title === "string" ? parsed.title : "";
 
-    return { status, confidence, reason, workItemIds, title };
+    // Parse per-work-item breakdown for summary messages
+    let breakdown: ClassificationResult["breakdown"];
+    if (Array.isArray(parsed.breakdown) && parsed.breakdown.length > 0) {
+      breakdown = (parsed.breakdown as Record<string, unknown>[])
+        .filter((b) => typeof b.workItemId === "string" && typeof b.status === "string")
+        .map((b) => ({
+          workItemId: b.workItemId as string,
+          status: b.status as string,
+          confidence: typeof b.confidence === "number" ? b.confidence : confidence,
+          reason: typeof b.reason === "string" ? b.reason : "",
+          title: typeof b.title === "string" ? b.title : "",
+        }));
+    }
+
+    return { status, confidence, reason, workItemIds, title, breakdown };
   }
 }

@@ -7,12 +7,22 @@ export type StatusCategory =
   | "needs_decision"
   | "noise";
 
+export interface ClassificationBreakdown {
+  workItemId: string;
+  status: StatusCategory;
+  confidence: number;
+  reason: string;
+  title: string;
+}
+
 export interface Classification {
   status: StatusCategory;
   confidence: number;
   reason: string;
   workItemIds: string[];
   title: string;
+  /** Per-work-item statuses when a message is a summary/brief mentioning multiple items */
+  breakdown?: ClassificationBreakdown[];
 }
 
 export interface Message {

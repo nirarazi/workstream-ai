@@ -374,21 +374,48 @@ export class Pipeline {
     });
 
     // Step 6: Update work item status if confidence is higher than existing
+    // If the classifier returned a per-item breakdown (summary messages), use
+    // each item's specific status instead of applying one status to all.
+    const breakdownMap = new Map(
+      (classification.breakdown ?? []).map((b) => [b.workItemId, b]),
+    );
+
     for (const workItemId of allWorkItemIds) {
       const existing = this.graph.getWorkItemById(workItemId);
       if (existing) {
+        const itemClassification = breakdownMap.get(workItemId);
+        const itemStatus = itemClassification?.status ?? classification.status;
+        const itemConfidence = itemClassification?.confidence ?? classification.confidence;
+        const itemTitle = itemClassification?.title ?? classification.title;
+
         const shouldUpdate =
           !existing.currentConfidence ||
-          classification.confidence >= existing.currentConfidence;
+          itemConfidence >= existing.currentConfidence;
 
         if (shouldUpdate) {
           this.graph.upsertWorkItem({
             id: workItemId,
             source: existing.source,
-            currentAtcStatus: classification.status,
-            currentConfidence: classification.confidence,
+            currentAtcStatus: itemStatus,
+            currentConfidence: itemConfidence,
             // Set LLM title if work item has no title yet (e.g. extracted IDs with no Jira enrichment)
-            ...(classification.title && !existing.title ? { title: classification.title } : {}),
+            ...(itemTitle && !existing.title ? { title: itemTitle } : {}),
+          });
+        }
+
+        // Insert a dedicated event for breakdown items with actionable status
+        // so they surface in the inbox individually
+        if (itemClassification && itemClassification.status !== "noise" && itemClassification.status !== "in_progress") {
+          this.graph.insertEvent({
+            threadId: thread.id,
+            messageId: `${message.id}:${workItemId}`,
+            workItemId,
+            agentId: agent.id,
+            status: itemClassification.status,
+            confidence: itemClassification.confidence,
+            reason: itemClassification.reason,
+            rawText: message.text,
+            timestamp: message.timestamp,
           });
         }
       }
