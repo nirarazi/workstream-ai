@@ -18,7 +18,7 @@ export default function ChannelLabel({ thread, platformMeta }: ChannelLabelProps
       <button
         type="button"
         onClick={() => openExternalUrl(url)}
-        className="text-xs text-gray-400 hover:text-blue-400 hover:underline cursor-pointer"
+        className="text-xs text-gray-400 hover:text-cyan-400 hover:underline cursor-pointer"
       >
         {icon}{thread.channelName}
       </button>

@@ -1,4 +1,4 @@
-// core/mcp/server.ts — MCP server exposing tools for agents to push status to ATC
+// core/mcp/server.ts — MCP server exposing tools for agents to push status to workstream.ai
 
 import { z } from "zod";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -18,10 +18,10 @@ const MCP_SOURCE = "mcp";
 
 /**
  * Creates an MCP server wired to the given ContextGraph.
- * Exposes three tools: atc_report_status, atc_request_approval, atc_complete.
+ * Exposes three tools: workstream_report_status, workstream_request_approval, workstream_complete.
  */
 export function createMcpServer(graph: ContextGraph): McpServer {
-  const server = new McpServer({ name: "atc", version: "0.1.0" });
+  const server = new McpServer({ name: "workstream", version: "0.1.0" });
 
   // Ensure the shared MCP thread exists so event foreign keys are satisfied.
   function ensureMcpThread(workItemId: string): void {
@@ -34,9 +34,9 @@ export function createMcpServer(graph: ContextGraph): McpServer {
     });
   }
 
-  // --- atc_report_status ---
+  // --- workstream_report_status ---
   server.tool(
-    "atc_report_status",
+    "workstream_report_status",
     {
       workItemId: z.string(),
       status: z.enum(["completed", "in_progress", "blocked_on_human", "needs_decision"]),
@@ -69,9 +69,9 @@ export function createMcpServer(graph: ContextGraph): McpServer {
     },
   );
 
-  // --- atc_request_approval ---
+  // --- workstream_request_approval ---
   server.tool(
-    "atc_request_approval",
+    "workstream_request_approval",
     {
       workItemId: z.string(),
       description: z.string(),
@@ -104,9 +104,9 @@ export function createMcpServer(graph: ContextGraph): McpServer {
     },
   );
 
-  // --- atc_complete ---
+  // --- workstream_complete ---
   server.tool(
-    "atc_complete",
+    "workstream_complete",
     {
       workItemId: z.string(),
       summary: z.string(),

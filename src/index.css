@@ -15,6 +15,16 @@ html.light {
   --color-gray-50: #030712;
 
   /* Swap accent scales so bg-*-900/60 + text-*-300 look right in light */
+  --color-cyan-900: #cffafe;
+  --color-cyan-800: #a5f3fc;
+  --color-cyan-700: #67e8f9;
+  --color-cyan-600: #06b6d4;
+  --color-cyan-500: #0891b2;
+  --color-cyan-400: #0e7490;
+  --color-cyan-300: #155e75;
+  --color-cyan-200: #164e63;
+  --color-cyan-100: #083344;
+
   --color-blue-900: #dbeafe;
   --color-blue-800: #bfdbfe;
   --color-blue-700: #93c5fd;
@@ -74,11 +84,11 @@ html.light {
 .animate-shimmer {
   background: linear-gradient(
     90deg,
-    #e2e8f0 0%,
-    #c4b5fd 25%,
+    #67e8f9 0%,
+    #06b6d4 25%,
     #a78bfa 50%,
-    #c4b5fd 75%,
-    #e2e8f0 100%
+    #06b6d4 75%,
+    #67e8f9 100%
   );
   background-size: 200% auto;
   background-clip: text;
@@ -90,11 +100,11 @@ html.light {
 html.light .animate-shimmer {
   background: linear-gradient(
     90deg,
-    #374151 0%,
-    #6d28d9 25%,
+    #0e7490 0%,
+    #0891b2 25%,
     #7c3aed 50%,
-    #6d28d9 75%,
-    #374151 100%
+    #0891b2 75%,
+    #0e7490 100%
   );
   background-size: 200% auto;
   background-clip: text;

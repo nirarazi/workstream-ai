@@ -17,7 +17,7 @@ function renderSegment(seg: Segment, i: number): JSX.Element {
       return (
         <span
           key={i}
-          className="rounded bg-blue-900/50 px-1 py-0.5 text-blue-300 font-medium"
+          className="rounded bg-cyan-900/50 px-1 py-0.5 text-cyan-300 font-medium"
         >
           @{seg.name}
         </span>
@@ -27,7 +27,7 @@ function renderSegment(seg: Segment, i: number): JSX.Element {
       return (
         <span
           key={i}
-          className="rounded bg-blue-900/50 px-1 py-0.5 text-blue-300 font-medium"
+          className="rounded bg-cyan-900/50 px-1 py-0.5 text-cyan-300 font-medium"
         >
           #{seg.name}
         </span>
@@ -49,7 +49,7 @@ function renderSegment(seg: Segment, i: number): JSX.Element {
           key={i}
           type="button"
           onClick={() => openExternalUrl(seg.url)}
-          className="text-blue-400 hover:underline cursor-pointer"
+          className="text-cyan-400 hover:underline cursor-pointer"
         >
           {seg.label}
         </button>

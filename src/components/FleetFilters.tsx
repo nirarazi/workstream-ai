@@ -59,7 +59,7 @@ function AgentMultiSelect({
         onClick={() => setOpen(!open)}
         className={`cursor-pointer flex items-center gap-1.5 rounded border px-2.5 py-1 text-xs font-medium transition-colors ${
           selected.length > 0
-            ? "bg-blue-900/60 text-blue-300 border-blue-700/50"
+            ? "bg-cyan-900/60 text-cyan-300 border-cyan-700/50"
             : "bg-gray-900 text-gray-500 border-gray-700 hover:text-gray-300"
         }`}
       >
@@ -73,7 +73,7 @@ function AgentMultiSelect({
         {selected.length > 0 && (
           <span
             role="button"
-            className="ml-0.5 hover:text-blue-100"
+            className="ml-0.5 hover:text-cyan-100"
             onClick={(e) => {
               e.stopPropagation();
               onChange([]);
@@ -105,7 +105,7 @@ function AgentMultiSelect({
               <span
                 className={`inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded border text-[9px] ${
                   selected.includes(agent.id)
-                    ? "bg-blue-600 border-blue-500 text-white"
+                    ? "bg-cyan-600 border-cyan-500 text-white"
                     : "border-gray-600"
                 }`}
               >
@@ -158,7 +158,7 @@ export default function FleetFilters({
         placeholder="Search work items..."
         value={searchQuery}
         onChange={(e) => onSearchChange(e.target.value)}
-        className="rounded border border-gray-700 bg-gray-900 px-3 py-1.5 text-sm text-gray-200 placeholder-gray-500 focus:border-blue-600 focus:outline-none w-56"
+        className="rounded border border-gray-700 bg-gray-900 px-3 py-1.5 text-sm text-gray-200 placeholder-gray-500 focus:border-cyan-600 focus:outline-none w-56"
       />
 
       {/* Status filter pills */}
@@ -169,7 +169,7 @@ export default function FleetFilters({
             onClick={() => toggleStatus(value)}
             className={`cursor-pointer rounded-full px-2.5 py-0.5 text-xs font-medium border transition-colors ${
               statusFilter.includes(value)
-                ? "bg-blue-900/60 text-blue-300 border-blue-700/50"
+                ? "bg-cyan-900/60 text-cyan-300 border-cyan-700/50"
                 : "bg-gray-900 text-gray-500 border-gray-700 hover:text-gray-300"
             }`}
           >

@@ -105,21 +105,21 @@ describe("GET /api/setup/prefill", () => {
   beforeEach(() => {
     state = makeState();
     originalEnv = {
-      ATC_SLACK_TOKEN: process.env.ATC_SLACK_TOKEN,
-      ATC_JIRA_EMAIL: process.env.ATC_JIRA_EMAIL,
-      ATC_JIRA_API_TOKEN: process.env.ATC_JIRA_API_TOKEN,
-      ATC_JIRA_BASE_URL: process.env.ATC_JIRA_BASE_URL,
-      ATC_LLM_API_KEY: process.env.ATC_LLM_API_KEY,
-      ATC_LLM_BASE_URL: process.env.ATC_LLM_BASE_URL,
-      ATC_LLM_MODEL: process.env.ATC_LLM_MODEL,
+      WORKSTREAM_SLACK_TOKEN: process.env.WORKSTREAM_SLACK_TOKEN,
+      WORKSTREAM_JIRA_EMAIL: process.env.WORKSTREAM_JIRA_EMAIL,
+      WORKSTREAM_JIRA_API_TOKEN: process.env.WORKSTREAM_JIRA_API_TOKEN,
+      WORKSTREAM_JIRA_BASE_URL: process.env.WORKSTREAM_JIRA_BASE_URL,
+      WORKSTREAM_LLM_API_KEY: process.env.WORKSTREAM_LLM_API_KEY,
+      WORKSTREAM_LLM_BASE_URL: process.env.WORKSTREAM_LLM_BASE_URL,
+      WORKSTREAM_LLM_MODEL: process.env.WORKSTREAM_LLM_MODEL,
     };
-    delete process.env.ATC_SLACK_TOKEN;
-    delete process.env.ATC_JIRA_EMAIL;
-    delete process.env.ATC_JIRA_API_TOKEN;
-    delete process.env.ATC_JIRA_BASE_URL;
-    delete process.env.ATC_LLM_API_KEY;
-    delete process.env.ATC_LLM_BASE_URL;
-    delete process.env.ATC_LLM_MODEL;
+    delete process.env.WORKSTREAM_SLACK_TOKEN;
+    delete process.env.WORKSTREAM_JIRA_EMAIL;
+    delete process.env.WORKSTREAM_JIRA_API_TOKEN;
+    delete process.env.WORKSTREAM_JIRA_BASE_URL;
+    delete process.env.WORKSTREAM_LLM_API_KEY;
+    delete process.env.WORKSTREAM_LLM_BASE_URL;
+    delete process.env.WORKSTREAM_LLM_MODEL;
   });
 
   afterEach(() => {
@@ -142,11 +142,11 @@ describe("GET /api/setup/prefill", () => {
     expect(body.llm.model).toBe("claude-sonnet-4-6");
   });
 
-  it("returns messaging adapter fields when ATC_SLACK_TOKEN env var is set", async () => {
+  it("returns messaging adapter fields when WORKSTREAM_SLACK_TOKEN env var is set", async () => {
     // Import the slack adapter module so it self-registers
     await import("../../core/adapters/messaging/slack/index.js");
 
-    process.env.ATC_SLACK_TOKEN = "xoxp-test";
+    process.env.WORKSTREAM_SLACK_TOKEN = "xoxp-test";
 
     const app = createApp(state);
     const res = await app.request("/api/setup/prefill");

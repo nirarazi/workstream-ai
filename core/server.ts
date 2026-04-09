@@ -1,4 +1,4 @@
-// core/server.ts — Hono HTTP server exposing the ATC engine API
+// core/server.ts — Hono HTTP server exposing the workstream.ai engine API
 
 import { Hono } from "hono";
 import { cors } from "hono/cors";
@@ -690,9 +690,9 @@ export function createApp(state: EngineState): Hono {
             },
           };
         }
-        if (body.llm.apiKey) envLines.push(`ATC_LLM_API_KEY=${body.llm.apiKey}`);
-        if (body.llm.baseUrl) envLines.push(`ATC_LLM_BASE_URL=${body.llm.baseUrl}`);
-        if (body.llm.model) envLines.push(`ATC_LLM_MODEL=${body.llm.model}`);
+        if (body.llm.apiKey) envLines.push(`WORKSTREAM_LLM_API_KEY=${body.llm.apiKey}`);
+        if (body.llm.baseUrl) envLines.push(`WORKSTREAM_LLM_BASE_URL=${body.llm.baseUrl}`);
+        if (body.llm.model) envLines.push(`WORKSTREAM_LLM_MODEL=${body.llm.model}`);
 
         // Budget config
         if (body.llm.dailyBudget !== undefined || body.llm.inputCostPerMillion !== undefined || body.llm.outputCostPerMillion !== undefined) {
@@ -742,9 +742,9 @@ export function createApp(state: EngineState): Hono {
           : fields;
 
         // Write the computed auth token env var if adapter produces one
-        // For Jira: the base64 token goes to ATC_JIRA_TOKEN
+        // For Jira: the base64 token goes to WORKSTREAM_JIRA_TOKEN
         if (adapterName === "jira" && prepared.token !== fields.token) {
-          envLines.push(`ATC_JIRA_TOKEN=${prepared.token}`);
+          envLines.push(`WORKSTREAM_JIRA_TOKEN=${prepared.token}`);
         }
 
         // Write non-sensitive config
@@ -930,9 +930,9 @@ export function createApp(state: EngineState): Hono {
 
     // LLM
     result.llm = {
-      apiKey: process.env.ATC_LLM_API_KEY ?? "",
-      baseUrl: process.env.ATC_LLM_BASE_URL ?? "https://api.anthropic.com/v1",
-      model: process.env.ATC_LLM_MODEL ?? "claude-sonnet-4-6",
+      apiKey: process.env.WORKSTREAM_LLM_API_KEY ?? "",
+      baseUrl: process.env.WORKSTREAM_LLM_BASE_URL ?? "https://api.anthropic.com/v1",
+      model: process.env.WORKSTREAM_LLM_MODEL ?? "claude-sonnet-4-6",
       dailyBudget: state.config.llmBudget?.dailyBudget ?? null,
       inputCostPerMillion: state.config.llmBudget?.inputCostPerMillion ?? null,
       outputCostPerMillion: state.config.llmBudget?.outputCostPerMillion ?? null,
@@ -1013,7 +1013,7 @@ async function main(): Promise<void> {
   log.info("Config loaded");
 
   // 2. Open/create SQLite database
-  const db = new Database("atc.db");
+  const db = new Database("workstream.db");
 
   // 3. Create rate limiters from config (dynamic — not hardcoded per adapter)
   const defaultRateLimits: Record<string, { maxPerMinute: number; displayName: string }> = {
@@ -1077,7 +1077,7 @@ async function main(): Promise<void> {
   await import("./adapters/messaging/slack/index.js");
   await import("./adapters/tasks/jira/index.js");
 
-  const slackToken = process.env.ATC_SLACK_TOKEN;
+  const slackToken = process.env.WORKSTREAM_SLACK_TOKEN;
   if (slackToken) {
     try {
       const adapter = createMessagingAdapter("slack");
@@ -1101,17 +1101,17 @@ async function main(): Promise<void> {
       log.error("Failed to connect messaging adapter", err);
     }
   } else {
-    log.warn("No ATC_SLACK_TOKEN set — messaging adapter disabled");
+    log.warn("No WORKSTREAM_SLACK_TOKEN set — messaging adapter disabled");
   }
 
   // 6. If task adapter configured, create and connect via registry
-  if (config.taskAdapter.enabled && process.env.ATC_JIRA_TOKEN) {
+  if (config.taskAdapter.enabled && process.env.WORKSTREAM_JIRA_TOKEN) {
     try {
       const adapter = createTaskAdapter("jira");
       (adapter as { setRateLimiter?: (l: unknown) => void }).setRateLimiter?.(rateLimiters.jira);
       await adapter.connect({
-        token: process.env.ATC_JIRA_TOKEN,
-        baseUrl: process.env.ATC_JIRA_BASE_URL ?? config.taskAdapter.baseUrl ?? "",
+        token: process.env.WORKSTREAM_JIRA_TOKEN,
+        baseUrl: process.env.WORKSTREAM_JIRA_BASE_URL ?? config.taskAdapter.baseUrl ?? "",
       });
       state.taskAdapter = adapter;
       log.info(`${adapter.displayName} adapter connected`);
@@ -1139,7 +1139,7 @@ async function main(): Promise<void> {
   const app = createApp(state);
 
   // Static file serving in web mode
-  if (process.env.ATC_SERVE_STATIC === "true") {
+  if (process.env.WORKSTREAM_SERVE_STATIC === "true") {
     const { serveStatic } = await import("@hono/node-server/serve-static");
     app.use("/*", serveStatic({ root: "./dist" }));
     log.info("Serving static files from ./dist/");
@@ -1149,8 +1149,8 @@ async function main(): Promise<void> {
   const host = config.server.host;
   const port = config.server.port;
 
-  serve({ fetch: app.fetch, hostname: host, port }, () => {
-    log.info(`ATC engine listening on http://${host}:${port}`);
+  const server = serve({ fetch: app.fetch, hostname: host, port }, () => {
+    log.info(`workstream.ai engine listening on http://${host}:${port}`);
     if (state.pipeline) {
       // Start pipeline after server is bound so the server is immediately reachable.
       // Initial poll can take minutes with rate limiting — run it in the background.
@@ -1160,6 +1160,21 @@ async function main(): Promise<void> {
       log.info(`No adapters configured — visit http://${host}:${port} to set up`);
     }
   });
+
+  // Graceful shutdown on SIGTERM / SIGINT
+  function shutdown(signal: string) {
+    log.info(`Received ${signal}, shutting down...`);
+    state.pipeline?.stop();
+    state.db.close();
+    server.close(() => {
+      log.info("Engine stopped cleanly");
+      process.exit(0);
+    });
+    // Force exit after 3 seconds if something hangs
+    setTimeout(() => process.exit(1), 3000).unref();
+  }
+  process.on("SIGTERM", () => shutdown("SIGTERM"));
+  process.on("SIGINT", () => shutdown("SIGINT"));
 }
 
 // Run when executed directly

@@ -10,7 +10,7 @@ const LEVEL_ORDER: Record<LogLevel, number> = {
 };
 
 function getMinLevel(): LogLevel {
-  const env = process.env.ATC_LOG_LEVEL?.toLowerCase();
+  const env = process.env.WORKSTREAM_LOG_LEVEL?.toLowerCase();
   if (env && env in LEVEL_ORDER) {
     return env as LogLevel;
   }

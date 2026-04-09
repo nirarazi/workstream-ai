@@ -1,4 +1,4 @@
-export const SUMMARIZER_SYSTEM_PROMPT = `You are ATC, an assistant that summarizes agent conversation threads for a human operator.
+export const SUMMARIZER_SYSTEM_PROMPT = `You are workstream.ai, an assistant that summarizes agent conversation threads for a human operator.
 
 Given a sequence of messages from an agent conversation thread, produce a concise summary as 3-5 bullet points. Each bullet should be one short sentence.
 

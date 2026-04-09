@@ -343,7 +343,7 @@ export default function ContextPane({
         <div className="sticky top-0 z-10 bg-gray-950 border-b border-gray-800 px-6 py-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <span className="font-mono text-sm font-semibold text-blue-400">
+              <span className="font-mono text-sm font-semibold text-cyan-400">
                 {workItem.id}
               </span>
               <StatusBadge status={workItem.currentAtcStatus ?? "noise"} />
@@ -416,7 +416,7 @@ export default function ContextPane({
                   onClick={() => setSelectedThreadId(selectedThreadId === t.id ? null : t.id)}
                   className={`rounded border px-3 py-2 text-sm cursor-pointer transition-colors ${
                     selectedThreadId === t.id
-                      ? "border-blue-600 bg-blue-900/20"
+                      ? "border-cyan-600 bg-cyan-900/20"
                       : "border-gray-800 hover:border-gray-700"
                   }`}
                 >
@@ -424,7 +424,7 @@ export default function ContextPane({
                     <div>
                       <span className="text-gray-300">{t.channelName || t.channelId}</span>
                       {t.manuallyLinked && (
-                        <span className="ml-2 text-[10px] text-blue-400">manually linked</span>
+                        <span className="ml-2 text-[10px] text-cyan-400">manually linked</span>
                       )}
                     </div>
                     {t.manuallyLinked && (
@@ -450,7 +450,7 @@ export default function ContextPane({
                 onClick={() => setActionPanel(actionPanel === "link" ? null : "link")}
                 className={`flex-1 py-1.5 rounded text-xs font-medium cursor-pointer transition-colors ${
                   actionPanel === "link"
-                    ? "border border-blue-600 text-blue-400 bg-blue-900/20"
+                    ? "border border-cyan-600 text-cyan-400 bg-cyan-900/20"
                     : "border border-gray-700 text-gray-400 hover:text-gray-300 hover:border-gray-600"
                 }`}
               >
@@ -461,7 +461,7 @@ export default function ContextPane({
                 onClick={() => setActionPanel(actionPanel === "forward" ? null : "forward")}
                 className={`flex-1 py-1.5 rounded text-xs font-medium cursor-pointer transition-colors disabled:opacity-30 disabled:cursor-not-allowed ${
                   actionPanel === "forward"
-                    ? "border border-blue-600 text-blue-400 bg-blue-900/20"
+                    ? "border border-cyan-600 text-cyan-400 bg-cyan-900/20"
                     : "border border-gray-700 text-gray-400 hover:text-gray-300 hover:border-gray-600"
                 }`}
               >
@@ -477,14 +477,14 @@ export default function ContextPane({
 
             {/* Link thread panel */}
             {actionPanel === "link" && (
-              <div className="mt-3 border border-blue-600 rounded-md bg-gray-900 overflow-hidden">
+              <div className="mt-3 border border-cyan-600 rounded-md bg-gray-900 overflow-hidden">
                 <div className="p-3 border-b border-gray-800">
                   <input
                     type="text"
                     placeholder="Search by channel name..."
                     value={linkSearch}
                     onChange={(e) => setLinkSearch(e.target.value)}
-                    className="w-full bg-gray-800 border border-gray-700 rounded px-2.5 py-1.5 text-sm text-gray-200 placeholder-gray-500 focus:outline-none focus:border-blue-600"
+                    className="w-full bg-gray-800 border border-gray-700 rounded px-2.5 py-1.5 text-sm text-gray-200 placeholder-gray-500 focus:outline-none focus:border-cyan-600"
                   />
                 </div>
                 <div className="max-h-48 overflow-y-auto">
@@ -513,12 +513,12 @@ export default function ContextPane({
                       value={linkUrl}
                       onChange={(e) => setLinkUrl(e.target.value)}
                       onKeyDown={(e) => e.key === "Enter" && handleLinkUrl()}
-                      className="flex-1 bg-gray-800 border border-gray-700 rounded px-2.5 py-1.5 text-xs text-gray-200 placeholder-gray-500 focus:outline-none focus:border-blue-600"
+                      className="flex-1 bg-gray-800 border border-gray-700 rounded px-2.5 py-1.5 text-xs text-gray-200 placeholder-gray-500 focus:outline-none focus:border-cyan-600"
                     />
                     <button
                       onClick={handleLinkUrl}
                       disabled={!linkUrl.trim() || linking}
-                      className="px-3 py-1.5 rounded text-xs font-medium bg-blue-600 text-white hover:bg-blue-500 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                      className="px-3 py-1.5 rounded text-xs font-medium bg-cyan-600 text-white hover:bg-cyan-500 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
                     >
                       Link
                     </button>
@@ -529,9 +529,9 @@ export default function ContextPane({
 
             {/* Forward panel */}
             {actionPanel === "forward" && selectedThreadId && (
-              <div className="mt-3 border border-blue-600 rounded-md bg-gray-900 overflow-hidden">
+              <div className="mt-3 border border-cyan-600 rounded-md bg-gray-900 overflow-hidden">
                 <div className="flex items-center justify-between px-3 py-2 border-b border-gray-800">
-                  <span className="text-xs font-semibold text-blue-400">
+                  <span className="text-xs font-semibold text-cyan-400">
                     Forward from {threads.find((t) => t.id === selectedThreadId)?.channelName ?? "thread"}
                   </span>
                   <button onClick={() => setActionPanel(null)} className="text-gray-500 hover:text-gray-300 cursor-pointer text-sm">&#x2715;</button>
@@ -553,7 +553,7 @@ export default function ContextPane({
                         placeholder={forwardTargetType === "channel" ? "Channel ID (e.g. C001)" : "User ID (e.g. U001)"}
                         value={forwardTarget}
                         onChange={(e) => setForwardTarget(e.target.value)}
-                        className="flex-1 bg-gray-800 border border-gray-700 rounded px-2.5 py-1.5 text-sm text-gray-200 placeholder-gray-500 focus:outline-none focus:border-blue-600"
+                        className="flex-1 bg-gray-800 border border-gray-700 rounded px-2.5 py-1.5 text-sm text-gray-200 placeholder-gray-500 focus:outline-none focus:border-cyan-600"
                       />
                     </div>
                   </div>
@@ -563,7 +563,7 @@ export default function ContextPane({
                       <button
                         onClick={() => setForwardQuoteMode("latest")}
                         className={`px-2.5 py-1 rounded text-xs cursor-pointer ${
-                          forwardQuoteMode === "latest" ? "bg-blue-600 text-white" : "bg-gray-800 text-gray-400 border border-gray-700"
+                          forwardQuoteMode === "latest" ? "bg-cyan-600 text-white" : "bg-gray-800 text-gray-400 border border-gray-700"
                         }`}
                       >
                         Latest message
@@ -571,7 +571,7 @@ export default function ContextPane({
                       <button
                         onClick={() => setForwardQuoteMode("full")}
                         className={`px-2.5 py-1 rounded text-xs cursor-pointer ${
-                          forwardQuoteMode === "full" ? "bg-blue-600 text-white" : "bg-gray-800 text-gray-400 border border-gray-700"
+                          forwardQuoteMode === "full" ? "bg-cyan-600 text-white" : "bg-gray-800 text-gray-400 border border-gray-700"
                         }`}
                       >
                         Full thread
@@ -595,7 +595,7 @@ export default function ContextPane({
                       placeholder="Add context for the recipient..."
                       value={forwardNote}
                       onChange={(e) => setForwardNote(e.target.value)}
-                      className="w-full bg-gray-800 border border-gray-700 rounded px-2.5 py-1.5 text-sm text-gray-200 placeholder-gray-500 focus:outline-none focus:border-blue-600"
+                      className="w-full bg-gray-800 border border-gray-700 rounded px-2.5 py-1.5 text-sm text-gray-200 placeholder-gray-500 focus:outline-none focus:border-cyan-600"
                     />
                   </div>
                   <div className="flex justify-end gap-2">
@@ -608,7 +608,7 @@ export default function ContextPane({
                     <button
                       onClick={handleForward}
                       disabled={!forwardTarget.trim() || forwarding}
-                      className="px-3 py-1.5 rounded text-xs font-medium bg-blue-600 text-white hover:bg-blue-500 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                      className="px-3 py-1.5 rounded text-xs font-medium bg-cyan-600 text-white hover:bg-cyan-500 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
                     >
                       {forwarding ? "Sending..." : "Send"}
                     </button>
@@ -619,9 +619,9 @@ export default function ContextPane({
 
             {/* New thread panel */}
             {actionPanel === "new-thread" && (
-              <div className="mt-3 border border-blue-600 rounded-md bg-gray-900 overflow-hidden">
+              <div className="mt-3 border border-cyan-600 rounded-md bg-gray-900 overflow-hidden">
                 <div className="flex items-center justify-between px-3 py-2 border-b border-gray-800">
-                  <span className="text-xs font-semibold text-blue-400">New thread</span>
+                  <span className="text-xs font-semibold text-cyan-400">New thread</span>
                   <button onClick={() => setActionPanel(null)} className="text-gray-500 hover:text-gray-300 cursor-pointer text-sm">&#x2715;</button>
                 </div>
                 <div className="p-3 space-y-3">
@@ -641,7 +641,7 @@ export default function ContextPane({
                         placeholder={newThreadTargetType === "channel" ? "Channel ID (e.g. C001)" : "User ID (e.g. U001)"}
                         value={newThreadTarget}
                         onChange={(e) => setNewThreadTarget(e.target.value)}
-                        className="flex-1 bg-gray-800 border border-gray-700 rounded px-2.5 py-1.5 text-sm text-gray-200 placeholder-gray-500 focus:outline-none focus:border-blue-600"
+                        className="flex-1 bg-gray-800 border border-gray-700 rounded px-2.5 py-1.5 text-sm text-gray-200 placeholder-gray-500 focus:outline-none focus:border-cyan-600"
                       />
                     </div>
                   </div>
@@ -652,7 +652,7 @@ export default function ContextPane({
                       value={newThreadMessage}
                       onChange={(e) => setNewThreadMessage(e.target.value)}
                       rows={3}
-                      className="w-full bg-gray-800 border border-gray-700 rounded px-2.5 py-1.5 text-sm text-gray-200 placeholder-gray-500 focus:outline-none focus:border-blue-600 resize-none"
+                      className="w-full bg-gray-800 border border-gray-700 rounded px-2.5 py-1.5 text-sm text-gray-200 placeholder-gray-500 focus:outline-none focus:border-cyan-600 resize-none"
                     />
                   </div>
                   <div className="flex justify-end gap-2">
@@ -665,7 +665,7 @@ export default function ContextPane({
                     <button
                       onClick={handleNewThread}
                       disabled={!newThreadTarget.trim() || !newThreadMessage.trim() || sendingNewThread}
-                      className="px-3 py-1.5 rounded text-xs font-medium bg-blue-600 text-white hover:bg-blue-500 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                      className="px-3 py-1.5 rounded text-xs font-medium bg-cyan-600 text-white hover:bg-cyan-500 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
                     >
                       {sendingNewThread ? "Sending..." : "Send"}
                     </button>
@@ -744,7 +744,7 @@ export default function ContextPane({
               />
               <div className="flex items-center gap-2 flex-wrap">
                 <Tooltip text="Unblock the agent — your reply lets them continue">
-                  <button onClick={() => handlePaneAction("unblock", "redirect")} disabled={acting} className="cursor-pointer rounded px-3.5 py-1 text-xs font-medium bg-blue-700/80 hover:bg-blue-700 text-blue-100 disabled:opacity-40 disabled:cursor-not-allowed">Unblock</button>
+                  <button onClick={() => handlePaneAction("unblock", "redirect")} disabled={acting} className="cursor-pointer rounded px-3.5 py-1 text-xs font-medium bg-cyan-700/80 hover:bg-cyan-700 text-cyan-100 disabled:opacity-40 disabled:cursor-not-allowed">Unblock</button>
                 </Tooltip>
                 <Tooltip text="Mark as complete — work is finished or approved">
                   <button onClick={() => handlePaneAction("done", "approve")} disabled={acting} className="cursor-pointer rounded px-2.5 py-1 text-xs font-medium bg-green-800/70 hover:bg-green-700 text-green-200 disabled:opacity-40 disabled:cursor-not-allowed">Done</button>

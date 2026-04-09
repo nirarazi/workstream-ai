@@ -127,7 +127,7 @@ export class JiraAdapter implements TaskAdapter {
           type: "email",
           required: true,
           placeholder: "you@company.com",
-          envVar: "ATC_JIRA_EMAIL",
+          envVar: "WORKSTREAM_JIRA_EMAIL",
         },
         {
           key: "token",
@@ -135,7 +135,7 @@ export class JiraAdapter implements TaskAdapter {
           type: "password",
           required: true,
           placeholder: "Jira API token",
-          envVar: "ATC_JIRA_API_TOKEN",
+          envVar: "WORKSTREAM_JIRA_API_TOKEN",
         },
         {
           key: "baseUrl",
@@ -143,7 +143,7 @@ export class JiraAdapter implements TaskAdapter {
           type: "url",
           required: true,
           placeholder: "https://your-org.atlassian.net",
-          envVar: "ATC_JIRA_BASE_URL",
+          envVar: "WORKSTREAM_JIRA_BASE_URL",
         },
       ],
     };

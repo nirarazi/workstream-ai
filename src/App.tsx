@@ -151,7 +151,7 @@ function App(): JSX.Element {
         style={{ paddingLeft: 78, paddingRight: 16, paddingTop: 8, paddingBottom: 7 }}
       >
         <h1 data-tauri-drag-region className="text-sm font-semibold tracking-tight text-gray-300">
-          ATC
+          workstream.ai
         </h1>
         <div className="flex items-center gap-3">
           {/* Theme toggle */}
@@ -180,7 +180,7 @@ function App(): JSX.Element {
 
           {/* Service indicators */}
           <div data-tauri-drag-region className="flex items-center gap-3">
-            <ServiceDot label="ATC" status={connected ? "ok" : "disconnected"} />
+            <ServiceDot label="Engine" status={connected ? "ok" : "disconnected"} />
             {Object.entries(services).map(([name, status]) => (
               <ServiceDot key={name} label={name} status={connected ? status : "disconnected"} />
             ))}
@@ -195,17 +195,17 @@ function App(): JSX.Element {
             onClick={() => setView("inbox")}
             className={`cursor-pointer py-2.5 text-sm font-medium border-b-2 transition-colors ${
               view === "inbox"
-                ? "border-blue-500 text-gray-200"
+                ? "border-cyan-500 text-gray-200"
                 : "border-transparent text-gray-500 hover:text-gray-300"
             }`}
           >
-            Inbox
+            Stream
           </button>
           <button
             onClick={() => setView("fleet")}
             className={`cursor-pointer py-2.5 text-sm font-medium border-b-2 transition-colors ${
               view === "fleet"
-                ? "border-blue-500 text-gray-200"
+                ? "border-cyan-500 text-gray-200"
                 : "border-transparent text-gray-500 hover:text-gray-300"
             }`}
           >
@@ -219,8 +219,8 @@ function App(): JSX.Element {
         {view === "loading" && (
           <div className="flex flex-col items-center justify-center py-32 gap-6">
             <div className="text-center">
-              <h2 className="text-2xl font-bold tracking-tight text-gray-200 mb-2">ATC</h2>
-              <p className="text-sm text-gray-500">Air Traffic Control for Agent Fleets</p>
+              <h2 className="text-2xl font-bold tracking-tight text-gray-200 mb-2">workstream.ai</h2>
+              <p className="text-sm text-gray-500">The operator's inbox for AI agent fleets</p>
             </div>
             <div className="flex items-center gap-2">
               <span className="inline-block h-2 w-2 rounded-full bg-amber-500 animate-pulse" />

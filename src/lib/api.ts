@@ -1,5 +1,5 @@
 /**
- * Typed fetch wrapper for the ATC engine HTTP API.
+ * Typed fetch wrapper for the workstream.ai engine HTTP API.
  * Detects Tauri vs browser environment and resolves the engine URL accordingly.
  * This is the only file that imports @tauri-apps/api.
  */
