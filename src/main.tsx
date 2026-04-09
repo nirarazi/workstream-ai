@@ -13,7 +13,7 @@ window.addEventListener("unhandledrejection", (e) => {
 });
 
 // Restore theme preference
-if (localStorage.getItem("atc-theme") === "light") {
+if (localStorage.getItem("workstream-theme") === "light") {
   document.documentElement.classList.add("light");
 }
 

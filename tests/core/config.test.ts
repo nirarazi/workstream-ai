@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 
 // Use a temp directory for each test to avoid touching real config
 function makeTempProject(): string {
-  const dir = resolve(tmpdir(), `atc-config-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+  const dir = resolve(tmpdir(), `workstream-config-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
   mkdirSync(resolve(dir, "config"), { recursive: true });
   return dir;
 }

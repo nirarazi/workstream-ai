@@ -1,7 +1,7 @@
 {
-  "name": "atc",
+  "name": "workstream",
   "version": "1.0.0",
-  "description": "Air Traffic Control for Agent Fleets",
+  "description": "workstream.ai — The operator's inbox for AI agent fleets",
   "private": true,
   "type": "module",
   "scripts": {
@@ -15,7 +15,7 @@
     "mcp": "tsx core/mcp/cli.ts",
     "engine": "tsx watch core/server.ts",
     "dev:web": "concurrently \"tsx watch core/server.ts\" \"vite\"",
-    "start:web": "vite build && ATC_SERVE_STATIC=true tsx core/server.ts"
+    "start:web": "vite build && WORKSTREAM_SERVE_STATIC=true tsx core/server.ts"
   },
   "license": "MIT",
   "dependencies": {

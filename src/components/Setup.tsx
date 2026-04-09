@@ -288,7 +288,7 @@ export default function Setup({ onComplete }: SetupProps): JSX.Element {
 
   return (
     <div className="mx-auto max-w-md py-10 px-6">
-      <h2 className="text-lg font-semibold text-gray-100 mb-1">Configure ATC</h2>
+      <h2 className="text-lg font-semibold text-gray-100 mb-1">Configure workstream.ai</h2>
       <p className="text-xs text-gray-500 mb-6">
         Connect your messaging platform and LLM provider to get started.
       </p>
@@ -307,7 +307,7 @@ export default function Setup({ onComplete }: SetupProps): JSX.Element {
                 <button
                   type="button"
                   onClick={() => openExternal(currentMessaging.helpUrl!)}
-                  className="text-[11px] text-blue-400 hover:text-blue-300"
+                  className="text-[11px] text-cyan-400 hover:text-cyan-300"
                 >
                   Get token →
                 </button>
@@ -327,7 +327,7 @@ export default function Setup({ onComplete }: SetupProps): JSX.Element {
                     }}
                     className={`flex-1 rounded border py-1.5 text-xs font-medium transition-colors ${
                       selectedMessaging === a.name
-                        ? "border-blue-500 bg-blue-900/40 text-blue-300"
+                        ? "border-cyan-500 bg-cyan-900/40 text-cyan-300"
                         : "border-gray-700 text-gray-500 hover:border-gray-600 hover:text-gray-400"
                     }`}
                   >
@@ -358,7 +358,7 @@ export default function Setup({ onComplete }: SetupProps): JSX.Element {
               <button
                 type="button"
                 onClick={() => openExternal(currentKeyLink)}
-                className="text-[11px] text-blue-400 hover:text-blue-300"
+                className="text-[11px] text-cyan-400 hover:text-cyan-300"
               >
                 {preset === "ollama" ? "Get Ollama →" : "Get API key →"}
               </button>
@@ -373,7 +373,7 @@ export default function Setup({ onComplete }: SetupProps): JSX.Element {
                 onClick={() => applyPreset(id)}
                 className={`flex-1 rounded border py-1.5 text-xs font-medium transition-colors ${
                   preset === id
-                    ? "border-blue-500 bg-blue-900/40 text-blue-300"
+                    ? "border-cyan-500 bg-cyan-900/40 text-cyan-300"
                     : "border-gray-700 text-gray-500 hover:border-gray-600 hover:text-gray-400"
                 }`}
               >
@@ -539,7 +539,7 @@ export default function Setup({ onComplete }: SetupProps): JSX.Element {
                 <button
                   type="button"
                   onClick={() => openExternal(currentTask.helpUrl!)}
-                  className="text-[11px] text-blue-400 hover:text-blue-300"
+                  className="text-[11px] text-cyan-400 hover:text-cyan-300"
                 >
                   Get token →
                 </button>
@@ -559,7 +559,7 @@ export default function Setup({ onComplete }: SetupProps): JSX.Element {
                     }}
                     className={`flex-1 rounded border py-1.5 text-xs font-medium transition-colors ${
                       selectedTask === a.name
-                        ? "border-blue-500 bg-blue-900/40 text-blue-300"
+                        ? "border-cyan-500 bg-cyan-900/40 text-cyan-300"
                         : "border-gray-700 text-gray-500 hover:border-gray-600 hover:text-gray-400"
                     }`}
                   >

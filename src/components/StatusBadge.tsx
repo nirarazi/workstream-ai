@@ -15,7 +15,7 @@ const STATUS_CONFIG: Record<string, { label: string; classes: string }> = {
   },
   in_progress: {
     label: "In Progress",
-    classes: "bg-blue-900/60 text-blue-300 border-blue-700/50",
+    classes: "bg-cyan-900/60 text-cyan-300 border-cyan-700/50",
   },
   noise: {
     label: "Noise",

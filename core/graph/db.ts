@@ -2,6 +2,8 @@
 
 import BetterSqlite3 from "better-sqlite3";
 import type BetterSqlite3Type from "better-sqlite3";
+import fs from "node:fs";
+import path from "node:path";
 import { createLogger } from "../logger.js";
 
 const log = createLogger("graph:db");
@@ -101,7 +103,21 @@ CREATE INDEX IF NOT EXISTS idx_llm_usage_caller ON llm_usage(caller);
 export class Database {
   readonly db: BetterSqlite3Type.Database;
 
-  constructor(dbPath: string = "atc.db") {
+  constructor(dbPath: string = "workstream.db") {
+    // Migrate legacy "atc.db" → "workstream.db" if the new name doesn't exist yet
+    if (!fs.existsSync(dbPath)) {
+      const legacyPath = path.join(path.dirname(dbPath) || ".", "atc.db");
+      if (fs.existsSync(legacyPath)) {
+        fs.renameSync(legacyPath, dbPath);
+        // Also move WAL/SHM files if present
+        for (const suffix of ["-wal", "-shm"]) {
+          if (fs.existsSync(legacyPath + suffix)) {
+            fs.renameSync(legacyPath + suffix, dbPath + suffix);
+          }
+        }
+        log.info(`Migrated database: ${legacyPath} → ${dbPath}`);
+      }
+    }
     this.db = new BetterSqlite3(dbPath);
     this.db.pragma("journal_mode = WAL");
     this.db.pragma("foreign_keys = ON");

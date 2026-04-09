@@ -11,7 +11,7 @@ describe("logger", () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
-    delete process.env.ATC_LOG_LEVEL;
+    delete process.env.WORKSTREAM_LOG_LEVEL;
   });
 
   it("creates a logger with all four methods", () => {
@@ -52,8 +52,8 @@ describe("logger", () => {
     expect(console.warn).toHaveBeenCalledTimes(1);
   });
 
-  it("respects ATC_LOG_LEVEL=error — suppresses info and warn", () => {
-    process.env.ATC_LOG_LEVEL = "error";
+  it("respects WORKSTREAM_LOG_LEVEL=error — suppresses info and warn", () => {
+    process.env.WORKSTREAM_LOG_LEVEL = "error";
     // createLogger reads env at creation time
     const log = createLogger("test");
     log.info("should not appear");
@@ -64,8 +64,8 @@ describe("logger", () => {
     expect(console.error).toHaveBeenCalledTimes(1);
   });
 
-  it("respects ATC_LOG_LEVEL=debug — shows everything", () => {
-    process.env.ATC_LOG_LEVEL = "debug";
+  it("respects WORKSTREAM_LOG_LEVEL=debug — shows everything", () => {
+    process.env.WORKSTREAM_LOG_LEVEL = "debug";
     const log = createLogger("test");
     log.debug("d");
     log.info("i");

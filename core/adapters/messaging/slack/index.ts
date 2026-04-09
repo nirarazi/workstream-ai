@@ -128,7 +128,7 @@ export class SlackAdapter implements MessagingAdapter {
           required: true,
           placeholder: "xoxp-...",
           helpText: "Needs scopes: channels:history, channels:read, chat:write, users:read",
-          envVar: "ATC_SLACK_TOKEN",
+          envVar: "WORKSTREAM_SLACK_TOKEN",
         },
       ],
     };

@@ -8,7 +8,7 @@ export interface SetupField {
   placeholder?: string;  // "xoxp-..."
   helpText?: string;     // "Needs scopes: channels:history, ..."
   helpUrl?: string;      // "https://api.slack.com/apps"
-  envVar?: string;       // "ATC_SLACK_TOKEN" — server reads this for prefill
+  envVar?: string;       // "WORKSTREAM_SLACK_TOKEN" — server reads this for prefill
 }
 
 export interface AdapterSetupInfo {

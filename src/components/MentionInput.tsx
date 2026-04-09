@@ -101,7 +101,7 @@ export default function MentionInput({
         pill.dataset.mentionId = m.id;
         pill.contentEditable = "false";
         pill.className =
-          "inline-flex items-center rounded bg-blue-900/50 px-1 py-0.5 text-blue-300 text-xs font-medium mx-0.5 align-baseline";
+          "inline-flex items-center rounded bg-cyan-900/50 px-1 py-0.5 text-cyan-300 text-xs font-medium mx-0.5 align-baseline";
         pill.textContent = `@${m.name}`;
 
         // Create text node after pill for continued typing

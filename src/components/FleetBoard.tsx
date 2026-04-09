@@ -95,7 +95,7 @@ export default function FleetBoard({ platformMeta }: FleetBoardProps): JSX.Eleme
   if (error) {
     return (
       <div className="flex flex-col items-center justify-center py-20 gap-3">
-        <p className="text-sm text-red-400">Unable to reach the ATC engine.</p>
+        <p className="text-sm text-red-400">Unable to reach the workstream.ai engine.</p>
         <p className="text-xs text-gray-500">{error}</p>
       </div>
     );
@@ -135,7 +135,7 @@ export default function FleetBoard({ platformMeta }: FleetBoardProps): JSX.Eleme
                 className="border-b border-gray-800/50 hover:bg-gray-900/50 cursor-pointer transition-colors"
               >
                 <td className="px-3 py-2.5">
-                  <span className="font-mono text-sm font-semibold text-blue-400">
+                  <span className="font-mono text-sm font-semibold text-cyan-400">
                     {item.workItem.id}
                   </span>
                   {item.workItem.title && (

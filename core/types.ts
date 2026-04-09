@@ -1,4 +1,4 @@
-// core/types.ts — Shared types for the ATC engine
+// core/types.ts — Shared types for the workstream.ai engine
 
 export type StatusCategory =
   | "completed"

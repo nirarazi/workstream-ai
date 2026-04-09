@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 
 export type ThemeMode = "dark" | "light" | "system";
 
-const STORAGE_KEY = "atc-theme";
+const STORAGE_KEY = "workstream-theme";
 
 function getSystemTheme(): "dark" | "light" {
   return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";

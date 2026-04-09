@@ -79,7 +79,7 @@ export default function Sidekick({ onClose }: SidekickProps): JSX.Element {
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-2.5 border-b border-gray-800">
           <div className="flex items-center gap-2">
-            <span className="text-sm font-semibold text-gray-300">Ask ATC</span>
+            <span className="text-sm font-semibold text-gray-300">Ask workstream.ai</span>
             <span className="text-xs text-gray-600">Cmd+K</span>
           </div>
           <button
@@ -153,7 +153,7 @@ export default function Sidekick({ onClose }: SidekickProps): JSX.Element {
             onChange={(e) => setInput(e.target.value)}
             placeholder="Ask about your fleet..."
             disabled={loading}
-            className="w-full rounded border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-200 placeholder-gray-500 focus:border-blue-600 focus:outline-none disabled:opacity-50"
+            className="w-full rounded border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-200 placeholder-gray-500 focus:border-cyan-600 focus:outline-none disabled:opacity-50"
           />
         </form>
       </div>

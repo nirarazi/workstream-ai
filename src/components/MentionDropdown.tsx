@@ -49,7 +49,7 @@ export default function MentionDropdown({
           }}
           className={`flex w-full items-center gap-2 px-3 py-2 text-left text-sm cursor-pointer ${
             i === selectedIndex
-              ? "bg-blue-900/60 text-blue-200"
+              ? "bg-cyan-900/60 text-cyan-200"
               : "text-gray-300 hover:bg-gray-700"
           }`}
         >

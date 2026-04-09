@@ -1,16 +1,17 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "ATC",
+  "productName": "workstream.ai",
   "version": "0.1.0",
-  "identifier": "com.atc.app",
+  "identifier": "ai.workstream.app",
   "build": {
+    "beforeDevCommand": "npm run dev",
     "frontendDist": "../dist",
     "devUrl": "http://localhost:5173"
   },
   "app": {
     "windows": [
       {
-        "title": "ATC",
+        "title": "workstream.ai",
         "width": 1200,
         "height": 800,
         "minWidth": 800,

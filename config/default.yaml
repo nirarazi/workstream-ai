@@ -7,15 +7,15 @@ messaging:
 classifier:
   # Any OpenAI-compatible endpoint
   provider:
-    baseUrl: ${ATC_LLM_BASE_URL:-https://api.anthropic.com/v1}
-    model: ${ATC_LLM_MODEL:-claude-sonnet-4-6}
-    apiKey: ${ATC_LLM_API_KEY:-}
+    baseUrl: ${WORKSTREAM_LLM_BASE_URL:-https://api.anthropic.com/v1}
+    model: ${WORKSTREAM_LLM_MODEL:-claude-sonnet-4-6}
+    apiKey: ${WORKSTREAM_LLM_API_KEY:-}
   # Confidence threshold — below this, classify as "noise"
   confidenceThreshold: 0.6
 
 taskAdapter:
-  # baseUrl loaded from ATC_JIRA_BASE_URL env var
-  # token loaded from ATC_JIRA_TOKEN env var
+  # baseUrl loaded from WORKSTREAM_JIRA_BASE_URL env var
+  # token loaded from WORKSTREAM_JIRA_TOKEN env var
   enabled: false
   ticketPrefixes:
     - "AI-"

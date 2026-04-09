@@ -64,7 +64,7 @@ export default function Inbox({ platformMeta }: InboxProps): JSX.Element {
   if (loading) {
     return (
       <div className="flex items-center justify-center py-20">
-        <p className="text-sm text-gray-500">Loading inbox...</p>
+        <p className="text-sm text-gray-500">Loading stream...</p>
       </div>
     );
   }
@@ -72,7 +72,7 @@ export default function Inbox({ platformMeta }: InboxProps): JSX.Element {
   if (error) {
     return (
       <div className="flex flex-col items-center justify-center py-20 gap-3">
-        <p className="text-sm text-red-400">Unable to reach the ATC engine.</p>
+        <p className="text-sm text-red-400">Unable to reach the workstream.ai engine.</p>
         <p className="text-xs text-gray-500">{error}</p>
       </div>
     );

@@ -13,13 +13,13 @@ describe("Setup types", () => {
       placeholder: "xoxp-...",
       helpText: "Needs scopes: channels:history",
       helpUrl: "https://api.slack.com/apps",
-      envVar: "ATC_SLACK_TOKEN",
+      envVar: "WORKSTREAM_SLACK_TOKEN",
     };
 
     expect(field.key).toBe("token");
     expect(field.type).toBe("password");
     expect(field.required).toBe(true);
-    expect(field.envVar).toBe("ATC_SLACK_TOKEN");
+    expect(field.envVar).toBe("WORKSTREAM_SLACK_TOKEN");
   });
 
   it("AdapterSetupInfo has required shape", () => {
@@ -68,7 +68,7 @@ describe("SlackAdapter.getSetupInfo()", () => {
     expect(tokenField).toBeDefined();
     expect(tokenField!.type).toBe("password");
     expect(tokenField!.required).toBe(true);
-    expect(tokenField!.envVar).toBe("ATC_SLACK_TOKEN");
+    expect(tokenField!.envVar).toBe("WORKSTREAM_SLACK_TOKEN");
   });
 });
 
@@ -98,9 +98,9 @@ describe("JiraAdapter.getSetupInfo()", () => {
     const info = adapter.getSetupInfo();
     const envVars = Object.fromEntries(info.fields.map((f) => [f.key, f.envVar]));
 
-    expect(envVars.email).toBe("ATC_JIRA_EMAIL");
-    expect(envVars.token).toBe("ATC_JIRA_API_TOKEN");
-    expect(envVars.baseUrl).toBe("ATC_JIRA_BASE_URL");
+    expect(envVars.email).toBe("WORKSTREAM_JIRA_EMAIL");
+    expect(envVars.token).toBe("WORKSTREAM_JIRA_API_TOKEN");
+    expect(envVars.baseUrl).toBe("WORKSTREAM_JIRA_BASE_URL");
   });
 });
 

@@ -1,4 +1,4 @@
-// tests/mcp/server.test.ts — Tests for the ATC MCP server tools
+// tests/mcp/server.test.ts — Tests for the workstream.ai MCP server tools
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -28,10 +28,10 @@ describe("MCP Server", () => {
     db.close();
   });
 
-  describe("atc_report_status", () => {
+  describe("workstream_report_status", () => {
     it("creates a work item and event with reported status", async () => {
       const result = await client.callTool({
-        name: "atc_report_status",
+        name: "workstream_report_status",
         arguments: {
           workItemId: "AI-100",
           status: "in_progress",
@@ -61,7 +61,7 @@ describe("MCP Server", () => {
     it("updates an existing work item status", async () => {
       // First report
       await client.callTool({
-        name: "atc_report_status",
+        name: "workstream_report_status",
         arguments: {
           workItemId: "AI-200",
           status: "in_progress",
@@ -71,7 +71,7 @@ describe("MCP Server", () => {
 
       // Second report — status change
       await client.callTool({
-        name: "atc_report_status",
+        name: "workstream_report_status",
         arguments: {
           workItemId: "AI-200",
           status: "blocked_on_human",
@@ -93,7 +93,7 @@ describe("MCP Server", () => {
 
       for (const status of statuses) {
         const result = await client.callTool({
-          name: "atc_report_status",
+          name: "workstream_report_status",
           arguments: {
             workItemId: `ITEM-${status}`,
             status,
@@ -110,10 +110,10 @@ describe("MCP Server", () => {
     });
   });
 
-  describe("atc_request_approval", () => {
+  describe("workstream_request_approval", () => {
     it("creates a needs_decision work item with description and options", async () => {
       const result = await client.callTool({
-        name: "atc_request_approval",
+        name: "workstream_request_approval",
         arguments: {
           workItemId: "AI-300",
           description: "Which database should we use?",
@@ -137,7 +137,7 @@ describe("MCP Server", () => {
 
     it("works without options", async () => {
       const result = await client.callTool({
-        name: "atc_request_approval",
+        name: "workstream_request_approval",
         arguments: {
           workItemId: "AI-301",
           description: "Please approve the deployment",
@@ -154,11 +154,11 @@ describe("MCP Server", () => {
     });
   });
 
-  describe("atc_complete", () => {
+  describe("workstream_complete", () => {
     it("marks a work item as completed with summary", async () => {
       // First create as in_progress
       await client.callTool({
-        name: "atc_report_status",
+        name: "workstream_report_status",
         arguments: {
           workItemId: "AI-400",
           status: "in_progress",
@@ -168,7 +168,7 @@ describe("MCP Server", () => {
 
       // Then complete
       const result = await client.callTool({
-        name: "atc_complete",
+        name: "workstream_complete",
         arguments: {
           workItemId: "AI-400",
           summary: "Authentication module deployed successfully",
@@ -190,7 +190,7 @@ describe("MCP Server", () => {
 
     it("can complete a work item that does not yet exist", async () => {
       const result = await client.callTool({
-        name: "atc_complete",
+        name: "workstream_complete",
         arguments: {
           workItemId: "AI-500",
           summary: "Quick fix applied",
@@ -210,9 +210,9 @@ describe("MCP Server", () => {
     it("lists all three tools", async () => {
       const tools = await client.listTools();
       const names = tools.tools.map((t) => t.name);
-      expect(names).toContain("atc_report_status");
-      expect(names).toContain("atc_request_approval");
-      expect(names).toContain("atc_complete");
+      expect(names).toContain("workstream_report_status");
+      expect(names).toContain("workstream_request_approval");
+      expect(names).toContain("workstream_complete");
     });
   });
 });
