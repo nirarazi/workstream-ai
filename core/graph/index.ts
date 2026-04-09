@@ -646,6 +646,8 @@ export class ContextGraph {
         )
       LEFT JOIN agents a ON e.agent_id = a.id
       LEFT JOIN threads t ON e.thread_id = t.id
+      WHERE wi.current_atc_status IS NULL
+         OR wi.current_atc_status NOT IN ('completed', 'noise')
       ORDER BY wi.updated_at DESC
       LIMIT ?
     `,
