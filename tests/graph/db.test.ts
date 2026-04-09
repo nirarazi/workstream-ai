@@ -424,12 +424,14 @@ describe("Database", () => {
   });
 
   describe("getRecentItems", () => {
-    it("returns most recently updated items", () => {
+    it("returns most recently updated items, excluding completed and noise", () => {
       graph.upsertWorkItem({ id: "OPS-1", source: "jira", currentAtcStatus: "completed" });
       graph.upsertWorkItem({ id: "OPS-2", source: "jira", currentAtcStatus: "in_progress" });
+      graph.upsertWorkItem({ id: "OPS-3", source: "jira", currentAtcStatus: "blocked_on_human" });
 
       graph.upsertThread({ id: "t1", channelId: "C1", platform: "slack", workItemId: "OPS-1" });
       graph.upsertThread({ id: "t2", channelId: "C1", platform: "slack", workItemId: "OPS-2" });
+      graph.upsertThread({ id: "t3", channelId: "C1", platform: "slack", workItemId: "OPS-3" });
 
       graph.insertEvent({
         threadId: "t1",
@@ -447,9 +449,22 @@ describe("Database", () => {
         confidence: 0.8,
         timestamp: "2026-03-31T11:00:00Z",
       });
+      graph.insertEvent({
+        threadId: "t3",
+        messageId: "m3",
+        workItemId: "OPS-3",
+        status: "blocked_on_human",
+        confidence: 0.9,
+        timestamp: "2026-03-31T12:00:00Z",
+      });
 
       const items = graph.getRecentItems(10);
+      // completed items are excluded from the Stream
       expect(items).toHaveLength(2);
+      const ids = items.map((i) => i.workItem.id);
+      expect(ids).not.toContain("OPS-1");
+      expect(ids).toContain("OPS-2");
+      expect(ids).toContain("OPS-3");
     });
 
     it("respects the limit", () => {
