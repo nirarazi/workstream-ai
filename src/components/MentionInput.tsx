@@ -1,6 +1,13 @@
-import { useState, useRef, useCallback, useEffect, type JSX } from "react";
+import { useState, useRef, useCallback, useEffect, useImperativeHandle, forwardRef, type JSX } from "react";
 import type { Mentionable } from "../lib/api";
 import MentionDropdown, { filterMentionables } from "./MentionDropdown";
+
+export interface MentionInputHandle {
+  /** Serialize the current editor content (mentions → platform tokens) */
+  serialize: () => string;
+  /** Clear the editor */
+  clear: () => void;
+}
 
 interface MentionInputProps {
   placeholder?: string;
@@ -23,14 +30,14 @@ const ZWS = "\u200B";
  * with `data-mention-id`. On submit, the content is serialized: text nodes become
  * plain text, mention spans become platform-specific mention tokens.
  */
-export default function MentionInput({
+const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(function MentionInput({
   placeholder,
   disabled,
   mentionables,
   serializeMention,
   onSubmit,
   prefill,
-}: MentionInputProps): JSX.Element {
+}, ref): JSX.Element {
   const editorRef = useRef<HTMLDivElement>(null);
   const [showDropdown, setShowDropdown] = useState(false);
   const [mentionQuery, setMentionQuery] = useState("");
@@ -71,6 +78,17 @@ export default function MentionInput({
     // Strip zero-width spaces from serialized output
     return result.replace(/\u200B/g, "").trim();
   }, [serializeMention]);
+
+  // Expose serialize/clear to parent via ref
+  useImperativeHandle(ref, () => ({
+    serialize,
+    clear() {
+      if (editorRef.current) {
+        editorRef.current.innerHTML = "";
+        updateEmpty();
+      }
+    },
+  }), [serialize]);
 
   // --- Mention insertion ---
 
@@ -297,4 +315,6 @@ export default function MentionInput({
       />
     </div>
   );
-}
+});
+
+export default MentionInput;

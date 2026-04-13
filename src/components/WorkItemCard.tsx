@@ -4,7 +4,7 @@ import { postAction, postReply, openExternalUrl, createTicket } from "../lib/api
 import { timeAgo } from "../lib/time";
 import StatusBadge from "./StatusBadge";
 import Tooltip from "./Tooltip";
-import MentionInput from "./MentionInput";
+import MentionInput, { type MentionInputHandle } from "./MentionInput";
 import MessageRenderer from "../messaging/MessageRenderer";
 import ChannelLabel from "../messaging/ChannelLabel";
 import { getSerializeMention } from "../messaging/registry";
@@ -81,9 +81,7 @@ export default function WorkItemCard({ item, platformMeta, userMap, mentionables
   const [done, setDone] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [creatingTicket, setCreatingTicket] = useState(false);
-  // Pending reply text set by MentionInput's onSubmit (Enter key = reply-only)
-  // Action buttons read and clear this via a ref to avoid stale closures
-  const pendingReply = useRef("");
+  const inputRef = useRef<MentionInputHandle>(null);
 
   // Pick the right mention serializer based on platform
   const serializeMention = getSerializeMention(thread?.platform ?? "");
@@ -92,9 +90,9 @@ export default function WorkItemCard({ item, platformMeta, userMap, mentionables
     setActing(action);
     setError(null);
     try {
-      const message = pendingReply.current || undefined;
+      const message = inputRef.current?.serialize() || undefined;
       await postAction(workItem.id, toServerAction(action), message, action === "snooze" ? 3600 : undefined);
-      pendingReply.current = "";
+      inputRef.current?.clear();
       setDone(true);
       onActioned?.();
     } catch (err) {
@@ -110,7 +108,7 @@ export default function WorkItemCard({ item, platformMeta, userMap, mentionables
     setError(null);
     try {
       await postReply(thread.id, thread.channelId, serializedText);
-      pendingReply.current = "";
+      inputRef.current?.clear();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Reply failed");
     } finally {
@@ -219,6 +217,7 @@ export default function WorkItemCard({ item, platformMeta, userMap, mentionables
       <div className="mt-3 space-y-2" onClick={(e) => e.stopPropagation()}>
         {thread && (
           <MentionInput
+            ref={inputRef}
             placeholder="Reply (type @ to mention). Enter sends, or click an action below."
             disabled={busy}
             mentionables={mentionables}
