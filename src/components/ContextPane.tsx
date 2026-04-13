@@ -18,7 +18,7 @@ import {
 import Tooltip from "./Tooltip";
 import { timeAgo } from "../lib/time";
 import StatusBadge from "./StatusBadge";
-import MentionInput from "./MentionInput";
+import MentionInput, { type MentionInputHandle } from "./MentionInput";
 import MessageRenderer from "../messaging/MessageRenderer";
 import { getSerializeMention } from "../messaging/registry";
 
@@ -63,6 +63,7 @@ export default function ContextPane({
   const [sendingNewThread, setSendingNewThread] = useState(false);
   const [creatingTicket, setCreatingTicket] = useState(false);
   const paneRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<MentionInputHandle>(null);
 
   // Fetch context on mount
   useEffect(() => {
@@ -153,7 +154,9 @@ export default function ContextPane({
     setActing(true);
     setError(null);
     try {
-      await postAction(workItemId, serverAction, undefined, action === "snooze" ? 3600 : undefined);
+      const message = inputRef.current?.serialize() || undefined;
+      await postAction(workItemId, serverAction, message, action === "snooze" ? 3600 : undefined);
+      inputRef.current?.clear();
       onActioned?.();
       onClose();
     } catch (err) {
@@ -735,6 +738,7 @@ export default function ContextPane({
           {thread && (
             <section className="space-y-2">
               <MentionInput
+                ref={inputRef}
                 placeholder="Reply to thread..."
                 disabled={acting}
                 mentionables={mentionables}
