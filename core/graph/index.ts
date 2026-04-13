@@ -383,9 +383,20 @@ export class ContextGraph {
   }
 
   getEventsForWorkItem(workItemId: string): Event[] {
+    // Include events directly tagged with this work item ID, plus events
+    // from threads linked to this work item (which may have been classified
+    // under a different work item ID due to LLM/regex ID mismatches).
     const rows = this.db.db
-      .prepare("SELECT * FROM events WHERE work_item_id = ? ORDER BY timestamp ASC")
-      .all(workItemId) as EventRow[];
+      .prepare(`
+        SELECT DISTINCT e.* FROM events e
+        WHERE e.work_item_id = ?
+        UNION
+        SELECT DISTINCT e.* FROM events e
+        INNER JOIN threads t ON e.thread_id = t.id
+        WHERE t.work_item_id = ?
+        ORDER BY timestamp ASC
+      `)
+      .all(workItemId, workItemId) as EventRow[];
     return rows.map(toEvent);
   }
 
@@ -549,10 +560,11 @@ export class ContextGraph {
         t.platform AS t_platform, t.work_item_id AS t_work_item_id,
         t.last_activity AS t_last_activity, t.message_count AS t_message_count
       FROM work_items wi
-      LEFT JOIN events e ON e.work_item_id = wi.id
-        AND e.id = (
+      LEFT JOIN events e ON e.id = (
           SELECT e2.id FROM events e2
+          LEFT JOIN threads t2 ON e2.thread_id = t2.id
           WHERE e2.work_item_id = wi.id
+             OR t2.work_item_id = wi.id
           ORDER BY e2.timestamp DESC
           LIMIT 1
         )
@@ -637,10 +649,11 @@ export class ContextGraph {
         t.platform AS t_platform, t.work_item_id AS t_work_item_id,
         t.last_activity AS t_last_activity, t.message_count AS t_message_count
       FROM work_items wi
-      LEFT JOIN events e ON e.work_item_id = wi.id
-        AND e.id = (
+      LEFT JOIN events e ON e.id = (
           SELECT e2.id FROM events e2
+          LEFT JOIN threads t2 ON e2.thread_id = t2.id
           WHERE e2.work_item_id = wi.id
+             OR t2.work_item_id = wi.id
           ORDER BY e2.timestamp DESC
           LIMIT 1
         )
