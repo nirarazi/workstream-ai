@@ -44,10 +44,12 @@ function makeThread(overrides: Partial<Thread> = {}, messages?: Message[]): Thre
 function makeClassification(overrides: Partial<Classification> = {}): Classification {
   return {
     status: "completed",
+    entryType: "progress",
     confidence: 0.95,
     reason: "Agent reports task completion",
     workItemIds: [],
     title: "",
+    targetedAtOperator: true,
     ...overrides,
   };
 }

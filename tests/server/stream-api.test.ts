@@ -31,6 +31,7 @@ describe("Stream", () => {
         reason: "Needs approval", rawText: "Please approve",
         timestamp: new Date(Date.now() - 130 * 60000).toISOString(),
         createdAt: new Date().toISOString(), entryType: "block",
+        targetedAtOperator: true,
       };
       const result = buildUnifiedStatus(workItem, blockEvent);
       expect(result).toMatch(/Waiting on you · 2h \d+m/);
@@ -50,9 +51,9 @@ describe("Stream", () => {
   describe("buildTimeline", () => {
     it("filters noise and sorts newest first", () => {
       const events: Event[] = [
-        { id: "e1", threadId: "t1", messageId: "m1", workItemId: "OPS-100", agentId: "a1", status: "in_progress", confidence: 0.9, reason: "Started work", rawText: "Starting", timestamp: "2026-04-15T10:00:00Z", createdAt: "2026-04-15T10:00:00Z", entryType: "progress" },
-        { id: "e2", threadId: "t1", messageId: "m2", workItemId: "OPS-100", agentId: "a1", status: "noise", confidence: 0.8, reason: "Status update", rawText: "Still working", timestamp: "2026-04-15T11:00:00Z", createdAt: "2026-04-15T11:00:00Z", entryType: "noise" },
-        { id: "e3", threadId: "t2", messageId: "m3", workItemId: "OPS-100", agentId: null, status: "completed", confidence: 1.0, reason: "Operator approved", rawText: "Looks good", timestamp: "2026-04-15T12:00:00Z", createdAt: "2026-04-15T12:00:00Z", entryType: "decision" },
+        { id: "e1", threadId: "t1", messageId: "m1", workItemId: "OPS-100", agentId: "a1", status: "in_progress", confidence: 0.9, reason: "Started work", rawText: "Starting", timestamp: "2026-04-15T10:00:00Z", createdAt: "2026-04-15T10:00:00Z", entryType: "progress", targetedAtOperator: true },
+        { id: "e2", threadId: "t1", messageId: "m2", workItemId: "OPS-100", agentId: "a1", status: "noise", confidence: 0.8, reason: "Status update", rawText: "Still working", timestamp: "2026-04-15T11:00:00Z", createdAt: "2026-04-15T11:00:00Z", entryType: "noise", targetedAtOperator: true },
+        { id: "e3", threadId: "t2", messageId: "m3", workItemId: "OPS-100", agentId: null, status: "completed", confidence: 1.0, reason: "Operator approved", rawText: "Looks good", timestamp: "2026-04-15T12:00:00Z", createdAt: "2026-04-15T12:00:00Z", entryType: "decision", targetedAtOperator: true },
       ];
       const agentMap = new Map([["a1", "Relay"]]);
       const threadChannelMap = new Map([["t1", "#fleet-ops"], ["t2", "#strategy"]]);
@@ -63,6 +64,48 @@ describe("Stream", () => {
       expect(timeline[0].channelName).toBe("#strategy");
       expect(timeline[1].entryType).toBe("progress");
       expect(timeline[1].agentName).toBe("Relay");
+    });
+  });
+
+  describe("targetedAtOperator filtering", () => {
+    it("filters inbox items by targetedAtOperator", () => {
+      // Set up agents
+      graph.upsertAgent({ id: "a1", name: "Relay", platform: "slack", platformUserId: "U1" });
+
+      // Work item blocked on operator (targeted_at_operator = true)
+      graph.upsertWorkItem({
+        id: "OPS-1", source: "jira", title: "Needs operator approval",
+        currentAtcStatus: "blocked_on_human", currentConfidence: 0.9,
+      });
+      graph.upsertThread({ id: "t1", channelId: "C1", platform: "slack", workItemId: "OPS-1" });
+      graph.insertEvent({
+        threadId: "t1", messageId: "m1", workItemId: "OPS-1", agentId: "a1",
+        status: "blocked_on_human", confidence: 0.9, reason: "Needs operator approval",
+        timestamp: "2026-04-15T10:00:00Z", targetedAtOperator: true,
+      });
+
+      // Work item blocked on someone else (targeted_at_operator = false)
+      graph.upsertWorkItem({
+        id: "OPS-2", source: "jira", title: "Blocked on Dana",
+        currentAtcStatus: "blocked_on_human", currentConfidence: 0.85,
+      });
+      graph.upsertThread({ id: "t2", channelId: "C1", platform: "slack", workItemId: "OPS-2" });
+      graph.insertEvent({
+        threadId: "t2", messageId: "m2", workItemId: "OPS-2", agentId: "a1",
+        status: "blocked_on_human", confidence: 0.85, reason: "Blocked on Dana's review",
+        timestamp: "2026-04-15T11:00:00Z", targetedAtOperator: false,
+      });
+
+      // getActionableItems should only return the operator-targeted item
+      const actionable = graph.getActionableItems();
+      expect(actionable).toHaveLength(1);
+      expect(actionable[0].workItem.id).toBe("OPS-1");
+
+      // getFleetItems should return both (no targetedAtOperator filter)
+      const fleet = graph.getFleetItems();
+      const ids = fleet.map((i) => i.workItem.id);
+      expect(ids).toContain("OPS-1");
+      expect(ids).toContain("OPS-2");
     });
   });
 

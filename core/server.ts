@@ -6,7 +6,7 @@ import { createLogger } from "./logger.js";
 import { loadConfig, findProjectRoot, resetConfig, type Config } from "./config.js";
 import { Database } from "./graph/db.js";
 import { ContextGraph } from "./graph/index.js";
-import { Classifier, createProvider, loadPrompt, buildFewShotMessages } from "./classifier/index.js";
+import { Classifier, createProvider, loadPrompt, buildFewShotMessages, buildOperatorContext } from "./classifier/index.js";
 import { UsageTracker } from "./usage/tracker.js";
 import { DefaultExtractor } from "./graph/extractors/default.js";
 import { WorkItemLinker } from "./graph/linker.js";
@@ -205,6 +205,8 @@ export function createApp(state: EngineState): Hono {
         )
       : null;
 
+    const latestEventForTarget = events.length > 0 ? events[events.length - 1] : null;
+
     return c.json({
       workItem,
       unifiedStatus,
@@ -216,6 +218,7 @@ export function createApp(state: EngineState): Hono {
       timeline,
       latestThreadId: latestThread?.id ?? null,
       latestChannelId: latestThread?.channelId ?? null,
+      targetedAtOperator: latestEventForTarget?.targetedAtOperator ?? true,
     });
   });
 
@@ -937,7 +940,7 @@ export function createApp(state: EngineState): Hono {
       state.usageTracker = newUsageTracker;
       const newPrompt = loadPrompt(findProjectRoot());
       const newFewShot = buildFewShotMessages(newPrompt.few_shot_examples);
-      state.classifier = new Classifier(newUsageTracker, newPrompt.system, newFewShot);
+      state.classifier = new Classifier(newUsageTracker, newPrompt.system, newFewShot, undefined, buildOperatorContext(state.config));
       if (newLimiters.llm) state.classifier.setRateLimiter(newLimiters.llm);
 
       // Restart pipeline if we have a messaging adapter
@@ -1124,7 +1127,7 @@ async function main(): Promise<void> {
 
   const prompt = loadPrompt(projectRoot);
   const fewShot = buildFewShotMessages(prompt.few_shot_examples);
-  const classifier = new Classifier(usageTracker, prompt.system, fewShot);
+  const classifier = new Classifier(usageTracker, prompt.system, fewShot, undefined, buildOperatorContext(config));
   classifier.setRateLimiter(rateLimiters.llm);
   const extractor = new DefaultExtractor({
     ticketPatterns: config.extractors.ticketPatterns,

@@ -73,6 +73,7 @@ function toEvent(row: EventRow): Event {
     timestamp: row.timestamp,
     createdAt: row.created_at,
     entryType: (row.entry_type as EntryType) ?? "progress",
+    targetedAtOperator: Boolean(row.targeted_at_operator ?? 1),
   };
 }
 
@@ -323,13 +324,14 @@ export class ContextGraph {
     reason?: string;
     rawText?: string;
     timestamp: string;
+    targetedAtOperator?: boolean;
   }): Event {
     const id = randomUUID();
     const now = new Date().toISOString();
 
     const stmt = this.db.db.prepare(`
-      INSERT OR IGNORE INTO events (id, thread_id, message_id, work_item_id, agent_id, status, confidence, reason, raw_text, timestamp, created_at, entry_type)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT OR IGNORE INTO events (id, thread_id, message_id, work_item_id, agent_id, status, confidence, reason, raw_text, timestamp, created_at, entry_type, targeted_at_operator)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     const result = stmt.run(
       id,
@@ -344,6 +346,7 @@ export class ContextGraph {
       event.timestamp,
       now,
       event.entryType ?? "progress",
+      (event.targetedAtOperator ?? true) ? 1 : 0,
     );
 
     if (result.changes === 0) {
@@ -579,6 +582,7 @@ export class ContextGraph {
         e.status AS e_status, e.confidence AS e_confidence, e.reason AS e_reason,
         e.raw_text AS e_raw_text, e.timestamp AS e_timestamp, e.created_at AS e_created_at,
         e.entry_type AS e_entry_type,
+        e.targeted_at_operator AS e_targeted_at_operator,
         a.id AS a_id, a.name AS a_name, a.platform AS a_platform,
         a.platform_user_id AS a_platform_user_id, a.role AS a_role,
         a.avatar_url AS a_avatar_url,
@@ -626,6 +630,7 @@ export class ContextGraph {
         e.status AS e_status, e.confidence AS e_confidence, e.reason AS e_reason,
         e.raw_text AS e_raw_text, e.timestamp AS e_timestamp, e.created_at AS e_created_at,
         e.entry_type AS e_entry_type,
+        e.targeted_at_operator AS e_targeted_at_operator,
         a.id AS a_id, a.name AS a_name, a.platform AS a_platform,
         a.platform_user_id AS a_platform_user_id, a.role AS a_role,
         a.avatar_url AS a_avatar_url,
@@ -646,6 +651,7 @@ export class ContextGraph {
       LEFT JOIN threads t ON e.thread_id = t.id
       WHERE wi.current_atc_status IN ('blocked_on_human', 'needs_decision')
         AND (wi.snoozed_until IS NULL OR wi.snoozed_until <= datetime('now'))
+        AND e.targeted_at_operator = 1
       ORDER BY
         CASE wi.current_atc_status
           WHEN 'blocked_on_human' THEN 0
@@ -670,6 +676,7 @@ export class ContextGraph {
         e.status AS e_status, e.confidence AS e_confidence, e.reason AS e_reason,
         e.raw_text AS e_raw_text, e.timestamp AS e_timestamp, e.created_at AS e_created_at,
         e.entry_type AS e_entry_type,
+        e.targeted_at_operator AS e_targeted_at_operator,
         a.id AS a_id, a.name AS a_name, a.platform AS a_platform,
         a.platform_user_id AS a_platform_user_id, a.role AS a_role,
         a.avatar_url AS a_avatar_url,
@@ -729,6 +736,7 @@ function mapActionableRow(row: Record<string, unknown>): ActionableItem {
     timestamp: row.e_timestamp as string,
     createdAt: row.e_created_at as string,
     entryType: (row.e_entry_type as EntryType) ?? "progress",
+    targetedAtOperator: Boolean(row.e_targeted_at_operator ?? 1),
   };
 
   const agent: Agent | null = row.a_id
