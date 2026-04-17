@@ -345,6 +345,36 @@ export function fetchWorkItemContext(id: string): Promise<WorkItemContext> {
   return apiFetch(`/api/work-item/${encodeURIComponent(id)}/context`);
 }
 
+export type EntryType = "block" | "decision" | "progress" | "assignment" | "escalation" | "noise";
+
+export interface TimelineEntry {
+  id: string;
+  entryType: EntryType;
+  status: string;
+  timestamp: string;
+  agentName: string | null;
+  channelName: string;
+  summary: string;
+  rawText: string;
+  isOperator: boolean;
+}
+
+export interface StreamData {
+  workItem: WorkItem;
+  unifiedStatus: string;
+  statusSummary: string | null;
+  agents: Array<{ id: string; name: string; avatarUrl: string | null }>;
+  channels: Array<{ id: string; name: string }>;
+  threadCount: number;
+  enrichment: Enrichment | null;
+  timeline: TimelineEntry[];
+  quickReplies: string[];
+}
+
+export async function fetchStream(workItemId: string): Promise<StreamData> {
+  return apiFetch(`/api/work-item/${encodeURIComponent(workItemId)}/stream`);
+}
+
 export function generateSummary(id: string): Promise<{ summary: string }> {
   return apiFetch(`/api/work-item/${encodeURIComponent(id)}/summarize`, {
     method: "POST",
