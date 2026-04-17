@@ -1,4 +1,5 @@
 import type { StreamData } from "../../lib/api";
+import StatusBadge from "../StatusBadge";
 
 interface StatusSnapshotProps {
   data: StreamData;
@@ -16,13 +17,9 @@ export default function StatusSnapshot({ data }: StatusSnapshotProps) {
       <h2 className="text-lg font-semibold text-white mb-3">
         {workItem.title || (workItem.id.startsWith("thread:") ? "Untitled conversation" : workItem.id)}
       </h2>
-      <div className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium mb-3 ${
-        isBlocked
-          ? "bg-red-500/15 text-red-400 border border-red-500/30"
-          : "bg-gray-700/50 text-gray-300 border border-gray-700"
-      }`}>
+      <div className="inline-flex items-center gap-1.5 mb-3">
         {isBlocked && <span className="w-1.5 h-1.5 rounded-full bg-red-400 animate-pulse" />}
-        {unifiedStatus}
+        <StatusBadge status={workItem.currentAtcStatus ?? "noise"} />
       </div>
       {statusSummary && (
         <p className="text-sm text-gray-300 leading-relaxed mb-3">{statusSummary}</p>
