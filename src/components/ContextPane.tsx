@@ -142,7 +142,7 @@ export default function ContextPane({
     setActing(true);
     try {
       const thread = context.threads[0];
-      await postReply(thread.id, thread.channelId, serializedText);
+      await postReply(thread.id, thread.channelId, serializedText, { workItemId });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Reply failed");
     } finally {
