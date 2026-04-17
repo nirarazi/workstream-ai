@@ -751,7 +751,7 @@ export function createApp(state: EngineState): Hono {
 
     try {
       const projectRoot = findProjectRoot();
-      const { writeFileSync, mkdirSync } = await import("node:fs");
+      const { writeFileSync, readFileSync, existsSync, mkdirSync } = await import("node:fs");
       const { resolve } = await import("node:path");
       const { stringify: toYaml } = await import("yaml");
 
@@ -854,10 +854,17 @@ export function createApp(state: EngineState): Hono {
       writeFileSync(resolve(configDir, "local.yaml"), toYaml(localConfig), "utf-8");
       log.info("Wrote config/local.yaml");
 
-      // Write .env
+      // Write .env only if content changed (avoids Vite restart)
       if (envLines.length > 0) {
-        writeFileSync(resolve(projectRoot, ".env"), envLines.join("\n") + "\n", "utf-8");
-        log.info("Wrote .env");
+        const envPath = resolve(projectRoot, ".env");
+        const newContent = envLines.join("\n") + "\n";
+        const existing = existsSync(envPath) ? readFileSync(envPath, "utf-8") : "";
+        if (newContent !== existing) {
+          writeFileSync(envPath, newContent, "utf-8");
+          log.info("Wrote .env (changed)");
+        } else {
+          log.info(".env unchanged, skipping write");
+        }
 
         // Set env vars in current process
         for (const line of envLines) {
