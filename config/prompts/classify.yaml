@@ -42,6 +42,7 @@ system: |
   3. If the agent says "done" but mentions a follow-up task, classify as "completed" (the follow-up is a new work item).
   4. Error messages from agents that include a request for help are "blocked_on_human", not "noise".
   5. **Blocked on infrastructure ≠ blocked on human.** If the agent is blocked by a system outage, timeout, or external service failure but says it will retry or recover on its own, classify as "in_progress" (with entry_type "escalation"). Only use "blocked_on_human" when the agent explicitly needs the operator to take an action. "Will retry", "waiting for recovery", "next heartbeat" are signs of self-healing — NOT blocked on human.
+  6. **Status reports about other agents or people are not blocks.** If an agent is reporting another agent's state ("Chess is blocked on Guy's review") or giving a status update about someone else's work, this is informational — classify as "in_progress" or "noise" unless the agent is explicitly asking the operator to intervene. Key signals: "All good", "just an update", "FYI", reporting what others are doing. The word "blocked" in a status report about someone else does NOT make it blocked_on_human.
 
   Respond ONLY with the JSON object, no markdown formatting.
 
@@ -99,6 +100,16 @@ few_shot_examples:
       reason: "Agent raising an infrastructure concern that needs human action"
       workItemIds: []
       title: "Staging database disk space low"
+
+  - role: user
+    content: "Chess's thread session is running — just posted a status update. Full status: Phases 1-5 complete, stat sweep done, blocked on Guy's test email review. Guy said goodnight and it's morning in Israel now — Chess expects him to be waking up soon. All good."
+    expected:
+      status: in_progress
+      entry_type: progress
+      confidence: 0.85
+      reason: "Agent reporting another agent's status — blocked on a third party, not requesting operator action. 'All good' confirms no intervention needed."
+      workItemIds: []
+      title: "Chess status update — awaiting Guy's review"
 
   - role: user
     content: "Gateway is down (ws://127.0.0.1:18789 timing out). Cannot check Chess or agent sessions this cycle. No action possible until gateway recovers. Will retry at next heartbeat cycle."
