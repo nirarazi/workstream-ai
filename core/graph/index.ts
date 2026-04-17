@@ -6,6 +6,7 @@ import type {
   ActionableItem,
   Agent,
   Enrichment,
+  EntryType,
   Event,
   PollCursor,
   StatusCategory,
@@ -71,6 +72,7 @@ function toEvent(row: EventRow): Event {
     rawText: row.raw_text,
     timestamp: row.timestamp,
     createdAt: row.created_at,
+    entryType: (row.entry_type as EntryType) ?? "progress",
   };
 }
 
@@ -316,6 +318,7 @@ export class ContextGraph {
     workItemId?: string | null;
     agentId?: string | null;
     status: StatusCategory;
+    entryType?: EntryType;
     confidence: number;
     reason?: string;
     rawText?: string;
@@ -325,8 +328,8 @@ export class ContextGraph {
     const now = new Date().toISOString();
 
     const stmt = this.db.db.prepare(`
-      INSERT OR IGNORE INTO events (id, thread_id, message_id, work_item_id, agent_id, status, confidence, reason, raw_text, timestamp, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT OR IGNORE INTO events (id, thread_id, message_id, work_item_id, agent_id, status, confidence, reason, raw_text, timestamp, created_at, entry_type)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     const result = stmt.run(
       id,
@@ -340,6 +343,7 @@ export class ContextGraph {
       event.rawText ?? "",
       event.timestamp,
       now,
+      event.entryType ?? "progress",
     );
 
     if (result.changes === 0) {
@@ -388,13 +392,10 @@ export class ContextGraph {
     // under a different work item ID due to LLM/regex ID mismatches).
     const rows = this.db.db
       .prepare(`
-        SELECT DISTINCT e.* FROM events e
+        SELECT e.* FROM events e
         WHERE e.work_item_id = ?
-        UNION
-        SELECT DISTINCT e.* FROM events e
-        INNER JOIN threads t ON e.thread_id = t.id
-        WHERE t.work_item_id = ?
-        ORDER BY timestamp ASC
+           OR e.thread_id IN (SELECT id FROM threads WHERE work_item_id = ?)
+        ORDER BY e.timestamp ASC, e.rowid ASC
       `)
       .all(workItemId, workItemId) as EventRow[];
     return rows.map(toEvent);
@@ -551,6 +552,7 @@ export class ContextGraph {
         e.work_item_id AS e_work_item_id, e.agent_id AS e_agent_id,
         e.status AS e_status, e.confidence AS e_confidence, e.reason AS e_reason,
         e.raw_text AS e_raw_text, e.timestamp AS e_timestamp, e.created_at AS e_created_at,
+        e.entry_type AS e_entry_type,
         a.id AS a_id, a.name AS a_name, a.platform AS a_platform,
         a.platform_user_id AS a_platform_user_id, a.role AS a_role,
         a.avatar_url AS a_avatar_url,
@@ -597,6 +599,7 @@ export class ContextGraph {
         e.work_item_id AS e_work_item_id, e.agent_id AS e_agent_id,
         e.status AS e_status, e.confidence AS e_confidence, e.reason AS e_reason,
         e.raw_text AS e_raw_text, e.timestamp AS e_timestamp, e.created_at AS e_created_at,
+        e.entry_type AS e_entry_type,
         a.id AS a_id, a.name AS a_name, a.platform AS a_platform,
         a.platform_user_id AS a_platform_user_id, a.role AS a_role,
         a.avatar_url AS a_avatar_url,
@@ -640,6 +643,7 @@ export class ContextGraph {
         e.work_item_id AS e_work_item_id, e.agent_id AS e_agent_id,
         e.status AS e_status, e.confidence AS e_confidence, e.reason AS e_reason,
         e.raw_text AS e_raw_text, e.timestamp AS e_timestamp, e.created_at AS e_created_at,
+        e.entry_type AS e_entry_type,
         a.id AS a_id, a.name AS a_name, a.platform AS a_platform,
         a.platform_user_id AS a_platform_user_id, a.role AS a_role,
         a.avatar_url AS a_avatar_url,
@@ -698,6 +702,7 @@ function mapActionableRow(row: Record<string, unknown>): ActionableItem {
     rawText: row.e_raw_text as string,
     timestamp: row.e_timestamp as string,
     createdAt: row.e_created_at as string,
+    entryType: (row.e_entry_type as EntryType) ?? "progress",
   };
 
   const agent: Agent | null = row.a_id

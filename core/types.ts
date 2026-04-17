@@ -7,9 +7,18 @@ export type StatusCategory =
   | "needs_decision"
   | "noise";
 
+export type EntryType =
+  | "block"
+  | "decision"
+  | "progress"
+  | "assignment"
+  | "escalation"
+  | "noise";
+
 export interface ClassificationBreakdown {
   workItemId: string;
   status: StatusCategory;
+  entryType: EntryType;
   confidence: number;
   reason: string;
   title: string;
@@ -17,6 +26,7 @@ export interface ClassificationBreakdown {
 
 export interface Classification {
   status: StatusCategory;
+  entryType: EntryType;
   confidence: number;
   reason: string;
   workItemIds: string[];
@@ -88,6 +98,7 @@ export interface Event {
   rawText: string;
   timestamp: string;
   createdAt: string;
+  entryType: EntryType;
 }
 
 export interface Enrichment {

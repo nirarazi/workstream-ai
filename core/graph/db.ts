@@ -217,6 +217,20 @@ export class Database {
       this.db.exec("ALTER TABLE threads ADD COLUMN manually_linked INTEGER DEFAULT 0");
       log.info("Migration: added manually_linked column to threads");
     }
+
+    // Add entry_type column to events table
+    const eventCols = this.db.pragma("table_info(events)") as Array<{ name: string }>;
+    if (!eventCols.some((c) => c.name === "entry_type")) {
+      this.db.exec("ALTER TABLE events ADD COLUMN entry_type TEXT NOT NULL DEFAULT 'progress'");
+      this.db.exec(`
+        UPDATE events SET entry_type = CASE
+          WHEN status IN ('blocked_on_human', 'needs_decision') THEN 'block'
+          WHEN status = 'noise' THEN 'noise'
+          ELSE 'progress'
+        END
+      `);
+      log.info("Migration: added entry_type column to events and backfilled");
+    }
   }
 
   prepare<T>(sql: string): BetterSqlite3Type.Statement<T[]> {
