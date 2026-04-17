@@ -62,6 +62,9 @@ export default function Inbox({ platformMeta }: InboxProps): JSX.Element {
     };
   }, [poll]);
 
+  const platform = actionable[0]?.thread?.platform ?? recent[0]?.thread?.platform ?? "slack";
+  const serializeMention = useMemo(() => getSerializeMention(platform), [platform]);
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-20">
@@ -78,9 +81,6 @@ export default function Inbox({ platformMeta }: InboxProps): JSX.Element {
       </div>
     );
   }
-
-  const platform = actionable[0]?.thread?.platform ?? recent[0]?.thread?.platform ?? "slack";
-  const serializeMention = useMemo(() => getSerializeMention(platform), [platform]);
 
   const hasActionable = actionable.length > 0;
   const hasRecent = recent.length > 0;
