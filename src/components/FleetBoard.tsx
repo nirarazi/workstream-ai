@@ -1,9 +1,10 @@
-import { useState, useEffect, useRef, useCallback, type JSX } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo, type JSX } from "react";
 import { fetchFleet, fetchAgents, agentsToMentionables, type FleetItem, type Agent, type Mentionable } from "../lib/api";
 import { timeAgo } from "../lib/time";
 import StatusBadge from "./StatusBadge";
 import FleetFilters from "./FleetFilters";
-import ContextPane from "./ContextPane";
+import WorkItemStream from "./WorkItemStream";
+import { getSerializeMention } from "../messaging/registry";
 
 const POLL_INTERVAL = 10000;
 
@@ -61,6 +62,9 @@ export default function FleetBoard({ platformMeta }: FleetBoardProps): JSX.Eleme
     intervalRef.current = setInterval(poll, POLL_INTERVAL);
     return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
   }, [poll]);
+
+  const platform = items[0]?.thread?.platform ?? "slack";
+  const serializeMention = useMemo(() => getSerializeMention(platform), [platform]);
 
   // Client-side filtering
   const filtered = items.filter((item) => {
@@ -207,13 +211,12 @@ export default function FleetBoard({ platformMeta }: FleetBoardProps): JSX.Eleme
         </div>
       )}
 
-      {/* Shared context pane */}
+      {/* Work item detail pane */}
       {selectedWorkItemId && (
-        <ContextPane
+        <WorkItemStream
           workItemId={selectedWorkItemId}
-          platformMeta={platformMeta}
-          userMap={userMap}
           mentionables={mentionables}
+          serializeMention={serializeMention}
           onClose={() => setSelectedWorkItemId(null)}
           onActioned={() => setTimeout(poll, 500)}
         />
