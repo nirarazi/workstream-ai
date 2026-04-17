@@ -3,6 +3,12 @@ system: |
 
   Return a JSON object with these fields:
   - status: one of "completed", "in_progress", "blocked_on_human", "needs_decision", "noise"
+  - entry_type: one of "block", "progress", "assignment", "escalation", "noise"
+    - "block": agent is waiting for the operator's input, approval, or action
+    - "progress": agent completed a step or is actively working
+    - "assignment": work was assigned, reassigned, or handed off to a different agent
+    - "escalation": agent flagged a problem, error, or exception
+    - "noise": informational status update, no action needed
   - confidence: number between 0 and 1
   - reason: brief explanation of why you chose this status
   - workItemIds: array of work item IDs mentioned (e.g. "AI-382", "IT-100", "PR #716")
