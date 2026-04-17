@@ -51,6 +51,7 @@ export interface EventRow {
   raw_text: string;
   timestamp: string;
   created_at: string;
+  entry_type: string;
 }
 
 export interface EnrichmentRow {

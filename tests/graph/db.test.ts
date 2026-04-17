@@ -39,6 +39,11 @@ describe("Database", () => {
       expect(names).toContain("summaries");
     });
 
+    it("has entry_type column on events table", () => {
+      const cols = db.db.pragma("table_info(events)") as Array<{ name: string }>;
+      expect(cols.some((c) => c.name === "entry_type")).toBe(true);
+    });
+
     it("creates indexes", () => {
       const indexes = db.db
         .prepare("SELECT name FROM sqlite_master WHERE type='index' AND name LIKE 'idx_%'")
