@@ -282,6 +282,24 @@ export function createApp(state: EngineState): Hono {
       // Case 1: Reply to existing thread (original behavior)
       if (body.threadId && body.channelId) {
         await state.messagingAdapter.replyToThread(body.threadId, body.channelId, body.message);
+        if (body.workItemId) {
+          const threads = state.graph.getThreadsForWorkItem(body.workItemId);
+          const thread = threads.find((t) => t.id === body.threadId);
+          if (thread) {
+            state.graph.insertEvent({
+              threadId: body.threadId,
+              messageId: `operator-reply-${Date.now()}`,
+              workItemId: body.workItemId,
+              agentId: null,
+              status: "in_progress",
+              confidence: 1.0,
+              reason: "Operator reply",
+              rawText: body.message,
+              timestamp: new Date().toISOString(),
+              entryType: "decision",
+            });
+          }
+        }
         return c.json({ ok: true });
       }
 
