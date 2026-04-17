@@ -159,6 +159,62 @@ export function createApp(state: EngineState): Hono {
     });
   });
 
+  // --- GET /api/work-item/:id/stream ---
+  app.get("/api/work-item/:id/stream", async (c) => {
+    const id = c.req.param("id");
+    const workItem = state.graph.getWorkItemById(id);
+    if (!workItem) {
+      return c.json({ error: "Work item not found" }, 404);
+    }
+
+    const threads = state.graph.getThreadsForWorkItem(id);
+    const events = state.graph.getEventsForWorkItem(id);
+    const agents = state.graph.getAgentsForWorkItem(id);
+    const channels = state.graph.getChannelsForWorkItem(id);
+    const enrichments = state.graph.getEnrichmentsForWorkItem(id);
+
+    const agentMap = new Map<string, string>();
+    for (const a of agents) {
+      agentMap.set(a.id, a.name);
+    }
+
+    const threadChannelMap = new Map<string, string>();
+    for (const t of threads) {
+      threadChannelMap.set(t.id, t.channelName || t.channelId);
+    }
+
+    const latestBlockEvent = events
+      .filter((e) => e.status === "blocked_on_human" || e.status === "needs_decision")
+      .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())[0] ?? null;
+
+    const { buildUnifiedStatus, buildTimeline } = await import("./stream.js");
+
+    const unifiedStatus = buildUnifiedStatus(workItem, latestBlockEvent);
+    const timeline = buildTimeline(events, agentMap, threadChannelMap);
+
+    let statusSummary: string | null = null;
+    const cached = state.graph.getSummary(id);
+    const latestEvent = events.length > 0 ? events[events.length - 1] : null;
+    if (cached && latestEvent && cached.latestEventId === latestEvent.id) {
+      statusSummary = cached.summaryText;
+    }
+
+    const quickReplies: string[] =
+      (state.config as any).quickReplies?.[workItem.currentAtcStatus ?? ""] ?? [];
+
+    return c.json({
+      workItem,
+      unifiedStatus,
+      statusSummary,
+      agents: agents.map((a) => ({ id: a.id, name: a.name, avatarUrl: a.avatarUrl })),
+      channels: channels.map((ch) => ({ id: ch.id, name: ch.name })),
+      threadCount: threads.length,
+      enrichment: enrichments[0] ?? null,
+      timeline,
+      quickReplies,
+    });
+  });
+
   // --- POST /api/work-item/:id/summarize ---
   app.post("/api/work-item/:id/summarize", async (c) => {
     const id = c.req.param("id");

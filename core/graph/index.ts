@@ -540,6 +540,32 @@ export class ContextGraph {
     return stats;
   }
 
+  // --- Stream helpers ---
+
+  getAgentsForWorkItem(workItemId: string): Agent[] {
+    const rows = this.db.db
+      .prepare(`
+        SELECT DISTINCT a.* FROM agents a
+        INNER JOIN events e ON e.agent_id = a.id
+        WHERE e.work_item_id = ?
+        ORDER BY a.last_seen DESC
+      `)
+      .all(workItemId) as AgentRow[];
+    return rows.map(toAgent);
+  }
+
+  getChannelsForWorkItem(workItemId: string): Array<{ id: string; name: string }> {
+    const rows = this.db.db
+      .prepare(`
+        SELECT DISTINCT t.channel_id AS id, t.channel_name AS name
+        FROM threads t
+        WHERE t.work_item_id = ?
+        ORDER BY t.last_activity DESC
+      `)
+      .all(workItemId) as Array<{ id: string; name: string }>;
+    return rows;
+  }
+
   // --- Actionable Items ---
 
   getFleetItems(): ActionableItem[] {
