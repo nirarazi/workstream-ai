@@ -1,4 +1,5 @@
 import type { StreamData } from "../../lib/api";
+import { openExternalUrl } from "../../lib/api";
 
 const STREAM_STATUS_STYLE: Record<string, { bg: string; text: string; border: string; dot?: string }> = {
   blocked_on_human: { bg: "bg-red-500/15", text: "text-red-400", border: "border-red-500/30", dot: "bg-red-400" },
@@ -54,13 +55,12 @@ export default function StatusSnapshot({ data }: StatusSnapshotProps) {
           </span>
         )}
         {enrichment && workItem.url && (
-          <a
-            href={workItem.url}
-            onClick={(e) => { e.preventDefault(); window.open(workItem.url!); }}
-            className="text-cyan-500 hover:text-cyan-400"
+          <button
+            onClick={() => openExternalUrl(workItem.url!)}
+            className="text-cyan-500 hover:text-cyan-400 cursor-pointer"
           >
             {enrichment.source}: {workItem.externalStatus ?? "View"} ↗
-          </a>
+          </button>
         )}
       </div>
     </div>
