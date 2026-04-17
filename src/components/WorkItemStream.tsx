@@ -1,25 +1,30 @@
 import { useState, useEffect, useRef, useCallback, type JSX } from "react";
-import { fetchStream, postReply, type StreamData } from "../lib/api";
+import { fetchStream, postReply, type StreamData, type Mentionable } from "../lib/api";
 import StatusSnapshot from "./stream/StatusSnapshot";
 import Timeline from "./stream/Timeline";
 import SuggestedActions from "./stream/SuggestedActions";
+import MentionInput, { type MentionInputHandle } from "./MentionInput";
 
 interface WorkItemStreamProps {
   workItemId: string;
+  mentionables: Mentionable[];
+  serializeMention: (userId: string) => string;
   onClose: () => void;
   onActioned?: () => void;
 }
 
 export default function WorkItemStream({
   workItemId,
+  mentionables,
+  serializeMention,
   onClose,
   onActioned,
 }: WorkItemStreamProps): JSX.Element {
   const [data, setData] = useState<StreamData | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [replyText, setReplyText] = useState("");
   const [sending, setSending] = useState(false);
   const paneRef = useRef<HTMLDivElement>(null);
+  const replyInputRef = useRef<MentionInputHandle>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -53,17 +58,17 @@ export default function WorkItemStream({
     onActioned?.();
   }
 
-  async function handleReply() {
-    if (!replyText.trim() || !data) return;
+  async function handleReply(serializedText: string) {
+    if (!serializedText.trim() || !data) return;
     setSending(true);
     try {
       await postReply(
         data.latestThreadId ?? undefined,
         data.latestChannelId ?? undefined,
-        replyText,
+        serializedText,
         { workItemId },
       );
-      setReplyText("");
+      replyInputRef.current?.clear();
       handleActioned();
     } catch {
       // Keep text so the user can retry
@@ -116,26 +121,16 @@ export default function WorkItemStream({
         </div>
         <StatusSnapshot data={data} />
         <Timeline entries={data.timeline} />
-        <SuggestedActions data={data} onActioned={handleActioned} />
+        <SuggestedActions data={data} mentionables={mentionables} serializeMention={serializeMention} onActioned={handleActioned} />
         <div className="sticky bottom-0 bg-gray-950 border-t border-gray-800 px-5 py-3">
-          <div className="flex gap-2">
-            <input
-              type="text"
-              value={replyText}
-              onChange={(e) => setReplyText(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleReply(); } }}
-              placeholder="Reply to thread…"
-              disabled={sending}
-              className="flex-1 bg-black/30 border border-gray-700 rounded-md px-3 py-2 text-sm text-gray-300 placeholder-gray-600 focus:outline-none focus:border-cyan-600 disabled:opacity-40"
-            />
-            <button
-              onClick={handleReply}
-              disabled={sending || !replyText.trim()}
-              className="px-4 py-2 rounded-md text-xs font-medium bg-cyan-600 text-gray-950 hover:bg-cyan-500 disabled:opacity-40 cursor-pointer"
-            >
-              Send
-            </button>
-          </div>
+          <MentionInput
+            ref={replyInputRef}
+            placeholder="Reply to thread…"
+            disabled={sending}
+            mentionables={mentionables}
+            serializeMention={serializeMention}
+            onSubmit={handleReply}
+          />
           {data.latestThreadId && data.channels.length > 0 && (
             <div className="text-[10px] text-gray-600 mt-1">
               → replies to latest thread in #{data.channels[0].name}
