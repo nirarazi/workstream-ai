@@ -7,15 +7,15 @@ const STATUS_CONFIG: Record<string, { label: string; classes: string }> = {
   },
   needs_decision: {
     label: "Needs Decision",
+    classes: "bg-red-900/60 text-red-300 border-red-700/50",
+  },
+  in_progress: {
+    label: "In Progress",
     classes: "bg-amber-900/60 text-amber-300 border-amber-700/50",
   },
   completed: {
     label: "Completed",
     classes: "bg-green-900/60 text-green-300 border-green-700/50",
-  },
-  in_progress: {
-    label: "In Progress",
-    classes: "bg-cyan-900/60 text-cyan-300 border-cyan-700/50",
   },
   noise: {
     label: "Noise",
