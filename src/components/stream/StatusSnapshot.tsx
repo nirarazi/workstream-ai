@@ -1,5 +1,20 @@
 import type { StreamData } from "../../lib/api";
-import StatusBadge from "../StatusBadge";
+
+const STREAM_STATUS_STYLE: Record<string, { bg: string; text: string; border: string; dot?: string }> = {
+  blocked_on_human: { bg: "bg-red-500/15", text: "text-red-400", border: "border-red-500/30", dot: "bg-red-400" },
+  needs_decision:   { bg: "bg-red-500/15", text: "text-red-400", border: "border-red-500/30", dot: "bg-red-400" },
+  in_progress:      { bg: "bg-amber-500/15", text: "text-amber-400", border: "border-amber-500/30" },
+  completed:        { bg: "bg-green-500/15", text: "text-green-400", border: "border-green-500/30" },
+  noise:            { bg: "bg-gray-700/50", text: "text-gray-300", border: "border-gray-700" },
+};
+
+const STATUS_LABELS: Record<string, string> = {
+  blocked_on_human: "Blocked",
+  needs_decision: "Needs Decision",
+  in_progress: "In Progress",
+  completed: "Completed",
+  noise: "Noise",
+};
 
 interface StatusSnapshotProps {
   data: StreamData;
@@ -7,7 +22,8 @@ interface StatusSnapshotProps {
 
 export default function StatusSnapshot({ data }: StatusSnapshotProps) {
   const { workItem, unifiedStatus, statusSummary, agents, channels, threadCount, enrichment } = data;
-  const isBlocked = workItem.currentAtcStatus === "blocked_on_human" || workItem.currentAtcStatus === "needs_decision";
+  const status = workItem.currentAtcStatus ?? "noise";
+  const style = STREAM_STATUS_STYLE[status] ?? STREAM_STATUS_STYLE.noise;
 
   return (
     <div className="px-5 py-4 border-b border-gray-800">
@@ -17,9 +33,9 @@ export default function StatusSnapshot({ data }: StatusSnapshotProps) {
       <h2 className="text-lg font-semibold text-white mb-3">
         {workItem.title || (workItem.id.startsWith("thread:") ? "Untitled conversation" : workItem.id)}
       </h2>
-      <div className="inline-flex items-center gap-1.5 mb-3">
-        {isBlocked && <span className="w-1.5 h-1.5 rounded-full bg-red-400 animate-pulse" />}
-        <StatusBadge status={workItem.currentAtcStatus ?? "noise"} />
+      <div className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium mb-3 ${style.bg} ${style.text} border ${style.border}`}>
+        {style.dot && <span className={`w-1.5 h-1.5 rounded-full ${style.dot} animate-pulse`} />}
+        {unifiedStatus}
       </div>
       {statusSummary && (
         <p className="text-sm text-gray-300 leading-relaxed mb-3">{statusSummary}</p>
