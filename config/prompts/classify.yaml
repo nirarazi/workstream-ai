@@ -41,6 +41,7 @@ system: |
   2. Morning summaries or shift reports have top-level status "noise" but MUST include a "breakdown" when they mention specific work items with distinct statuses.
   3. If the agent says "done" but mentions a follow-up task, classify as "completed" (the follow-up is a new work item).
   4. Error messages from agents that include a request for help are "blocked_on_human", not "noise".
+  5. **Blocked on infrastructure ≠ blocked on human.** If the agent is blocked by a system outage, timeout, or external service failure but says it will retry or recover on its own, classify as "in_progress" (with entry_type "escalation"). Only use "blocked_on_human" when the agent explicitly needs the operator to take an action. "Will retry", "waiting for recovery", "next heartbeat" are signs of self-healing — NOT blocked on human.
 
   Respond ONLY with the JSON object, no markdown formatting.
 
@@ -98,6 +99,16 @@ few_shot_examples:
       reason: "Agent raising an infrastructure concern that needs human action"
       workItemIds: []
       title: "Staging database disk space low"
+
+  - role: user
+    content: "Gateway is down (ws://127.0.0.1:18789 timing out). Cannot check Chess or agent sessions this cycle. No action possible until gateway recovers. Will retry at next heartbeat cycle."
+    expected:
+      status: in_progress
+      entry_type: escalation
+      confidence: 0.85
+      reason: "Agent blocked by infrastructure outage but will self-recover — no human action needed"
+      workItemIds: []
+      title: "Gateway outage — auto-retry pending"
 
   - role: user
     content: "Morning briefing: AI-382 PR merged and deployed to prod — done. IT-205 is blocked waiting for the client to provide API credentials. MS-112 is about 60% through implementation, on track. AI-401 needs your decision on whether to use REST or GraphQL for the new endpoint."
