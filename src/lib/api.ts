@@ -368,7 +368,8 @@ export interface StreamData {
   threadCount: number;
   enrichment: Enrichment | null;
   timeline: TimelineEntry[];
-  quickReplies: string[];
+  latestThreadId: string | null;
+  latestChannelId: string | null;
 }
 
 export async function fetchStream(workItemId: string): Promise<StreamData> {

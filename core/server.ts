@@ -18,6 +18,7 @@ import { createRateLimiter, type RateLimiter } from "./rate-limiter.js";
 import { Summarizer } from "./summarizer/index.js";
 import { detectAnomalies, type FleetItemInput } from "./graph/anomalies.js";
 import { Sidekick, type SidekickMessage } from "./sidekick/index.js";
+import { buildUnifiedStatus, buildTimeline } from "./stream.js";
 
 const log = createLogger("server");
 
@@ -187,8 +188,6 @@ export function createApp(state: EngineState): Hono {
       .filter((e) => e.status === "blocked_on_human" || e.status === "needs_decision")
       .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())[0] ?? null;
 
-    const { buildUnifiedStatus, buildTimeline } = await import("./stream.js");
-
     const unifiedStatus = buildUnifiedStatus(workItem, latestBlockEvent);
     const timeline = buildTimeline(events, agentMap, threadChannelMap);
 
@@ -199,8 +198,12 @@ export function createApp(state: EngineState): Hono {
       statusSummary = cached.summaryText;
     }
 
-    const quickReplies: string[] =
-      (state.config as any).quickReplies?.[workItem.currentAtcStatus ?? ""] ?? [];
+    // Latest thread for the reply bar (most recently active)
+    const latestThread = threads.length > 0
+      ? threads.reduce((a, b) =>
+          new Date(a.lastActivity).getTime() >= new Date(b.lastActivity).getTime() ? a : b
+        )
+      : null;
 
     return c.json({
       workItem,
@@ -211,7 +214,8 @@ export function createApp(state: EngineState): Hono {
       threadCount: threads.length,
       enrichment: enrichments[0] ?? null,
       timeline,
-      quickReplies,
+      latestThreadId: latestThread?.id ?? null,
+      latestChannelId: latestThread?.channelId ?? null,
     });
   });
 
