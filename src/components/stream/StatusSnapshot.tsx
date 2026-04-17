@@ -14,7 +14,7 @@ export default function StatusSnapshot({ data }: StatusSnapshotProps) {
         <div className="text-xs font-mono text-gray-500 mb-1">{workItem.id}</div>
       )}
       <h2 className="text-lg font-semibold text-white mb-3">
-        {workItem.title || workItem.id}
+        {workItem.title || (workItem.id.startsWith("thread:") ? "Untitled conversation" : workItem.id)}
       </h2>
       <div className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium mb-3 ${
         isBlocked

@@ -135,14 +135,18 @@ export default function FleetBoard({ platformMeta }: FleetBoardProps): JSX.Eleme
                 className="border-b border-gray-800/50 hover:bg-gray-900/50 cursor-pointer transition-colors"
               >
                 <td className="px-3 py-2.5">
-                  <span className="font-mono text-sm font-semibold text-cyan-400">
-                    {item.workItem.id}
-                  </span>
-                  {item.workItem.title && (
-                    <p className="text-xs text-gray-400 truncate max-w-48">
+                  {!item.workItem.id.startsWith("thread:") && (
+                    <span className="font-mono text-sm font-semibold text-cyan-400">
+                      {item.workItem.id}
+                    </span>
+                  )}
+                  {item.workItem.title ? (
+                    <p className={`text-xs truncate max-w-48 ${item.workItem.id.startsWith("thread:") ? "text-sm font-semibold text-gray-200" : "text-gray-400"}`}>
                       {item.workItem.title}
                     </p>
-                  )}
+                  ) : item.workItem.id.startsWith("thread:") ? (
+                    <span className="text-sm font-semibold text-gray-400">Untitled conversation</span>
+                  ) : null}
                 </td>
                 <td className="px-3 py-2.5">
                   {item.agent ? (
