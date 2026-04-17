@@ -7,6 +7,10 @@ const host = process.env.TAURI_DEV_HOST;
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   clearScreen: false,
+  // Point envDir away from project root so Vite doesn't restart
+  // when the backend writes .env (credentials). Our .env is for
+  // the backend only — Vite doesn't need it.
+  envDir: "./src",
   server: {
     host: host || false,
     port: 5173,
