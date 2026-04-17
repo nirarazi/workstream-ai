@@ -121,7 +121,7 @@ export default function WorkItemStream({
         </div>
         <StatusSnapshot data={data} />
         <Timeline entries={data.timeline} />
-        <SuggestedActions data={data} mentionables={mentionables} serializeMention={serializeMention} onActioned={handleActioned} />
+        <SuggestedActions data={data} onActioned={handleActioned} />
         <div className="sticky bottom-0 bg-gray-950 border-t border-gray-800 px-5 py-3">
           <MentionInput
             ref={replyInputRef}

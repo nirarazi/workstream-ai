@@ -1,7 +1,6 @@
-import { useState, useRef } from "react";
+import { useState } from "react";
 import type { StreamData, Mentionable } from "../../lib/api";
 import { postAction } from "../../lib/api";
-import MentionInput, { type MentionInputHandle } from "../MentionInput";
 
 interface SuggestedActionsProps {
   data: StreamData;
@@ -10,20 +9,18 @@ interface SuggestedActionsProps {
   onActioned?: () => void;
 }
 
-export default function SuggestedActions({ data, mentionables, serializeMention, onActioned }: SuggestedActionsProps) {
+export default function SuggestedActions({ data, onActioned }: SuggestedActionsProps) {
   const { workItem } = data;
   const [acting, setActing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const editInputRef = useRef<MentionInputHandle>(null);
 
   const isBlocked = workItem.currentAtcStatus === "blocked_on_human" || workItem.currentAtcStatus === "needs_decision";
-  if (!isBlocked) return null;
 
-  async function handleAction(action: string, message?: string, duration?: number) {
+  async function handleAction(serverAction: string, message?: string, duration?: number) {
     setActing(true);
     setError(null);
     try {
-      await postAction(workItem.id, action, message, duration);
+      await postAction(workItem.id, serverAction, message, duration);
       onActioned?.();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Action failed");
@@ -32,67 +29,47 @@ export default function SuggestedActions({ data, mentionables, serializeMention,
     }
   }
 
-  function handleRequestChanges() {
-    const text = editInputRef.current?.serialize() ?? "";
-    if (!text.trim()) return;
-    handleAction("redirect", text);
-  }
-
   return (
     <div className="px-5 py-4">
-      <div className="text-[11px] uppercase tracking-widest text-gray-600 mb-3">Suggested Actions</div>
-      <div className="bg-gray-900/60 border border-gray-800 rounded-lg p-3 mb-2 hover:border-cyan-600/30 transition-colors">
-        <div className="font-medium text-sm text-gray-200 mb-1">Approve</div>
-        <div className="text-xs text-gray-600 mb-2">→ replies to latest thread</div>
-        <div className="flex gap-2 justify-end">
+      <div className="text-[11px] uppercase tracking-widest text-gray-600 mb-3">Actions</div>
+      <div className="flex flex-wrap gap-2">
+        {isBlocked && (
           <button
-            onClick={() => handleAction("approve", "Approved. Go ahead.")}
+            onClick={() => handleAction("redirect")}
             disabled={acting}
-            className="px-3 py-1.5 rounded-md text-xs font-medium bg-cyan-600 text-gray-950 hover:bg-cyan-500 disabled:opacity-40 cursor-pointer"
+            className="cursor-pointer rounded px-3.5 py-1.5 text-xs font-medium bg-cyan-700/80 hover:bg-cyan-700 text-cyan-100 disabled:opacity-40 disabled:cursor-not-allowed"
           >
-            Send
+            Unblock
           </button>
-        </div>
-      </div>
-      <div className="bg-gray-900/60 border border-gray-800 rounded-lg p-3 mb-2 hover:border-cyan-600/30 transition-colors">
-        <div className="font-medium text-sm text-gray-200 mb-1">Request changes</div>
-        <div className="text-xs text-gray-600 mb-2">→ replies to latest thread</div>
-        <MentionInput
-          ref={editInputRef}
-          placeholder="What changes do you need?"
+        )}
+        <button
+          onClick={() => handleAction("approve")}
           disabled={acting}
-          mentionables={mentionables}
-          serializeMention={serializeMention}
-          onSubmit={(text) => handleAction("redirect", text)}
-        />
-        <div className="flex gap-2 justify-end mt-2">
+          className="cursor-pointer rounded px-3 py-1.5 text-xs font-medium bg-green-800/70 hover:bg-green-700 text-green-200 disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          Done
+        </button>
+        <button
+          onClick={() => handleAction("close")}
+          disabled={acting}
+          className="cursor-pointer rounded px-3 py-1.5 text-xs font-medium bg-gray-700/70 hover:bg-gray-600 text-gray-300 disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          Dismiss
+        </button>
+        {[
+          { label: "1h", mins: 60 },
+          { label: "4h", mins: 240 },
+          { label: "Tomorrow", mins: 960 },
+        ].map(({ label, mins }) => (
           <button
-            onClick={handleRequestChanges}
+            key={label}
+            onClick={() => handleAction("snooze", undefined, mins)}
             disabled={acting}
-            className="px-3 py-1.5 rounded-md text-xs font-medium bg-cyan-600 text-gray-950 hover:bg-cyan-500 disabled:opacity-40 cursor-pointer"
+            className="cursor-pointer rounded px-3 py-1.5 text-xs font-medium bg-amber-800/70 hover:bg-amber-700 text-amber-200 disabled:opacity-40 disabled:cursor-not-allowed"
           >
-            Send
+            {label}
           </button>
-        </div>
-      </div>
-      <div className="bg-gray-900/60 border border-gray-800 rounded-lg p-3 hover:border-cyan-600/30 transition-colors">
-        <div className="font-medium text-sm text-gray-200 mb-2">Snooze</div>
-        <div className="flex gap-1.5">
-          {[
-            { label: "1h", mins: 60 },
-            { label: "4h", mins: 240 },
-            { label: "Tomorrow", mins: 960 },
-          ].map(({ label, mins }) => (
-            <button
-              key={label}
-              onClick={() => handleAction("snooze", undefined, mins)}
-              disabled={acting}
-              className="px-3 py-1.5 rounded-md text-xs bg-gray-900/60 border border-gray-800 text-gray-500 hover:text-gray-300 hover:bg-gray-800 cursor-pointer disabled:opacity-40"
-            >
-              {label}
-            </button>
-          ))}
-        </div>
+        ))}
       </div>
       {error && <p className="text-xs text-red-400 mt-2">{error}</p>}
     </div>
