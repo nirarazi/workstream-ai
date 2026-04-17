@@ -71,6 +71,10 @@ sidekick:
   maxToolCalls: 5
   maxHistoryTurns: 10
 
+operator:
+  name: ""
+  context: ""
+
 llmBudget:
   dailyBudget: null              # USD per day, null = unlimited
   inputCostPerMillion: null      # USD per 1M input tokens

@@ -372,6 +372,7 @@ export class Pipeline {
       reason: classification.reason,
       rawText: message.text,
       timestamp: message.timestamp,
+      targetedAtOperator: classification.targetedAtOperator,
     });
 
     // Step 6: Update work item status if confidence is higher than existing
@@ -418,6 +419,7 @@ export class Pipeline {
             reason: itemClassification.reason,
             rawText: message.text,
             timestamp: message.timestamp,
+            targetedAtOperator: itemClassification.targetedAtOperator,
           });
         }
       }

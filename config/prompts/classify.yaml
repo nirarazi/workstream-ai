@@ -13,6 +13,7 @@ system: |
   - reason: brief explanation of why you chose this status
   - workItemIds: array of work item IDs mentioned (e.g. "AI-382", "IT-100", "PR #716")
   - title: a short descriptive title (5-8 words) summarizing the topic or task being discussed. This is used as the work item label when no ticket ID is found.
+  - targeted_at_operator: boolean — true if the message is directed at or requires action from the operator. false if the block/request is aimed at someone else (a different team member, a third party, an automated system). When an Operator Context section is provided, use it to determine whether the operator is the intended recipient.
 
   ## Status Definitions
 
@@ -73,6 +74,7 @@ few_shot_examples:
       reason: "Agent blocked on infrastructure access that requires human intervention"
       workItemIds: ["AI-401"]
       title: "S3 bucket IAM permissions issue"
+      targeted_at_operator: true
 
   - role: user
     content: "For MS-112, I see two approaches: (A) Add a new endpoint /api/v2/reports with the updated schema, or (B) version the existing endpoint with a query parameter. Which should I go with?"
@@ -110,6 +112,7 @@ few_shot_examples:
       reason: "Agent reporting another agent's status — blocked on a third party, not requesting operator action. 'All good' confirms no intervention needed."
       workItemIds: []
       title: "Chess status update — awaiting Guy's review"
+      targeted_at_operator: false
 
   - role: user
     content: "Gateway is down (ws://127.0.0.1:18789 timing out). Cannot check Chess or agent sessions this cycle. No action possible until gateway recovers. Will retry at next heartbeat cycle."
@@ -120,6 +123,17 @@ few_shot_examples:
       reason: "Agent blocked by infrastructure outage but will self-recover — no human action needed"
       workItemIds: []
       title: "Gateway outage — auto-retry pending"
+      targeted_at_operator: false
+
+  - role: user
+    content: "New lead from dev site: John Smith, john@example.com, requesting demo for fleet management platform. Source: website contact form. CRM ticket #4521 created automatically."
+    expected:
+      status: blocked_on_human
+      confidence: 0.8
+      reason: "Automated CRM alert for sales team, not operator"
+      workItemIds: []
+      title: "New lead intake from website"
+      targeted_at_operator: false
 
   - role: user
     content: "Morning briefing: AI-382 PR merged and deployed to prod — done. IT-205 is blocked waiting for the client to provide API credentials. MS-112 is about 60% through implementation, on track. AI-401 needs your decision on whether to use REST or GraphQL for the new endpoint."
@@ -140,6 +154,7 @@ few_shot_examples:
           confidence: 0.9
           reason: "Waiting for client to provide API credentials"
           title: "Client API credentials needed"
+          targeted_at_operator: true
         - workItemId: "MS-112"
           status: in_progress
           confidence: 0.85

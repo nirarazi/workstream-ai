@@ -44,6 +44,11 @@ describe("Database", () => {
       expect(cols.some((c) => c.name === "entry_type")).toBe(true);
     });
 
+    it("adds targeted_at_operator column to events table", () => {
+      const cols = db.db.pragma("table_info(events)") as Array<{ name: string }>;
+      expect(cols.some((c) => c.name === "targeted_at_operator")).toBe(true);
+    });
+
     it("creates indexes", () => {
       const indexes = db.db
         .prepare("SELECT name FROM sqlite_master WHERE type='index' AND name LIKE 'idx_%'")

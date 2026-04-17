@@ -52,6 +52,7 @@ export interface EventRow {
   timestamp: string;
   created_at: string;
   entry_type: string;
+  targeted_at_operator: number;
 }
 
 export interface EnrichmentRow {

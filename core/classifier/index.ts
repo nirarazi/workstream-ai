@@ -61,6 +61,16 @@ export function buildFewShotMessages(
   return messages;
 }
 
+export function buildOperatorContext(config: Config): string {
+  const name = (config as any).operator?.name ?? "";
+  const context = (config as any).operator?.context ?? "";
+  if (!name && !context) return "";
+  const parts: string[] = [];
+  if (name) parts.push(`The operator's name is ${name}.`);
+  if (context) parts.push(context);
+  return parts.join("\n");
+}
+
 export function createProvider(config: Config): ModelProvider {
   const { baseUrl, model, apiKey } = config.classifier.provider;
   const isAnthropic = baseUrl.includes("anthropic");
@@ -72,13 +82,15 @@ export class Classifier {
   private readonly provider: ModelProvider;
   private readonly systemPrompt: string;
   private readonly fewShotMessages: Array<{ role: string; content: string }>;
+  private readonly operatorContext: string;
   private rateLimiter?: RateLimiter;
 
-  constructor(provider: ModelProvider, systemPrompt: string, fewShotMessages: Array<{ role: string; content: string }>, rateLimiter?: RateLimiter) {
+  constructor(provider: ModelProvider, systemPrompt: string, fewShotMessages: Array<{ role: string; content: string }>, rateLimiter?: RateLimiter, operatorContext?: string) {
     this.provider = provider;
     this.systemPrompt = systemPrompt;
     this.fewShotMessages = fewShotMessages;
     this.rateLimiter = rateLimiter;
+    this.operatorContext = operatorContext ?? "";
   }
 
   setRateLimiter(limiter: RateLimiter): void {
@@ -97,7 +109,8 @@ export class Classifier {
     const prompt = loadPrompt(root);
     const provider = createProvider(config);
     const fewShot = buildFewShotMessages(prompt.few_shot_examples);
-    return new Classifier(provider, prompt.system, fewShot);
+    const operatorContext = buildOperatorContext(config);
+    return new Classifier(provider, prompt.system, fewShot, undefined, operatorContext);
   }
 
   async classify(message: string): Promise<Classification> {
@@ -107,9 +120,13 @@ export class Classifier {
         await this.rateLimiter.acquire();
       }
 
+      const effectiveSystemPrompt = this.operatorContext
+        ? `${this.systemPrompt}\n\n## Operator Context\n\n${this.operatorContext}`
+        : this.systemPrompt;
+
       const result = await this.provider.classify(
         message,
-        this.systemPrompt,
+        effectiveSystemPrompt,
         this.fewShotMessages,
       );
 
@@ -126,6 +143,7 @@ export class Classifier {
         reason: result.reason,
         workItemIds: result.workItemIds,
         title: result.title,
+        targetedAtOperator: (result as any).targeted_at_operator !== false,
         breakdown: result.breakdown?.map((b) => {
           const bStatus = (VALID_STATUSES.has(b.status) ? b.status : "noise") as StatusCategory;
           return {
@@ -135,6 +153,7 @@ export class Classifier {
             confidence: Math.max(0, Math.min(1, b.confidence)),
             reason: b.reason,
             title: b.title,
+            targetedAtOperator: (b as any).targeted_at_operator !== false,
           };
         }),
       };
@@ -147,6 +166,7 @@ export class Classifier {
         reason: "Classification failed — defaulting to noise",
         workItemIds: [],
         title: "",
+        targetedAtOperator: true,
       };
     }
   }

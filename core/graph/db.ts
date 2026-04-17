@@ -231,6 +231,13 @@ export class Database {
       `);
       log.info("Migration: added entry_type column to events and backfilled");
     }
+
+    // Add targeted_at_operator column to events table
+    const eventColsForTarget = this.db.pragma("table_info(events)") as Array<{ name: string }>;
+    if (!eventColsForTarget.some((c) => c.name === "targeted_at_operator")) {
+      this.db.exec("ALTER TABLE events ADD COLUMN targeted_at_operator INTEGER NOT NULL DEFAULT 1");
+      log.info("Migration: added targeted_at_operator column to events");
+    }
   }
 
   prepare<T>(sql: string): BetterSqlite3Type.Statement<T[]> {

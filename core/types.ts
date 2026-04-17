@@ -22,6 +22,7 @@ export interface ClassificationBreakdown {
   confidence: number;
   reason: string;
   title: string;
+  targetedAtOperator: boolean;
 }
 
 export interface Classification {
@@ -31,6 +32,7 @@ export interface Classification {
   reason: string;
   workItemIds: string[];
   title: string;
+  targetedAtOperator: boolean;
   /** Per-work-item statuses when a message is a summary/brief mentioning multiple items */
   breakdown?: ClassificationBreakdown[];
 }
@@ -99,6 +101,7 @@ export interface Event {
   timestamp: string;
   createdAt: string;
   entryType: EntryType;
+  targetedAtOperator: boolean;
 }
 
 export interface Enrichment {
