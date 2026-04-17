@@ -5,12 +5,24 @@ import { resolve } from "node:path";
 import { parse as parseYaml } from "yaml";
 import { createLogger } from "../logger.js";
 import { findProjectRoot, type Config } from "../config.js";
-import type { Classification, StatusCategory } from "../types.js";
+import type { Classification, EntryType, StatusCategory } from "../types.js";
 import { OpenAICompatibleProvider, type BackoffState } from "./providers/openai-compatible.js";
 import type { ModelProvider } from "./providers/interface.js";
 import type { RateLimiter } from "../rate-limiter.js";
 
 const log = createLogger("classifier");
+
+function inferEntryType(status: StatusCategory): EntryType {
+  switch (status) {
+    case "blocked_on_human":
+    case "needs_decision":
+      return "block";
+    case "noise":
+      return "noise";
+    default:
+      return "progress";
+  }
+}
 
 const VALID_STATUSES: Set<string> = new Set([
   "completed",
@@ -109,22 +121,28 @@ export class Classifier {
 
       return {
         status,
+        entryType: (result as { entry_type?: string }).entry_type as EntryType ?? inferEntryType(status),
         confidence,
         reason: result.reason,
         workItemIds: result.workItemIds,
         title: result.title,
-        breakdown: result.breakdown?.map((b) => ({
-          workItemId: b.workItemId,
-          status: (VALID_STATUSES.has(b.status) ? b.status : "noise") as StatusCategory,
-          confidence: Math.max(0, Math.min(1, b.confidence)),
-          reason: b.reason,
-          title: b.title,
-        })),
+        breakdown: result.breakdown?.map((b) => {
+          const bStatus = (VALID_STATUSES.has(b.status) ? b.status : "noise") as StatusCategory;
+          return {
+            workItemId: b.workItemId,
+            status: bStatus,
+            entryType: (b as { entry_type?: string }).entry_type as EntryType ?? inferEntryType(bStatus),
+            confidence: Math.max(0, Math.min(1, b.confidence)),
+            reason: b.reason,
+            title: b.title,
+          };
+        }),
       };
     } catch (error) {
       log.warn("Classification failed, returning default noise classification", error);
       return {
         status: "noise",
+        entryType: "noise",
         confidence: 0.1,
         reason: "Classification failed — defaulting to noise",
         workItemIds: [],
