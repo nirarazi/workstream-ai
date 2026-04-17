@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback, type JSX } from "react";
 import { fetchInbox, fetchRecent, fetchAgents, agentsToMentionables, setBadgeCount, type ActionableItem, type Mentionable } from "../lib/api";
 import WorkItemCard from "./WorkItemCard";
 import ContextPane from "./ContextPane";
+import WorkItemStream from "./WorkItemStream";
 
 const POLL_INTERVAL = 5000;
 
@@ -120,11 +121,8 @@ export default function Inbox({ platformMeta }: InboxProps): JSX.Element {
       )}
 
       {selectedWorkItemId && (
-        <ContextPane
+        <WorkItemStream
           workItemId={selectedWorkItemId}
-          platformMeta={platformMeta}
-          userMap={userMap}
-          mentionables={mentionables}
           onClose={() => setSelectedWorkItemId(null)}
           onActioned={handleActioned}
         />
