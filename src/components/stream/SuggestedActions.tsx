@@ -2,6 +2,46 @@ import { useState } from "react";
 import type { StreamData } from "../../lib/api";
 import { postAction, createTicket, openExternalUrl } from "../../lib/api";
 
+type ActionKind = "unblock" | "done" | "dismiss" | "snooze";
+
+const ACTION_BUTTONS: {
+  action: ActionKind;
+  label: string;
+  classes: string;
+  primary?: boolean;
+}[] = [
+  {
+    action: "unblock",
+    label: "Unblock",
+    classes: "bg-cyan-700/80 hover:bg-cyan-700 text-cyan-100",
+    primary: true,
+  },
+  {
+    action: "done",
+    label: "Done",
+    classes: "bg-green-800/70 hover:bg-green-700 text-green-200",
+  },
+  {
+    action: "dismiss",
+    label: "Dismiss",
+    classes: "bg-gray-700/70 hover:bg-gray-600 text-gray-300",
+  },
+  {
+    action: "snooze",
+    label: "Snooze",
+    classes: "bg-amber-800/70 hover:bg-amber-700 text-amber-200",
+  },
+];
+
+function toServerAction(action: ActionKind): string {
+  switch (action) {
+    case "done": return "approve";
+    case "unblock": return "redirect";
+    case "dismiss": return "close";
+    case "snooze": return "snooze";
+  }
+}
+
 interface SuggestedActionsProps {
   data: StreamData;
   onActioned?: () => void;
@@ -9,24 +49,23 @@ interface SuggestedActionsProps {
 
 export default function SuggestedActions({ data, onActioned }: SuggestedActionsProps) {
   const { workItem } = data;
-  const [acting, setActing] = useState(false);
+  const [acting, setActing] = useState<ActionKind | null>(null);
   const [creatingTicket, setCreatingTicket] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const isBlocked = workItem.currentAtcStatus === "blocked_on_human" || workItem.currentAtcStatus === "needs_decision";
   const isInferred = workItem.source === "inferred" || workItem.id.startsWith("thread:");
-  const busy = acting || creatingTicket;
+  const busy = acting !== null || creatingTicket;
 
-  async function handleAction(serverAction: string, message?: string, duration?: number) {
-    setActing(true);
+  async function handleAction(action: ActionKind) {
+    setActing(action);
     setError(null);
     try {
-      await postAction(workItem.id, serverAction, message, duration);
+      await postAction(workItem.id, toServerAction(action), undefined, action === "snooze" ? 60 : undefined);
       onActioned?.();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Action failed");
     } finally {
-      setActing(false);
+      setActing(null);
     }
   }
 
@@ -50,41 +89,14 @@ export default function SuggestedActions({ data, onActioned }: SuggestedActionsP
     <div className="px-5 py-4">
       <div className="text-[11px] uppercase tracking-widest text-gray-600 mb-3">Actions</div>
       <div className="flex flex-wrap gap-2">
-        {isBlocked && (
+        {ACTION_BUTTONS.map(({ action, label, classes, primary }) => (
           <button
-            onClick={() => handleAction("redirect")}
+            key={action}
+            onClick={() => handleAction(action)}
             disabled={busy}
-            className="cursor-pointer rounded px-3.5 py-1.5 text-xs font-medium bg-cyan-700/80 hover:bg-cyan-700 text-cyan-100 disabled:opacity-40 disabled:cursor-not-allowed"
+            className={`cursor-pointer rounded px-3 py-1.5 text-xs font-medium disabled:opacity-40 disabled:cursor-not-allowed ${classes} ${primary ? "px-3.5" : ""}`}
           >
-            Unblock
-          </button>
-        )}
-        <button
-          onClick={() => handleAction("approve")}
-          disabled={busy}
-          className="cursor-pointer rounded px-3 py-1.5 text-xs font-medium bg-green-800/70 hover:bg-green-700 text-green-200 disabled:opacity-40 disabled:cursor-not-allowed"
-        >
-          Done
-        </button>
-        <button
-          onClick={() => handleAction("close")}
-          disabled={busy}
-          className="cursor-pointer rounded px-3 py-1.5 text-xs font-medium bg-gray-700/70 hover:bg-gray-600 text-gray-300 disabled:opacity-40 disabled:cursor-not-allowed"
-        >
-          Dismiss
-        </button>
-        {[
-          { label: "1h", mins: 60 },
-          { label: "4h", mins: 240 },
-          { label: "Tomorrow", mins: 960 },
-        ].map(({ label, mins }) => (
-          <button
-            key={label}
-            onClick={() => handleAction("snooze", undefined, mins)}
-            disabled={busy}
-            className="cursor-pointer rounded px-3 py-1.5 text-xs font-medium bg-amber-800/70 hover:bg-amber-700 text-amber-200 disabled:opacity-40 disabled:cursor-not-allowed"
-          >
-            {label}
+            {acting === action ? "..." : label}
           </button>
         ))}
         {isInferred && (
