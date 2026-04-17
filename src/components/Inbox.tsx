@@ -1,18 +1,17 @@
 import { useState, useEffect, useRef, useCallback, useMemo, type JSX } from "react";
-import { fetchInbox, fetchRecent, fetchAgents, agentsToMentionables, setBadgeCount, type ActionableItem, type Mentionable } from "../lib/api";
+import { fetchInbox, fetchAgents, agentsToMentionables, setBadgeCount, type ActionableItem, type Mentionable } from "../lib/api";
 import WorkItemCard from "./WorkItemCard";
 import WorkItemStream from "./WorkItemStream";
 import { getSerializeMention } from "../messaging/registry";
 
 const POLL_INTERVAL = 5000;
 
-interface InboxProps {
+interface StreamProps {
   platformMeta?: Record<string, unknown>;
 }
 
-export default function Inbox({ platformMeta }: InboxProps): JSX.Element {
-  const [actionable, setActionable] = useState<ActionableItem[]>([]);
-  const [recent, setRecent] = useState<ActionableItem[]>([]);
+export default function Stream({ platformMeta }: StreamProps): JSX.Element {
+  const [items, setItems] = useState<ActionableItem[]>([]);
   const [userMap, setUserMap] = useState<Map<string, string>>(new Map());
   const [mentionables, setMentionables] = useState<Mentionable[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -22,13 +21,11 @@ export default function Inbox({ platformMeta }: InboxProps): JSX.Element {
 
   const poll = useCallback(async () => {
     try {
-      const [inboxRes, recentRes, agentsRes] = await Promise.all([
+      const [inboxRes, agentsRes] = await Promise.all([
         fetchInbox(),
-        fetchRecent(20),
         fetchAgents(),
       ]);
-      setActionable(inboxRes.items);
-      setRecent(recentRes.items);
+      setItems(inboxRes.items);
       setBadgeCount(inboxRes.items.length);
 
       const map = new Map<string, string>();
@@ -62,7 +59,7 @@ export default function Inbox({ platformMeta }: InboxProps): JSX.Element {
     };
   }, [poll]);
 
-  const platform = actionable[0]?.thread?.platform ?? recent[0]?.thread?.platform ?? "slack";
+  const platform = items[0]?.thread?.platform ?? "slack";
   const serializeMention = useMemo(() => getSerializeMention(platform), [platform]);
 
   if (loading) {
@@ -82,10 +79,7 @@ export default function Inbox({ platformMeta }: InboxProps): JSX.Element {
     );
   }
 
-  const hasActionable = actionable.length > 0;
-  const hasRecent = recent.length > 0;
-
-  if (!hasActionable && !hasRecent) {
+  if (items.length === 0) {
     return (
       <div className="flex items-center justify-center py-20">
         <p className="text-sm text-gray-400">
@@ -96,32 +90,10 @@ export default function Inbox({ platformMeta }: InboxProps): JSX.Element {
   }
 
   return (
-    <div className="space-y-6">
-      {hasActionable && (
-        <section>
-          <h2 className="mb-3 text-xs font-semibold uppercase tracking-widest text-gray-500">
-            Needs Attention
-          </h2>
-          <div className="space-y-3">
-            {actionable.map((item) => (
-              <WorkItemCard key={item.workItem.id + item.latestEvent.id} item={item} platformMeta={platformMeta} userMap={userMap} mentionables={mentionables} onActioned={handleActioned} onSelect={handleSelect} />
-            ))}
-          </div>
-        </section>
-      )}
-
-      {hasRecent && (
-        <section>
-          <h2 className="mb-3 text-xs font-semibold uppercase tracking-widest text-gray-500">
-            Recent
-          </h2>
-          <div className="space-y-3">
-            {recent.map((item) => (
-              <WorkItemCard key={item.workItem.id + item.latestEvent.id} item={item} platformMeta={platformMeta} userMap={userMap} mentionables={mentionables} onActioned={handleActioned} onSelect={handleSelect} />
-            ))}
-          </div>
-        </section>
-      )}
+    <div className="space-y-3">
+      {items.map((item) => (
+        <WorkItemCard key={item.workItem.id + item.latestEvent.id} item={item} platformMeta={platformMeta} userMap={userMap} mentionables={mentionables} onActioned={handleActioned} onSelect={handleSelect} />
+      ))}
 
       {selectedWorkItemId && (
         <WorkItemStream

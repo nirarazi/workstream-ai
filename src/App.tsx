@@ -1,12 +1,12 @@
 import { useState, useEffect, useRef, useCallback, type JSX } from "react";
 import { fetchSetupStatus, fetchStatus, type ServiceStatuses } from "./lib/api";
 import { useTheme, type ThemeMode } from "./lib/theme";
-import Inbox from "./components/Inbox";
+import Stream from "./components/Inbox";
 import FleetBoard from "./components/FleetBoard";
 import Sidekick from "./components/Sidekick";
 import Setup from "./components/Setup";
 
-type View = "loading" | "setup" | "inbox" | "fleet" | "settings";
+type View = "loading" | "setup" | "stream" | "fleet" | "settings";
 type DotStatus = "ok" | "degraded" | "disconnected";
 
 const DEFAULT_SERVICES: ServiceStatuses = {};
@@ -85,7 +85,7 @@ function App(): JSX.Element {
       if (initPollTimer.current) { clearTimeout(initPollTimer.current); initPollTimer.current = null; }
       setConnected(true);
       setPlatformMeta(status.platformMeta ?? {});
-      setView(status.configured ? "inbox" : "setup");
+      setView(status.configured ? "stream" : "setup");
     } catch {
       setConnected(false);
       setView("loading");
@@ -118,7 +118,7 @@ function App(): JSX.Element {
     function handleKeyDown(e: KeyboardEvent) {
       if (e.key === "," && (e.metaKey || e.ctrlKey)) {
         e.preventDefault();
-        setView((v) => (v === "settings" ? "inbox" : "settings"));
+        setView((v) => (v === "settings" ? "stream" : "settings"));
       }
     }
     window.addEventListener("keydown", handleKeyDown);
@@ -168,7 +168,7 @@ function App(): JSX.Element {
           {/* Settings gear */}
           {view !== "loading" && view !== "setup" && (
             <button
-              onClick={() => setView((v) => (v === "settings" ? "inbox" : "settings"))}
+              onClick={() => setView((v) => (v === "settings" ? "stream" : "settings"))}
               title="Settings (Cmd+,)"
               className="cursor-pointer text-gray-500 hover:text-gray-300 transition-colors"
             >
@@ -188,13 +188,13 @@ function App(): JSX.Element {
         </div>
       </header>
 
-      {/* Tab bar — only visible when configured */}
-      {(view === "inbox" || view === "fleet") && (
-        <nav className="border-b border-gray-800 bg-gray-950 px-6 flex items-center gap-6">
+      {/* Tab bar — sticky below title bar */}
+      {(view === "stream" || view === "fleet") && (
+        <nav className="sticky top-[41px] z-40 border-b border-gray-800 bg-gray-950 px-6 flex items-center gap-6">
           <button
-            onClick={() => setView("inbox")}
+            onClick={() => setView("stream")}
             className={`cursor-pointer py-2.5 text-sm font-medium border-b-2 transition-colors ${
-              view === "inbox"
+              view === "stream"
                 ? "border-cyan-500 text-gray-200"
                 : "border-transparent text-gray-500 hover:text-gray-300"
             }`}
@@ -237,10 +237,10 @@ function App(): JSX.Element {
           </div>
         )}
         {view === "setup" && <Setup onComplete={handleSetupComplete} />}
-        {view === "inbox" && <Inbox platformMeta={platformMeta} />}
+        {view === "stream" && <Stream platformMeta={platformMeta} />}
         {view === "fleet" && <FleetBoard platformMeta={platformMeta} />}
         {view === "settings" && (
-          <Setup onComplete={() => { init(); setView("inbox"); }} />
+          <Setup onComplete={() => { init(); setView("stream"); }} />
         )}
       </main>
       {sidekickOpen && <Sidekick onClose={() => setSidekickOpen(false)} />}

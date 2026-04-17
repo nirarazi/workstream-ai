@@ -193,6 +193,8 @@ The MVP validates one hypothesis: that agent conversation status can be extracte
 | Build/package | Tauri bundler | Cross-platform native installers |
 | Testing | Vitest (unit), Playwright (e2e) | Fast, TypeScript-native |
 
+**Theming:** See [`docs/theming.md`](docs/theming.md) for the color system, theme swap mechanism, and status color conventions.
+
 ---
 
 ## Repository Structure
