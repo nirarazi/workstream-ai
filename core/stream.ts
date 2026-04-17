@@ -23,7 +23,8 @@ export interface StreamData {
   threadCount: number;
   enrichment: Enrichment | null;
   timeline: TimelineEntry[];
-  quickReplies: string[];
+  latestThreadId: string | null;
+  latestChannelId: string | null;
 }
 
 export function buildUnifiedStatus(
