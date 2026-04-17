@@ -1,8 +1,8 @@
-import { useState, useEffect, useRef, useCallback, type JSX } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo, type JSX } from "react";
 import { fetchInbox, fetchRecent, fetchAgents, agentsToMentionables, setBadgeCount, type ActionableItem, type Mentionable } from "../lib/api";
 import WorkItemCard from "./WorkItemCard";
-import ContextPane from "./ContextPane";
 import WorkItemStream from "./WorkItemStream";
+import { getSerializeMention } from "../messaging/registry";
 
 const POLL_INTERVAL = 5000;
 
@@ -79,6 +79,9 @@ export default function Inbox({ platformMeta }: InboxProps): JSX.Element {
     );
   }
 
+  const platform = actionable[0]?.thread?.platform ?? recent[0]?.thread?.platform ?? "slack";
+  const serializeMention = useMemo(() => getSerializeMention(platform), [platform]);
+
   const hasActionable = actionable.length > 0;
   const hasRecent = recent.length > 0;
 
@@ -123,6 +126,8 @@ export default function Inbox({ platformMeta }: InboxProps): JSX.Element {
       {selectedWorkItemId && (
         <WorkItemStream
           workItemId={selectedWorkItemId}
+          mentionables={mentionables}
+          serializeMention={serializeMention}
           onClose={() => setSelectedWorkItemId(null)}
           onActioned={handleActioned}
         />

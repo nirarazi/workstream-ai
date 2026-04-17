@@ -1,17 +1,20 @@
-import { useState } from "react";
-import type { StreamData } from "../../lib/api";
+import { useState, useRef } from "react";
+import type { StreamData, Mentionable } from "../../lib/api";
 import { postAction } from "../../lib/api";
+import MentionInput, { type MentionInputHandle } from "../MentionInput";
 
 interface SuggestedActionsProps {
   data: StreamData;
+  mentionables: Mentionable[];
+  serializeMention: (userId: string) => string;
   onActioned?: () => void;
 }
 
-export default function SuggestedActions({ data, onActioned }: SuggestedActionsProps) {
+export default function SuggestedActions({ data, mentionables, serializeMention, onActioned }: SuggestedActionsProps) {
   const { workItem } = data;
   const [acting, setActing] = useState(false);
-  const [editMessage, setEditMessage] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const editInputRef = useRef<MentionInputHandle>(null);
 
   const isBlocked = workItem.currentAtcStatus === "blocked_on_human" || workItem.currentAtcStatus === "needs_decision";
   if (!isBlocked) return null;
@@ -29,11 +32,17 @@ export default function SuggestedActions({ data, onActioned }: SuggestedActionsP
     }
   }
 
+  function handleRequestChanges() {
+    const text = editInputRef.current?.serialize() ?? "";
+    if (!text.trim()) return;
+    handleAction("redirect", text);
+  }
+
   return (
     <div className="px-5 py-4">
       <div className="text-[11px] uppercase tracking-widest text-gray-600 mb-3">Suggested Actions</div>
-      <div className="bg-white/[0.03] border border-gray-800 rounded-lg p-3 mb-2 hover:border-cyan-600/30 transition-colors">
-        <div className="font-medium text-sm text-gray-200 mb-1">✅ Approve</div>
+      <div className="bg-gray-900/60 border border-gray-800 rounded-lg p-3 mb-2 hover:border-cyan-600/30 transition-colors">
+        <div className="font-medium text-sm text-gray-200 mb-1">Approve</div>
         <div className="text-xs text-gray-600 mb-2">→ replies to latest thread</div>
         <div className="flex gap-2 justify-end">
           <button
@@ -45,28 +54,29 @@ export default function SuggestedActions({ data, onActioned }: SuggestedActionsP
           </button>
         </div>
       </div>
-      <div className="bg-white/[0.03] border border-gray-800 rounded-lg p-3 mb-2 hover:border-cyan-600/30 transition-colors">
-        <div className="font-medium text-sm text-gray-200 mb-1">✏️ Request changes</div>
+      <div className="bg-gray-900/60 border border-gray-800 rounded-lg p-3 mb-2 hover:border-cyan-600/30 transition-colors">
+        <div className="font-medium text-sm text-gray-200 mb-1">Request changes</div>
         <div className="text-xs text-gray-600 mb-2">→ replies to latest thread</div>
-        <input
-          type="text"
-          value={editMessage}
-          onChange={(e) => setEditMessage(e.target.value)}
+        <MentionInput
+          ref={editInputRef}
           placeholder="What changes do you need?"
-          className="w-full bg-black/30 border border-gray-700 rounded-md px-2.5 py-1.5 text-sm text-gray-300 placeholder-gray-600 focus:outline-none focus:border-cyan-600 mb-2"
+          disabled={acting}
+          mentionables={mentionables}
+          serializeMention={serializeMention}
+          onSubmit={(text) => handleAction("redirect", text)}
         />
-        <div className="flex gap-2 justify-end">
+        <div className="flex gap-2 justify-end mt-2">
           <button
-            onClick={() => handleAction("redirect", editMessage)}
-            disabled={acting || !editMessage.trim()}
+            onClick={handleRequestChanges}
+            disabled={acting}
             className="px-3 py-1.5 rounded-md text-xs font-medium bg-cyan-600 text-gray-950 hover:bg-cyan-500 disabled:opacity-40 cursor-pointer"
           >
             Send
           </button>
         </div>
       </div>
-      <div className="bg-white/[0.03] border border-gray-800 rounded-lg p-3 hover:border-cyan-600/30 transition-colors">
-        <div className="font-medium text-sm text-gray-200 mb-2">💤 Snooze</div>
+      <div className="bg-gray-900/60 border border-gray-800 rounded-lg p-3 hover:border-cyan-600/30 transition-colors">
+        <div className="font-medium text-sm text-gray-200 mb-2">Snooze</div>
         <div className="flex gap-1.5">
           {[
             { label: "1h", mins: 60 },
@@ -77,7 +87,7 @@ export default function SuggestedActions({ data, onActioned }: SuggestedActionsP
               key={label}
               onClick={() => handleAction("snooze", undefined, mins)}
               disabled={acting}
-              className="px-3 py-1.5 rounded-md text-xs bg-white/[0.05] border border-gray-800 text-gray-500 hover:text-gray-300 hover:bg-white/[0.08] cursor-pointer disabled:opacity-40"
+              className="px-3 py-1.5 rounded-md text-xs bg-gray-900/60 border border-gray-800 text-gray-500 hover:text-gray-300 hover:bg-gray-800 cursor-pointer disabled:opacity-40"
             >
               {label}
             </button>
