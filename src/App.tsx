@@ -144,75 +144,77 @@ function App(): JSX.Element {
 
   return (
     <div className="min-h-screen bg-gray-950 text-gray-100">
-      {/* Title bar — Tauri window drag region */}
-      <header
-        data-tauri-drag-region
-        className="sticky top-0 z-50 border-b border-gray-800 bg-gray-950 flex items-center justify-between"
-        style={{ paddingLeft: 78, paddingRight: 16, paddingTop: 8, paddingBottom: 7 }}
-      >
-        <h1 data-tauri-drag-region className="text-sm font-semibold tracking-tight text-gray-300">
-          workstream.ai
-        </h1>
-        <div className="flex items-center gap-3">
-          {/* Theme toggle */}
-          {view !== "loading" && view !== "setup" && (
-            <button
-              onClick={cycleTheme}
-              title={THEME_LABELS[themeMode]}
-              className="cursor-pointer text-gray-500 hover:text-gray-300 transition-colors"
-            >
-              {THEME_ICONS[themeMode]}
-            </button>
-          )}
+      {/* Sticky chrome — title bar + tab bar together so no gap appears */}
+      <div className="sticky top-0 z-50 bg-gray-950">
+        <header
+          data-tauri-drag-region
+          className="border-b border-gray-800 flex items-center justify-between"
+          style={{ paddingLeft: 78, paddingRight: 16, paddingTop: 8, paddingBottom: 7 }}
+        >
+          <h1 data-tauri-drag-region className="text-sm font-semibold tracking-tight text-gray-300">
+            workstream.ai
+          </h1>
+          <div className="flex items-center gap-3">
+            {/* Theme toggle */}
+            {view !== "loading" && view !== "setup" && (
+              <button
+                onClick={cycleTheme}
+                title={THEME_LABELS[themeMode]}
+                className="cursor-pointer text-gray-500 hover:text-gray-300 transition-colors"
+              >
+                {THEME_ICONS[themeMode]}
+              </button>
+            )}
 
-          {/* Settings gear */}
-          {view !== "loading" && view !== "setup" && (
-            <button
-              onClick={() => setView((v) => (v === "settings" ? "stream" : "settings"))}
-              title="Settings (Cmd+,)"
-              className="cursor-pointer text-gray-500 hover:text-gray-300 transition-colors"
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4">
-                <path fillRule="evenodd" d="M8.34 1.804A1 1 0 0 1 9.32 1h1.36a1 1 0 0 1 .98.804l.295 1.473c.497.144.971.342 1.416.587l1.25-.834a1 1 0 0 1 1.262.125l.962.962a1 1 0 0 1 .125 1.262l-.834 1.25c.245.445.443.919.587 1.416l1.473.294a1 1 0 0 1 .804.98v1.361a1 1 0 0 1-.804.98l-1.473.295a6.95 6.95 0 0 1-.587 1.416l.834 1.25a1 1 0 0 1-.125 1.262l-.962.962a1 1 0 0 1-1.262.125l-1.25-.834a6.953 6.953 0 0 1-1.416.587l-.294 1.473a1 1 0 0 1-.98.804H9.32a1 1 0 0 1-.98-.804l-.295-1.473a6.957 6.957 0 0 1-1.416-.587l-1.25.834a1 1 0 0 1-1.262-.125l-.962-.962a1 1 0 0 1-.125-1.262l.834-1.25a6.957 6.957 0 0 1-.587-1.416l-1.473-.294A1 1 0 0 1 1 11.06V9.7a1 1 0 0 1 .804-.98l1.473-.295c.144-.497.342-.971.587-1.416l-.834-1.25a1 1 0 0 1 .125-1.262l.962-.962A1 1 0 0 1 5.38 3.41l1.25.834a6.957 6.957 0 0 1 1.416-.587l.294-1.473ZM13 10a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" clipRule="evenodd" />
-              </svg>
-            </button>
-          )}
+            {/* Settings gear */}
+            {view !== "loading" && view !== "setup" && (
+              <button
+                onClick={() => setView((v) => (v === "settings" ? "stream" : "settings"))}
+                title="Settings (Cmd+,)"
+                className="cursor-pointer text-gray-500 hover:text-gray-300 transition-colors"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4">
+                  <path fillRule="evenodd" d="M8.34 1.804A1 1 0 0 1 9.32 1h1.36a1 1 0 0 1 .98.804l.295 1.473c.497.144.971.342 1.416.587l1.25-.834a1 1 0 0 1 1.262.125l.962.962a1 1 0 0 1 .125 1.262l-.834 1.25c.245.445.443.919.587 1.416l1.473.294a1 1 0 0 1 .804.98v1.361a1 1 0 0 1-.804.98l-1.473.295a6.95 6.95 0 0 1-.587 1.416l.834 1.25a1 1 0 0 1-.125 1.262l-.962.962a1 1 0 0 1-1.262.125l-1.25-.834a6.953 6.953 0 0 1-1.416.587l-.294 1.473a1 1 0 0 1-.98.804H9.32a1 1 0 0 1-.98-.804l-.295-1.473a6.957 6.957 0 0 1-1.416-.587l-1.25.834a1 1 0 0 1-1.262-.125l-.962-.962a1 1 0 0 1-.125-1.262l.834-1.25a6.957 6.957 0 0 1-.587-1.416l-1.473-.294A1 1 0 0 1 1 11.06V9.7a1 1 0 0 1 .804-.98l1.473-.295c.144-.497.342-.971.587-1.416l-.834-1.25a1 1 0 0 1 .125-1.262l.962-.962A1 1 0 0 1 5.38 3.41l1.25.834a6.957 6.957 0 0 1 1.416-.587l.294-1.473ZM13 10a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" clipRule="evenodd" />
+                </svg>
+              </button>
+            )}
 
-          {/* Service indicators */}
-          <div data-tauri-drag-region className="flex items-center gap-3">
-            <ServiceDot label="Engine" status={connected ? "ok" : "disconnected"} />
-            {Object.entries(services).map(([name, status]) => (
-              <ServiceDot key={name} label={name} status={connected ? status : "disconnected"} />
-            ))}
+            {/* Service indicators */}
+            <div data-tauri-drag-region className="flex items-center gap-3">
+              <ServiceDot label="Engine" status={connected ? "ok" : "disconnected"} />
+              {Object.entries(services).map(([name, status]) => (
+                <ServiceDot key={name} label={name} status={connected ? status : "disconnected"} />
+              ))}
+            </div>
           </div>
-        </div>
-      </header>
+        </header>
 
-      {/* Tab bar — sticky below title bar */}
-      {(view === "stream" || view === "fleet") && (
-        <nav className="sticky top-[41px] z-40 border-b border-gray-800 bg-gray-950 px-6 flex items-center gap-6">
-          <button
-            onClick={() => setView("stream")}
-            className={`cursor-pointer py-2.5 text-sm font-medium border-b-2 transition-colors ${
-              view === "stream"
-                ? "border-cyan-500 text-gray-200"
-                : "border-transparent text-gray-500 hover:text-gray-300"
-            }`}
-          >
-            Stream
-          </button>
-          <button
-            onClick={() => setView("fleet")}
-            className={`cursor-pointer py-2.5 text-sm font-medium border-b-2 transition-colors ${
-              view === "fleet"
-                ? "border-cyan-500 text-gray-200"
-                : "border-transparent text-gray-500 hover:text-gray-300"
-            }`}
-          >
-            Fleet
-          </button>
-        </nav>
-      )}
+        {/* Tab bar */}
+        {(view === "stream" || view === "fleet") && (
+          <nav className="border-b border-gray-800 px-6 flex items-center gap-6">
+            <button
+              onClick={() => setView("stream")}
+              className={`cursor-pointer py-2.5 text-sm font-medium border-b-2 transition-colors ${
+                view === "stream"
+                  ? "border-cyan-500 text-gray-200"
+                  : "border-transparent text-gray-500 hover:text-gray-300"
+              }`}
+            >
+              Stream
+            </button>
+            <button
+              onClick={() => setView("fleet")}
+              className={`cursor-pointer py-2.5 text-sm font-medium border-b-2 transition-colors ${
+                view === "fleet"
+                  ? "border-cyan-500 text-gray-200"
+                  : "border-transparent text-gray-500 hover:text-gray-300"
+              }`}
+            >
+              Fleet
+            </button>
+          </nav>
+        )}
+      </div>
 
       {/* Main content */}
       <main className="p-6">
