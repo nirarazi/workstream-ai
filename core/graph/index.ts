@@ -678,10 +678,11 @@ export class ContextGraph {
         t.platform AS t_platform, t.work_item_id AS t_work_item_id,
         t.last_activity AS t_last_activity, t.message_count AS t_message_count
       FROM work_items wi
-      INNER JOIN events e ON e.work_item_id = wi.id
-        AND e.id = (
+      INNER JOIN events e ON e.id = (
           SELECT e2.id FROM events e2
+          LEFT JOIN threads t2 ON e2.thread_id = t2.id
           WHERE e2.work_item_id = wi.id
+             OR t2.work_item_id = wi.id
           ORDER BY e2.timestamp DESC
           LIMIT 1
         )
