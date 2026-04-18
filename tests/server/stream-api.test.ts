@@ -109,6 +109,32 @@ describe("Stream", () => {
     });
   });
 
+  describe("nextAction in stream data", () => {
+    it("nextAction is available from event when blocked", () => {
+      graph.upsertWorkItem({
+        id: "AI-300", source: "jira", title: "Blocked task",
+        currentAtcStatus: "blocked_on_human", currentConfidence: 0.9,
+      });
+      graph.upsertThread({ id: "t1", channelId: "C1", channelName: "orchestrator", platform: "slack", workItemId: "AI-300" });
+      graph.upsertAgent({ id: "a1", name: "Byte", platform: "slack", platformUserId: "U1" });
+      graph.insertEvent({
+        threadId: "t1", messageId: "m1", workItemId: "AI-300", agentId: "a1",
+        status: "blocked_on_human", confidence: 0.9, reason: "Needs approval",
+        rawText: "Please approve", timestamp: new Date().toISOString(),
+        targetedAtOperator: true,
+        actionRequiredFrom: ["U_OPERATOR"],
+        nextAction: "Approve PR #716",
+      });
+
+      // Verify the event has nextAction after round-trip through graph
+      const events = graph.getEventsForWorkItem("AI-300");
+      const blockEvent = events.find(e => e.status === "blocked_on_human");
+      expect(blockEvent).toBeDefined();
+      expect(blockEvent!.nextAction).toBe("Approve PR #716");
+      expect(blockEvent!.actionRequiredFrom).toEqual(["U_OPERATOR"]);
+    });
+  });
+
   describe("multi-agent multi-thread aggregation", () => {
     it("getAgentsForWorkItem returns all agents who have events", () => {
       graph.upsertWorkItem({ id: "AI-100", source: "jira", title: "Test" });

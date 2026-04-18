@@ -19,6 +19,7 @@ import { Summarizer } from "./summarizer/index.js";
 import { detectAnomalies, type FleetItemInput } from "./graph/anomalies.js";
 import { Sidekick, type SidekickMessage } from "./sidekick/index.js";
 import { buildUnifiedStatus, buildTimeline } from "./stream.js";
+import type { OperatorIdentityMap } from "./types.js";
 
 const log = createLogger("server");
 
@@ -38,6 +39,7 @@ export interface EngineState {
   startedAt: Date;
   lastPoll: Date | null;
   processed: number;
+  operatorIdentities: OperatorIdentityMap;
 }
 
 // --- App factory (testable without starting the server) ---
@@ -188,7 +190,7 @@ export function createApp(state: EngineState): Hono {
       .filter((e) => e.status === "blocked_on_human" || e.status === "needs_decision")
       .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())[0] ?? null;
 
-    const unifiedStatus = buildUnifiedStatus(workItem, latestBlockEvent);
+    const unifiedStatus = buildUnifiedStatus(workItem, latestBlockEvent, state.operatorIdentities, agentMap);
     const timeline = buildTimeline(events, agentMap, threadChannelMap);
 
     let statusSummary: string | null = null;
@@ -219,6 +221,7 @@ export function createApp(state: EngineState): Hono {
       latestThreadId: latestThread?.id ?? null,
       latestChannelId: latestThread?.channelId ?? null,
       targetedAtOperator: latestEventForTarget?.targetedAtOperator ?? true,
+      nextAction: latestBlockEvent?.nextAction ?? null,
     });
   });
 
@@ -925,6 +928,10 @@ export function createApp(state: EngineState): Hono {
           : body.messaging.fields;
         await adapter.connect(creds as Record<string, string> & { token: string });
         state.messagingAdapter = adapter;
+        const msgIdentity = adapter.getAuthenticatedUser?.();
+        if (msgIdentity) {
+          state.operatorIdentities.set(adapter.name, msgIdentity);
+        }
         log.info("Messaging adapter reconnected");
       }
 
@@ -939,7 +946,22 @@ export function createApp(state: EngineState): Hono {
           : body.task.fields;
         await adapter.connect(creds as Record<string, string> & { token: string });
         state.taskAdapter = adapter;
+        const taskIdentity = adapter.getAuthenticatedUser?.();
+        if (taskIdentity) {
+          state.operatorIdentities.set(adapter.name, taskIdentity);
+        }
         log.info("Task adapter reconnected");
+      }
+
+      // Refresh operator identities
+      state.operatorIdentities.clear();
+      const msgId = state.messagingAdapter?.getAuthenticatedUser?.();
+      if (msgId && state.messagingAdapter) {
+        state.operatorIdentities.set(state.messagingAdapter.name, msgId);
+      }
+      const taskId = state.taskAdapter?.getAuthenticatedUser?.();
+      if (taskId && state.taskAdapter) {
+        state.operatorIdentities.set(state.taskAdapter.name, taskId);
       }
 
       // Recreate classifier with new config, wired through a fresh UsageTracker
@@ -1161,6 +1183,7 @@ async function main(): Promise<void> {
     startedAt: new Date(),
     lastPoll: null,
     processed: 0,
+    operatorIdentities: new Map(),
   };
 
   // 5. If messaging adapter configured, create and connect via registry
@@ -1175,6 +1198,10 @@ async function main(): Promise<void> {
       (adapter as { setRateLimiter?: (l: unknown) => void }).setRateLimiter?.(rateLimiters.slack);
       await adapter.connect({ token: slackToken });
       state.messagingAdapter = adapter;
+      const msgIdentity = adapter.getAuthenticatedUser?.();
+      if (msgIdentity) {
+        state.operatorIdentities.set(adapter.name, msgIdentity);
+      }
       log.info(`${adapter.displayName} adapter connected`);
 
       // Backfill agent data from platform
@@ -1205,6 +1232,10 @@ async function main(): Promise<void> {
         baseUrl: process.env.WORKSTREAM_JIRA_BASE_URL ?? config.taskAdapter.baseUrl ?? "",
       });
       state.taskAdapter = adapter;
+      const taskIdentity = adapter.getAuthenticatedUser?.();
+      if (taskIdentity) {
+        state.operatorIdentities.set(adapter.name, taskIdentity);
+      }
       log.info(`${adapter.displayName} adapter connected`);
     } catch (err) {
       log.error("Failed to connect task adapter", err);
