@@ -50,6 +50,8 @@ function makeClassification(overrides: Partial<Classification> = {}): Classifica
     workItemIds: [],
     title: "",
     targetedAtOperator: true,
+    actionRequiredFrom: null,
+    nextAction: null,
     ...overrides,
   };
 }
@@ -898,6 +900,36 @@ describe("Pipeline", () => {
         expect.any(String),
         expect.any(Array),
         null,
+      );
+    });
+  });
+
+  describe("actionRequiredFrom and nextAction persistence", () => {
+    it("persists actionRequiredFrom and nextAction from classification", async () => {
+      const msg = makeMessage({ id: "msg-blocked", text: "PR #716 needs your review before we can proceed." });
+      const thread = makeThread({ id: "t-blocked" }, [msg]);
+      vi.mocked(adapter.readThreads).mockResolvedValue([thread]);
+
+      const classification = makeClassification({
+        status: "blocked_on_human",
+        confidence: 0.9,
+        reason: "Agent is waiting for operator review",
+        workItemIds: [],
+        actionRequiredFrom: ["U_GUY123"],
+        nextAction: "Review and approve PR #716",
+      });
+      vi.mocked(classifier.classify).mockResolvedValue(classification);
+
+      await pipeline.processOnce();
+
+      expect(graph.insertEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          threadId: "t-blocked",
+          messageId: "msg-blocked",
+          status: "blocked_on_human",
+          actionRequiredFrom: ["U_GUY123"],
+          nextAction: "Review and approve PR #716",
+        }),
       );
     });
   });

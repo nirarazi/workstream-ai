@@ -257,6 +257,8 @@ export class Pipeline {
           reason: "Work item already completed — skipping classification",
           rawText: message.text,
           timestamp: message.timestamp,
+          actionRequiredFrom: null,
+          nextAction: null,
         });
         return {
           status: "noise",
@@ -290,6 +292,8 @@ export class Pipeline {
         reason: cachedResult.reason + " (deduplicated)",
         rawText: message.text,
         timestamp: message.timestamp,
+        actionRequiredFrom: cachedResult.actionRequiredFrom,
+        nextAction: cachedResult.nextAction,
       });
       return cachedResult;
     }
@@ -382,6 +386,8 @@ export class Pipeline {
       rawText: message.text,
       timestamp: message.timestamp,
       targetedAtOperator: classification.targetedAtOperator,
+      actionRequiredFrom: classification.actionRequiredFrom,
+      nextAction: classification.nextAction,
     });
 
     // Step 6: Update work item status if confidence is higher than existing
@@ -429,6 +435,8 @@ export class Pipeline {
             rawText: message.text,
             timestamp: message.timestamp,
             targetedAtOperator: itemClassification.targetedAtOperator,
+            actionRequiredFrom: itemClassification.actionRequiredFrom,
+            nextAction: itemClassification.nextAction,
           });
         }
       }
