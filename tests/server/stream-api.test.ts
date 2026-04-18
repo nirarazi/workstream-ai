@@ -18,7 +18,7 @@ describe("Stream", () => {
   });
 
   describe("buildUnifiedStatus", () => {
-    it("shows waiting time for blocked items", () => {
+    it("shows waiting time for blocked items with neutral label when actor unknown", () => {
       const workItem: WorkItem = {
         id: "AI-100", source: "jira", title: "Test",
         externalStatus: null, assignee: null, url: null,
@@ -36,7 +36,7 @@ describe("Stream", () => {
         nextAction: null,
       };
       const result = buildUnifiedStatus(workItem, blockEvent);
-      expect(result).toMatch(/Waiting on you · 2h \d+m/);
+      expect(result).toMatch(/^Blocked · 2h \d+m$/);
     });
 
     it("shows label without time for in_progress items", () => {
@@ -238,7 +238,7 @@ describe("Stream", () => {
       expect(result).toMatch(/Needs Guy's decision · 1h \d+m/);
     });
 
-    it("falls back to hardcoded labels when actionRequiredFrom is null", () => {
+    it("falls back to neutral 'Blocked' label when actionRequiredFrom is null", () => {
       const workItem: WorkItem = {
         id: "AI-100", source: "jira", title: "Test",
         externalStatus: null, assignee: null, url: null,
@@ -258,7 +258,7 @@ describe("Stream", () => {
       const operatorIdentities: OperatorIdentityMap = new Map();
       const agentMap = new Map<string, string>();
       const result = buildUnifiedStatus(workItem, blockEvent, operatorIdentities, agentMap);
-      expect(result).toMatch(/Waiting on you · 5m/);
+      expect(result).toMatch(/^Blocked · \d+m$/);
     });
 
     it("uses raw user ID when name cannot be resolved", () => {

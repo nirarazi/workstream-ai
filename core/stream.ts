@@ -64,10 +64,10 @@ export function buildUnifiedStatus(
         : `Waiting on ${actorName}`;
     }
   } else {
-    // Fallback to hardcoded labels (backwards-compatible)
+    // Fallback to neutral labels when actionRequiredFrom is not available
     const statusLabels: Record<string, string> = {
-      blocked_on_human: "Waiting on you",
-      needs_decision: "Needs your decision",
+      blocked_on_human: "Blocked",
+      needs_decision: "Needs decision",
       in_progress: "In progress",
       completed: "Completed",
       noise: "No action needed",
