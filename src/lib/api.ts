@@ -370,6 +370,7 @@ export interface StreamData {
   timeline: TimelineEntry[];
   latestThreadId: string | null;
   latestChannelId: string | null;
+  nextAction: string | null;
 }
 
 export async function fetchStream(workItemId: string): Promise<StreamData> {

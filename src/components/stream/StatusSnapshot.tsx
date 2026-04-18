@@ -1,5 +1,6 @@
 import type { StreamData } from "../../lib/api";
 import { openExternalUrl } from "../../lib/api";
+import CopyableId from "../CopyableId";
 
 const STREAM_STATUS_STYLE: Record<string, { bg: string; text: string; border: string; dot?: string }> = {
   blocked_on_human: { bg: "bg-red-500/15", text: "text-red-400", border: "border-red-500/30", dot: "bg-red-400" },
@@ -31,13 +32,19 @@ export default function StatusSnapshot({ data }: StatusSnapshotProps) {
       {!workItem.id.startsWith("thread:") && (
         <div className="text-xs font-mono text-gray-500 mb-1">{workItem.id}</div>
       )}
-      <h2 className="text-lg font-semibold text-white mb-3">
+      <h2 className="text-lg font-semibold text-white mb-2">
         {workItem.title || (workItem.id.startsWith("thread:") ? "Untitled conversation" : workItem.id)}
       </h2>
+      {import.meta.env.DEV && (
+        <div className="mb-2"><CopyableId id={workItem.id} /></div>
+      )}
       <div className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium mb-3 ${style.bg} ${style.text} border ${style.border}`}>
         {style.dot && <span className={`w-1.5 h-1.5 rounded-full ${style.dot} animate-pulse`} />}
         {unifiedStatus}
       </div>
+      {data.nextAction && (
+        <p className="text-xs text-gray-400 mt-1 pl-0.5">{data.nextAction}</p>
+      )}
       {statusSummary && (
         <p className="text-sm text-gray-300 leading-relaxed mb-3">{statusSummary}</p>
       )}
