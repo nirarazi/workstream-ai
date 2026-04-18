@@ -115,12 +115,18 @@ export class Classifier {
     return new Classifier(provider, prompt.system, fewShot, undefined, operatorContext);
   }
 
-  async classify(message: string, openWorkItems?: Array<{ id: string; title: string }>): Promise<Classification> {
+  async classify(
+    message: string,
+    openWorkItems?: Array<{ id: string; title: string }>,
+    operatorIdentity?: OperatorIdentity | null,
+  ): Promise<Classification> {
     try {
       // Rate-limit LLM calls
       if (this.rateLimiter) {
         await this.rateLimiter.acquire();
       }
+
+      const effectiveOperator = operatorIdentity ?? this.operatorIdentity;
 
       let effectiveSystemPrompt = this.systemPrompt;
 
@@ -128,8 +134,8 @@ export class Classifier {
         effectiveSystemPrompt += `\n\n## Operator Context\n\n${this.operatorContext}`;
       }
 
-      if (this.operatorIdentity) {
-        effectiveSystemPrompt += `\n\n## Operator Identity\n\nThe operator using this tool is ${this.operatorIdentity.userName} (platform user ID: ${this.operatorIdentity.userId}). When determining action_required_from, use platform user IDs from @mentions in the message. If the message uses "you"/"your" to address someone, resolve it to the appropriate user ID based on the conversation context.`;
+      if (effectiveOperator) {
+        effectiveSystemPrompt += `\n\n## Operator Identity\n\nThe operator using this tool is ${effectiveOperator.userName} (platform user ID: ${effectiveOperator.userId}). When determining action_required_from, use platform user IDs from @mentions in the message. If the message uses "you"/"your" to address someone, resolve it to the appropriate user ID based on the conversation context.`;
       }
 
       if (openWorkItems && openWorkItems.length > 0) {
@@ -156,7 +162,7 @@ export class Classifier {
         reason: result.reason,
         workItemIds: result.workItemIds,
         title: result.title,
-        targetedAtOperator: this.computeTargetedAtOperator(result),
+        targetedAtOperator: this.computeTargetedAtOperator(result, effectiveOperator),
         actionRequiredFrom: result.action_required_from ?? null,
         nextAction: result.next_action ?? null,
         breakdown: result.breakdown?.map((b) => {
@@ -168,7 +174,7 @@ export class Classifier {
             confidence: Math.max(0, Math.min(1, b.confidence)),
             reason: b.reason,
             title: b.title,
-            targetedAtOperator: this.computeTargetedAtOperator(b),
+            targetedAtOperator: this.computeTargetedAtOperator(b, effectiveOperator),
             actionRequiredFrom: b.action_required_from ?? null,
             nextAction: b.next_action ?? null,
           };
@@ -192,13 +198,15 @@ export class Classifier {
 
   private computeTargetedAtOperator(
     result: { action_required_from?: string[] | null; targeted_at_operator?: boolean },
+    operator?: OperatorIdentity | null,
   ): boolean {
     if (result.action_required_from !== undefined) {
       if (result.action_required_from === null || result.action_required_from.length === 0) {
         return false;
       }
-      if (this.operatorIdentity) {
-        return result.action_required_from.includes(this.operatorIdentity.userId);
+      const op = operator ?? this.operatorIdentity;
+      if (op) {
+        return result.action_required_from.includes(op.userId);
       }
     }
     return result.targeted_at_operator !== false;
