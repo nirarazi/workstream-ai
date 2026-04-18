@@ -42,10 +42,11 @@ interface SlackUser {
   };
 }
 
-/** Resolved user info: display name + avatar URL */
+/** Resolved user info: display name, avatar URL, and bot flag */
 interface UserInfo {
   name: string;
   avatar: string;
+  isBot: boolean;
 }
 
 /** Convert a Slack epoch timestamp (e.g. "1711234567.123456") to ISO 8601 */
@@ -351,6 +352,7 @@ export class SlackAdapter implements MessagingAdapter {
         text: this.resolveSlackMentions(msg.text ?? ""),
         timestamp: msg.ts ? slackTsToISO(msg.ts) : "",
         platform: "slack",
+        senderType: userInfo ? (userInfo.isBot ? "agent" : "human") as const : "unknown" as const,
       };
     });
   }
@@ -580,6 +582,7 @@ export class SlackAdapter implements MessagingAdapter {
           this.userInfoMap.set(member.id, {
             name: displayName,
             avatar: member.profile?.image_48 ?? "",
+            isBot: member.is_bot ?? false,
           });
         }
       }
@@ -607,6 +610,7 @@ export class SlackAdapter implements MessagingAdapter {
         text: this.resolveSlackMentions(msg.text ?? ""),
         timestamp: msg.ts ? slackTsToISO(msg.ts) : "",
         platform: "slack",
+        senderType: userInfo ? (userInfo.isBot ? "agent" : "human") as const : "unknown" as const,
       };
     });
 
