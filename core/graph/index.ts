@@ -96,6 +96,7 @@ function toAgent(row: AgentRow): Agent {
     platformUserId: row.platform_user_id,
     role: row.role,
     avatarUrl: row.avatar_url,
+    isBot: row.is_bot != null ? row.is_bot === 1 : null,
     firstSeen: row.first_seen,
     lastSeen: row.last_seen,
   };
@@ -144,22 +145,25 @@ export class ContextGraph {
     platformUserId: string;
     role?: string | null;
     avatarUrl?: string | null;
+    isBot?: boolean | null;
   }): Agent {
     const now = new Date().toISOString();
     const id = agent.id ?? randomUUID();
 
     const stmt = this.db.db.prepare(`
-      INSERT INTO agents (id, name, platform, platform_user_id, role, avatar_url, first_seen, last_seen)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO agents (id, name, platform, platform_user_id, role, avatar_url, is_bot, first_seen, last_seen)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         name = excluded.name,
         platform = excluded.platform,
         platform_user_id = excluded.platform_user_id,
         role = COALESCE(excluded.role, agents.role),
         avatar_url = COALESCE(excluded.avatar_url, agents.avatar_url),
+        is_bot = COALESCE(excluded.is_bot, agents.is_bot),
         last_seen = excluded.last_seen
     `);
-    stmt.run(id, agent.name, agent.platform, agent.platformUserId, agent.role ?? null, agent.avatarUrl ?? null, now, now);
+    const isBotValue = agent.isBot != null ? (agent.isBot ? 1 : 0) : null;
+    stmt.run(id, agent.name, agent.platform, agent.platformUserId, agent.role ?? null, agent.avatarUrl ?? null, isBotValue, now, now);
     log.debug("Upserted agent", id);
 
     return this.getAgentById(id)!;
@@ -617,7 +621,7 @@ export class ContextGraph {
         e.next_action AS e_next_action,
         a.id AS a_id, a.name AS a_name, a.platform AS a_platform,
         a.platform_user_id AS a_platform_user_id, a.role AS a_role,
-        a.avatar_url AS a_avatar_url,
+        a.avatar_url AS a_avatar_url, a.is_bot AS a_is_bot,
         a.first_seen AS a_first_seen, a.last_seen AS a_last_seen,
         t.id AS t_id, t.channel_id AS t_channel_id, t.channel_name AS t_channel_name,
         t.platform_meta AS t_platform_meta,
@@ -667,7 +671,7 @@ export class ContextGraph {
         e.next_action AS e_next_action,
         a.id AS a_id, a.name AS a_name, a.platform AS a_platform,
         a.platform_user_id AS a_platform_user_id, a.role AS a_role,
-        a.avatar_url AS a_avatar_url,
+        a.avatar_url AS a_avatar_url, a.is_bot AS a_is_bot,
         a.first_seen AS a_first_seen, a.last_seen AS a_last_seen,
         t.id AS t_id, t.channel_id AS t_channel_id, t.channel_name AS t_channel_name,
         t.platform_meta AS t_platform_meta,
@@ -715,7 +719,7 @@ export class ContextGraph {
         e.next_action AS e_next_action,
         a.id AS a_id, a.name AS a_name, a.platform AS a_platform,
         a.platform_user_id AS a_platform_user_id, a.role AS a_role,
-        a.avatar_url AS a_avatar_url,
+        a.avatar_url AS a_avatar_url, a.is_bot AS a_is_bot,
         a.first_seen AS a_first_seen, a.last_seen AS a_last_seen,
         t.id AS t_id, t.channel_id AS t_channel_id, t.channel_name AS t_channel_name,
         t.platform_meta AS t_platform_meta,
@@ -786,6 +790,7 @@ function mapActionableRow(row: Record<string, unknown>): ActionableItem {
     nextAction: (row.e_next_action as string | null) ?? null,
   };
 
+  const aIsBot = row.a_is_bot as number | null | undefined;
   const agent: Agent | null = row.a_id
     ? {
         id: row.a_id as string,
@@ -794,6 +799,7 @@ function mapActionableRow(row: Record<string, unknown>): ActionableItem {
         platformUserId: row.a_platform_user_id as string,
         role: row.a_role as string | null,
         avatarUrl: (row.a_avatar_url as string | null) ?? null,
+        isBot: aIsBot != null ? aIsBot === 1 : null,
         firstSeen: row.a_first_seen as string,
         lastSeen: row.a_last_seen as string,
       }
