@@ -20,6 +20,9 @@ export interface OperatorIdentity {
   userName: string;
 }
 
+/** Operator identities keyed by adapter/platform name (e.g., "slack", "jira") */
+export type OperatorIdentityMap = Map<string, OperatorIdentity>;
+
 export interface ClassificationBreakdown {
   workItemId: string;
   status: StatusCategory;

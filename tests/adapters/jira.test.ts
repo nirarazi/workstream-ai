@@ -466,6 +466,54 @@ describe("JiraAdapter", () => {
     });
   });
 
+  // -- getAuthenticatedUser --
+
+  describe("JiraAdapter.getAuthenticatedUser", () => {
+    it("returns null before connect", () => {
+      const adapter = new JiraAdapter();
+      expect(adapter.getAuthenticatedUser()).toBeNull();
+    });
+
+    it("returns userId and userName after connect with accountId", async () => {
+      mockFetch.mockResolvedValueOnce(
+        jsonResponse({ displayName: "Operator", accountId: "acc-123", emailAddress: "op@example.com" }),
+      );
+
+      await adapter.connect(CREDENTIALS);
+
+      expect(adapter.getAuthenticatedUser()).toEqual({
+        userId: "acc-123",
+        userName: "Operator",
+      });
+    });
+
+    it("falls back to emailAddress when accountId is missing", async () => {
+      mockFetch.mockResolvedValueOnce(
+        jsonResponse({ displayName: "Operator", emailAddress: "op@example.com" }),
+      );
+
+      await adapter.connect(CREDENTIALS);
+
+      expect(adapter.getAuthenticatedUser()).toEqual({
+        userId: "op@example.com",
+        userName: "Operator",
+      });
+    });
+
+    it("uses empty string for userId when neither accountId nor emailAddress present", async () => {
+      mockFetch.mockResolvedValueOnce(
+        jsonResponse({ displayName: "Operator" }),
+      );
+
+      await adapter.connect(CREDENTIALS);
+
+      expect(adapter.getAuthenticatedUser()).toEqual({
+        userId: "",
+        userName: "Operator",
+      });
+    });
+  });
+
   // -- ADF description extraction --
 
   describe("ADF description extraction", () => {

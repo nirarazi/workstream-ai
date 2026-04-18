@@ -161,9 +161,14 @@ export class JiraAdapter implements TaskAdapter {
   private authToken = "";
   private connected = false;
   private rateLimiter?: RateLimiter;
+  private authedUser: { userId: string; userName: string } | null = null;
 
   setRateLimiter(limiter: RateLimiter): void {
     this.rateLimiter = limiter;
+  }
+
+  getAuthenticatedUser(): { userId: string; userName: string } | null {
+    return this.authedUser;
   }
 
   private get headers(): Record<string, string> {
@@ -222,7 +227,11 @@ export class JiraAdapter implements TaskAdapter {
       throw new Error(`Jira connection verification failed (${response.status}): ${text}`);
     }
 
-    const user = (await response.json()) as { displayName: string };
+    const user = (await response.json()) as { displayName: string; emailAddress?: string; accountId?: string };
+    this.authedUser = {
+      userId: user.accountId ?? user.emailAddress ?? "",
+      userName: user.displayName,
+    };
     log.info("Connected to Jira as", user.displayName);
     this.connected = true;
   }
