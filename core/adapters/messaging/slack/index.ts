@@ -140,6 +140,7 @@ export class SlackAdapter implements MessagingAdapter {
   private messageHandler: ((msg: Message) => void) | null = null;
   private limiter = new SlackRateLimiter();
   private workspaceUrl: string | null = null;
+  private authedUser: { userId: string; userName: string } | null = null;
 
   /** @deprecated The Slack adapter now manages its own per-method rate limiting internally. */
   setRateLimiter(_limiter: unknown): void {
@@ -169,6 +170,10 @@ export class SlackAdapter implements MessagingAdapter {
       const authResult = await this.client.auth.test();
       // Store workspace URL for constructing Slack links (e.g. channel URLs)
       this.workspaceUrl = (authResult.url as string | undefined)?.replace(/\/+$/, "") ?? null;
+      this.authedUser = {
+        userId: (authResult.user_id as string) ?? "",
+        userName: (authResult.user as string) ?? "",
+      };
       log.info(`Connected to Slack as ${authResult.user} (team: ${authResult.team})`);
 
       // Pre-fetch user and channel lists so names, avatars, and privacy flags
@@ -368,6 +373,11 @@ export class SlackAdapter implements MessagingAdapter {
   /** Return platform metadata for the frontend (workspace URL, etc.) */
   getMetadata(): Record<string, unknown> {
     return { slackWorkspaceUrl: this.workspaceUrl };
+  }
+
+  /** Return the authenticated operator's identity */
+  getAuthenticatedUser(): { userId: string; userName: string } | null {
+    return this.authedUser;
   }
 
   /** Build a Slack thread URL from channel/thread IDs */
