@@ -5,6 +5,7 @@ import StatusBadge from "./StatusBadge";
 import FleetFilters from "./FleetFilters";
 import WorkItemStream from "./WorkItemStream";
 import { getSerializeMention } from "../messaging/registry";
+import CopyableId from "./CopyableId";
 
 const POLL_INTERVAL = 10000;
 
@@ -151,6 +152,9 @@ export default function FleetBoard({ platformMeta }: FleetBoardProps): JSX.Eleme
                   ) : item.workItem.id.startsWith("thread:") ? (
                     <span className="text-sm font-semibold text-gray-400">Untitled conversation</span>
                   ) : null}
+                  {import.meta.env.DEV && item.workItem.id.startsWith("thread:") && (
+                    <div className="mt-0.5"><CopyableId id={item.workItem.id} /></div>
+                  )}
                 </td>
                 <td className="px-3 py-2.5">
                   {item.agent ? (

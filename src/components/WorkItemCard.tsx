@@ -8,6 +8,7 @@ import MentionInput, { type MentionInputHandle } from "./MentionInput";
 import MessageRenderer from "../messaging/MessageRenderer";
 import ChannelLabel from "../messaging/ChannelLabel";
 import { getSerializeMention } from "../messaging/registry";
+import CopyableId from "./CopyableId";
 
 interface WorkItemCardProps {
   item: ActionableItem;
@@ -181,6 +182,9 @@ export default function WorkItemCard({ item, platformMeta, userMap, mentionables
           </div>
           {workItem.title && !isInferred && (
             <p className="mt-0.5 text-xs text-gray-400 truncate">{workItem.title}</p>
+          )}
+          {import.meta.env.DEV && (
+            <div className="mt-0.5"><CopyableId id={workItem.id} /></div>
           )}
         </div>
         <StatusBadge status={workItem.currentAtcStatus ?? latestEvent.status} />
