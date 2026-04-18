@@ -219,10 +219,14 @@ export class Pipeline {
       const existing = this.graph.getEventByMessageId(message.id, thread.id)!;
       return {
         status: existing.status as Classification["status"],
+        entryType: existing.entryType,
         confidence: existing.confidence,
         reason: existing.reason,
         workItemIds: existing.workItemId ? [existing.workItemId] : [],
         title: "",
+        targetedAtOperator: existing.targetedAtOperator,
+        actionRequiredFrom: existing.actionRequiredFrom,
+        nextAction: existing.nextAction,
       };
     }
 
