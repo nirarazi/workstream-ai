@@ -113,16 +113,23 @@ export class Classifier {
     return new Classifier(provider, prompt.system, fewShot, undefined, operatorContext);
   }
 
-  async classify(message: string): Promise<Classification> {
+  async classify(message: string, openWorkItems?: Array<{ id: string; title: string }>): Promise<Classification> {
     try {
       // Rate-limit LLM calls
       if (this.rateLimiter) {
         await this.rateLimiter.acquire();
       }
 
-      const effectiveSystemPrompt = this.operatorContext
-        ? `${this.systemPrompt}\n\n## Operator Context\n\n${this.operatorContext}`
-        : this.systemPrompt;
+      let effectiveSystemPrompt = this.systemPrompt;
+
+      if (this.operatorContext) {
+        effectiveSystemPrompt += `\n\n## Operator Context\n\n${this.operatorContext}`;
+      }
+
+      if (openWorkItems && openWorkItems.length > 0) {
+        const itemLines = openWorkItems.map(wi => `- ${wi.id}: ${wi.title}`).join("\n");
+        effectiveSystemPrompt += `\n\n## Open Work Items\n\nBelow are currently open work items. If the message is about the same topic as an existing item, return that item's ID in workItemIds instead of leaving it empty. This prevents duplicate work items.\n\n${itemLines}`;
+      }
 
       const result = await this.provider.classify(
         message,
@@ -143,7 +150,7 @@ export class Classifier {
         reason: result.reason,
         workItemIds: result.workItemIds,
         title: result.title,
-        targetedAtOperator: (result as any).targeted_at_operator !== false,
+        targetedAtOperator: result.targeted_at_operator !== false,
         breakdown: result.breakdown?.map((b) => {
           const bStatus = (VALID_STATUSES.has(b.status) ? b.status : "noise") as StatusCategory;
           return {
@@ -153,7 +160,7 @@ export class Classifier {
             confidence: Math.max(0, Math.min(1, b.confidence)),
             reason: b.reason,
             title: b.title,
-            targetedAtOperator: (b as any).targeted_at_operator !== false,
+            targetedAtOperator: b.targeted_at_operator !== false,
           };
         }),
       };

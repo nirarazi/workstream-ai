@@ -155,6 +155,50 @@ describe("Classifier", () => {
       expect(result.status).toBe(status);
     }
   });
+
+  it("appends work item context to the system prompt", async () => {
+    const provider = mockProvider({
+      status: "blocked_on_human",
+      confidence: 0.9,
+      reason: "test",
+      workItemIds: ["thread:existing.123"],
+      title: "Missing API key",
+    });
+    const classifier = new Classifier(provider, SYSTEM_PROMPT, FEW_SHOT);
+
+    const context = [
+      { id: "thread:existing.123", title: "Missing API key for Anthropic" },
+      { id: "AI-100", title: "Fix login bug" },
+    ];
+
+    await classifier.classify("Missing API key error again", context);
+
+    // The system prompt passed to the provider should contain the work item context
+    const callArgs = (provider.classify as ReturnType<typeof vi.fn>).mock.calls[0];
+    const systemPrompt = callArgs[1] as string;
+    expect(systemPrompt).toContain("thread:existing.123");
+    expect(systemPrompt).toContain("Missing API key for Anthropic");
+    expect(systemPrompt).toContain("AI-100");
+    expect(systemPrompt).toContain("Fix login bug");
+  });
+
+  it("works without work item context (backward compatible)", async () => {
+    const provider = mockProvider({
+      status: "noise",
+      confidence: 0.9,
+      reason: "test",
+      workItemIds: [],
+    });
+    const classifier = new Classifier(provider, SYSTEM_PROMPT, FEW_SHOT);
+
+    const result = await classifier.classify("Hello");
+
+    expect(result.status).toBe("noise");
+    // System prompt should NOT contain work item section when no context provided
+    const callArgs = (provider.classify as ReturnType<typeof vi.fn>).mock.calls[0];
+    const systemPrompt = callArgs[1] as string;
+    expect(systemPrompt).not.toContain("Open Work Items");
+  });
 });
 
 // --- OpenAICompatibleProvider response parsing tests ---
