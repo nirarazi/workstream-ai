@@ -80,9 +80,11 @@ const ConfigSchema = z.object({
   }),
   operator: z.object({
     name: z.string(),
+    role: z.string(),
     context: z.string(),
   }).optional().default({
     name: "",
+    role: "",
     context: "",
   }),
   llmBudget: z.object({

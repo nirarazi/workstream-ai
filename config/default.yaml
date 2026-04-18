@@ -73,6 +73,7 @@ sidekick:
 
 operator:
   name: ""
+  role: ""
   context: ""
 
 llmBudget:
