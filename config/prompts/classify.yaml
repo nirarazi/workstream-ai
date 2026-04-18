@@ -13,7 +13,8 @@ system: |
   - reason: brief explanation of why you chose this status
   - workItemIds: array of work item IDs mentioned (e.g. "AI-382", "IT-100", "PR #716")
   - title: a short descriptive title (5-8 words) summarizing the topic or task being discussed. This is used as the work item label when no ticket ID is found.
-  - targeted_at_operator: boolean — true if the message is directed at or requires action from the operator. false if the block/request is aimed at someone else (a different team member, a third party, an automated system). When an Operator Context section is provided, use it to determine whether the operator is the intended recipient.
+  - action_required_from: array of platform user IDs (e.g. ["UA2V04ZU2"]) identifying who needs to take the next action. Extract user IDs from @mentions in the message (format: <@USERID> or <@USERID|name>). If the message uses "you"/"your", resolve to the user being addressed based on context. Return null (not an empty array) for pure FYI / informational messages where no one needs to act. Return an empty array [] only if action is needed but the actor cannot be determined.
+  - next_action: short free-text description of what the action taker needs to do (e.g. "Approve PR #716", "Provide S3 bucket credentials", "Choose REST vs GraphQL"). Return null when no action is needed (same cases where action_required_from is null). Keep it under 10 words — this is displayed as an action label in the inbox.
 
   ## Status Definitions
 
@@ -75,7 +76,8 @@ few_shot_examples:
       reason: "Agent blocked on infrastructure access that requires human intervention"
       workItemIds: ["AI-401"]
       title: "S3 bucket IAM permissions issue"
-      targeted_at_operator: true
+      action_required_from: []
+      next_action: "Update IAM role with PutObject access"
 
   - role: user
     content: "For MS-112, I see two approaches: (A) Add a new endpoint /api/v2/reports with the updated schema, or (B) version the existing endpoint with a query parameter. Which should I go with?"
@@ -113,7 +115,8 @@ few_shot_examples:
       reason: "Agent reporting another agent's status — blocked on a third party, not requesting operator action. 'All good' confirms no intervention needed."
       workItemIds: []
       title: "Chess status update — awaiting Guy's review"
-      targeted_at_operator: false
+      action_required_from: null
+      next_action: null
 
   - role: user
     content: "Gateway is down (ws://127.0.0.1:18789 timing out). Cannot check Chess or agent sessions this cycle. No action possible until gateway recovers. Will retry at next heartbeat cycle."
@@ -124,7 +127,8 @@ few_shot_examples:
       reason: "Agent blocked by infrastructure outage but will self-recover — no human action needed"
       workItemIds: []
       title: "Gateway outage — auto-retry pending"
-      targeted_at_operator: false
+      action_required_from: null
+      next_action: null
 
   - role: user
     content: "New lead from dev site: John Smith, john@example.com, requesting demo for fleet management platform. Source: website contact form. CRM ticket #4521 created automatically."
@@ -134,7 +138,8 @@ few_shot_examples:
       reason: "Automated CRM alert for sales team, not operator"
       workItemIds: []
       title: "New lead intake from website"
-      targeted_at_operator: false
+      action_required_from: null
+      next_action: null
 
   - role: user
     content: "Morning briefing: AI-382 PR merged and deployed to prod — done. IT-205 is blocked waiting for the client to provide API credentials. MS-112 is about 60% through implementation, on track. AI-401 needs your decision on whether to use REST or GraphQL for the new endpoint."
@@ -155,7 +160,8 @@ few_shot_examples:
           confidence: 0.9
           reason: "Waiting for client to provide API credentials"
           title: "Client API credentials needed"
-          targeted_at_operator: true
+          action_required_from: null
+          next_action: null
         - workItemId: "MS-112"
           status: in_progress
           confidence: 0.85
@@ -166,6 +172,8 @@ few_shot_examples:
           confidence: 0.9
           reason: "Decision needed on REST vs GraphQL"
           title: "REST vs GraphQL endpoint decision"
+          action_required_from: []
+          next_action: "Decide REST vs GraphQL for endpoint"
 
   - role: user
     content: |
@@ -176,4 +184,5 @@ few_shot_examples:
       reason: "Same Anthropic API key error as existing work item thread:abc.123"
       workItemIds: ["thread:abc.123"]
       title: "Missing API key for Anthropic provider"
-      targeted_at_operator: true
+      action_required_from: []
+      next_action: "Configure gateway auth for Anthropic provider"
