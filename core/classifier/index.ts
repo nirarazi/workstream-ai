@@ -5,7 +5,7 @@ import { resolve } from "node:path";
 import { parse as parseYaml } from "yaml";
 import { createLogger } from "../logger.js";
 import { findProjectRoot, type Config } from "../config.js";
-import type { Classification, EntryType, OperatorIdentity, StatusCategory } from "../types.js";
+import type { Classification, EntryType, OperatorIdentityMap, StatusCategory } from "../types.js";
 import { OpenAICompatibleProvider, type BackoffState } from "./providers/openai-compatible.js";
 import type { ModelProvider } from "./providers/interface.js";
 import type { RateLimiter } from "../rate-limiter.js";
@@ -82,17 +82,27 @@ export class Classifier {
   private readonly provider: ModelProvider;
   private readonly systemPrompt: string;
   private readonly fewShotMessages: Array<{ role: string; content: string }>;
+  private readonly operatorRole: string;
+  private readonly operatorIdentities: OperatorIdentityMap | null;
   private readonly operatorContext: string;
-  private readonly operatorIdentity: OperatorIdentity | null;
   private rateLimiter?: RateLimiter;
 
-  constructor(provider: ModelProvider, systemPrompt: string, fewShotMessages: Array<{ role: string; content: string }>, rateLimiter?: RateLimiter, operatorContext?: string, operatorIdentity?: OperatorIdentity | null) {
+  constructor(
+    provider: ModelProvider,
+    systemPrompt: string,
+    fewShotMessages: Array<{ role: string; content: string }>,
+    rateLimiter?: RateLimiter,
+    operatorRole?: string,
+    operatorIdentities?: OperatorIdentityMap | null,
+    operatorContext?: string,
+  ) {
     this.provider = provider;
     this.systemPrompt = systemPrompt;
     this.fewShotMessages = fewShotMessages;
     this.rateLimiter = rateLimiter;
+    this.operatorRole = operatorRole ?? "";
+    this.operatorIdentities = operatorIdentities ?? null;
     this.operatorContext = operatorContext ?? "";
-    this.operatorIdentity = operatorIdentity ?? null;
   }
 
   setRateLimiter(limiter: RateLimiter): void {
@@ -112,13 +122,15 @@ export class Classifier {
     const provider = createProvider(config);
     const fewShot = buildFewShotMessages(prompt.few_shot_examples);
     const operatorContext = buildOperatorContext(config);
-    return new Classifier(provider, prompt.system, fewShot, undefined, operatorContext);
+    const operatorRole = config.operator?.role ?? "";
+    return new Classifier(provider, prompt.system, fewShot, undefined, operatorRole, null, operatorContext);
   }
 
   async classify(
     message: string,
     openWorkItems?: Array<{ id: string; title: string }>,
-    operatorIdentity?: OperatorIdentity | null,
+    operatorIdentities?: OperatorIdentityMap | null,
+    senderContext?: { senderName: string; senderType: string; channelName: string },
   ): Promise<Classification> {
     try {
       // Rate-limit LLM calls
@@ -126,16 +138,37 @@ export class Classifier {
         await this.rateLimiter.acquire();
       }
 
-      const effectiveOperator = operatorIdentity ?? this.operatorIdentity;
+      const effectiveIdentities = operatorIdentities ?? this.operatorIdentities;
 
       let effectiveSystemPrompt = this.systemPrompt;
 
-      if (this.operatorContext) {
-        effectiveSystemPrompt += `\n\n## Operator Context\n\n${this.operatorContext}`;
-      }
+      // Build operator profile block if identities are available
+      if (effectiveIdentities && effectiveIdentities.size > 0) {
+        const firstIdentity = [...effectiveIdentities.values()][0];
+        const platformPairs = [...effectiveIdentities.entries()]
+          .map(([platform, id]) => `${platform}:${id.userId}`)
+          .join(", ");
 
-      if (effectiveOperator) {
-        effectiveSystemPrompt += `\n\n## Operator Identity\n\nThe operator using this tool is ${effectiveOperator.userName} (platform user ID: ${effectiveOperator.userId}). When determining action_required_from, use platform user IDs from @mentions in the message. If the message uses "you"/"your" to address someone, resolve it to the appropriate user ID based on the conversation context.`;
+        let profileBlock = `\n\n## Operator Profile\n\nName: ${firstIdentity.userName}\nPlatform identities: ${platformPairs}`;
+        if (this.operatorRole) {
+          profileBlock += `\nRole: ${this.operatorRole}`;
+        }
+        if (this.operatorContext) {
+          profileBlock += `\n\n${this.operatorContext}`;
+        }
+        profileBlock += `\n\nWhen classifying targeted_at_operator, consider: would this item belong in the operator's inbox? Return true if:
+- The operator is explicitly mentioned or addressed
+- An agent is blocked and needs human intervention (the operator is the fleet's backstop)
+- The issue is within the operator's stated remit
+
+Return false if:
+- The block is on an external party (client, vendor) with no operator action possible
+- Another human is handling it and hasn't escalated
+- It's a status report about someone else's block with no request to intervene`;
+
+        effectiveSystemPrompt += profileBlock;
+      } else if (this.operatorContext) {
+        effectiveSystemPrompt += `\n\n## Operator Context\n\n${this.operatorContext}`;
       }
 
       if (openWorkItems && openWorkItems.length > 0) {
@@ -143,8 +176,14 @@ export class Classifier {
         effectiveSystemPrompt += `\n\n## Open Work Items\n\nBelow are currently open work items. If the message is about the same topic as an existing item, return that item's ID in workItemIds instead of leaving it empty. This prevents duplicate work items.\n\n${itemLines}`;
       }
 
+      // Prepend sender context to message if provided
+      let effectiveMessage = message;
+      if (senderContext) {
+        effectiveMessage = `[Sender: ${senderContext.senderName} (${senderContext.senderType}) | Channel: ${senderContext.channelName}]\n${message}`;
+      }
+
       const result = await this.provider.classify(
-        message,
+        effectiveMessage,
         effectiveSystemPrompt,
         this.fewShotMessages,
       );
@@ -162,7 +201,7 @@ export class Classifier {
         reason: result.reason,
         workItemIds: result.workItemIds,
         title: result.title,
-        targetedAtOperator: this.computeTargetedAtOperator(result, effectiveOperator),
+        targetedAtOperator: this.computeTargetedAtOperator(result, effectiveIdentities),
         actionRequiredFrom: result.action_required_from ?? null,
         nextAction: result.next_action ?? null,
         breakdown: result.breakdown?.map((b) => {
@@ -174,7 +213,7 @@ export class Classifier {
             confidence: Math.max(0, Math.min(1, b.confidence)),
             reason: b.reason,
             title: b.title,
-            targetedAtOperator: this.computeTargetedAtOperator(b, effectiveOperator),
+            targetedAtOperator: this.computeTargetedAtOperator(b, effectiveIdentities),
             actionRequiredFrom: b.action_required_from ?? null,
             nextAction: b.next_action ?? null,
           };
@@ -198,21 +237,28 @@ export class Classifier {
 
   private computeTargetedAtOperator(
     result: { action_required_from?: string[] | null; targeted_at_operator?: boolean },
-    operator?: OperatorIdentity | null,
+    operatorIdentities?: OperatorIdentityMap | null,
   ): boolean {
     if (result.action_required_from !== undefined) {
-      if (result.action_required_from === null || result.action_required_from.length === 0) {
+      // null = FYI, no action needed
+      if (result.action_required_from === null) {
         return false;
       }
-      const op = operator ?? this.operatorIdentity;
-      if (op) {
-        return result.action_required_from.includes(op.userId);
+      // Empty array = action needed but actor unknown → fall back to LLM's judgment,
+      // defaulting to true (operator is the backstop for unattributed blocks)
+      if (result.action_required_from.length === 0) {
+        return result.targeted_at_operator !== false;
       }
-      // action_required_from has users but we don't know the operator — default to true
-      // (safer to surface the item than to hide it)
-      log.warn("action_required_from populated but no operator identity available — defaulting targetedAtOperator=true");
+      // Has specific IDs — check against all operator platform identities
+      if (operatorIdentities && operatorIdentities.size > 0) {
+        const operatorIds = new Set([...operatorIdentities.values()].map((id) => id.userId));
+        return result.action_required_from.some((id) => operatorIds.has(id));
+      }
+      // Has IDs but no operator identities available — default to true (safer)
+      log.warn("action_required_from populated but no operator identities available — defaulting targetedAtOperator=true");
       return true;
     }
+    // Field absent entirely — fall back to LLM's boolean, default true
     return result.targeted_at_operator !== false;
   }
 }

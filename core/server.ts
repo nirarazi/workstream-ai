@@ -973,8 +973,8 @@ export function createApp(state: EngineState): Hono {
       state.usageTracker = newUsageTracker;
       const newPrompt = loadPrompt(findProjectRoot());
       const newFewShot = buildFewShotMessages(newPrompt.few_shot_examples);
-      const operatorIdentity = state.messagingAdapter?.getAuthenticatedUser?.() ?? null;
-      state.classifier = new Classifier(newUsageTracker, newPrompt.system, newFewShot, undefined, buildOperatorContext(state.config), operatorIdentity);
+      const operatorRole = state.config.operator?.role ?? "";
+      state.classifier = new Classifier(newUsageTracker, newPrompt.system, newFewShot, undefined, operatorRole, state.operatorIdentities, buildOperatorContext(state.config));
       if (newLimiters.llm) state.classifier.setRateLimiter(newLimiters.llm);
 
       // Restart pipeline if we have a messaging adapter
@@ -986,6 +986,7 @@ export function createApp(state: EngineState): Hono {
           state.linker,
           state.taskAdapter ?? undefined,
           state.config,
+          state.operatorIdentities,
         );
         // Start in background — initial poll can take minutes with rate limiting
         state.pipeline.start().catch((err) => log.error("Pipeline restart failed", err));
@@ -1162,7 +1163,8 @@ async function main(): Promise<void> {
 
   const prompt = loadPrompt(projectRoot);
   const fewShot = buildFewShotMessages(prompt.few_shot_examples);
-  const classifier = new Classifier(usageTracker, prompt.system, fewShot, undefined, buildOperatorContext(config));
+  const operatorRole = config.operator?.role ?? "";
+  const classifier = new Classifier(usageTracker, prompt.system, fewShot, undefined, operatorRole, null, buildOperatorContext(config));
   classifier.setRateLimiter(rateLimiters.llm);
   const extractor = new DefaultExtractor({
     ticketPatterns: config.extractors.ticketPatterns,
@@ -1254,6 +1256,7 @@ async function main(): Promise<void> {
       state.linker,
       state.taskAdapter ?? undefined,
       state.config,
+      state.operatorIdentities,
     );
   } else {
     log.warn("No messaging adapter available — pipeline not started (configure via POST /api/setup)");
