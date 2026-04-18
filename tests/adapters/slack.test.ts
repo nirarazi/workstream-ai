@@ -471,6 +471,95 @@ describe("SlackAdapter", () => {
     });
   });
 
+  // -- senderType --
+
+  describe("senderType", () => {
+    it("populates senderType based on is_bot from Slack user data", async () => {
+      // Re-connect with bot and human users pre-loaded
+      mockUsersList.mockResolvedValueOnce({
+        members: [
+          { id: "U001", name: "byte", is_bot: true, profile: { display_name: "Byte" } },
+          { id: "U002", name: "nir", is_bot: false, profile: { display_name: "Nir" } },
+        ],
+        response_metadata: { next_cursor: "" },
+      });
+      mockConversationsList.mockResolvedValueOnce({
+        channels: [],
+        response_metadata: { next_cursor: "" },
+      });
+      await adapter.connect({ token: "xoxp-valid-token" });
+
+      mockConversationsList.mockResolvedValue({
+        channels: [{ id: "C001", name: "general" }],
+        response_metadata: { next_cursor: "" },
+      });
+      mockConversationsHistory.mockResolvedValue({
+        messages: [
+          makeSlackMessage({ ts: "1700000001.000100", user: "U001", text: "Bot message" }),
+          makeSlackMessage({ ts: "1700000002.000200", user: "U002", text: "Human message" }),
+        ],
+        response_metadata: { next_cursor: "" },
+      });
+
+      const threads = await adapter.readThreads(new Date("2024-01-01"));
+
+      expect(threads).toHaveLength(2);
+      const botMsg = threads.find((t) => t.messages[0].userId === "U001")!.messages[0];
+      const humanMsg = threads.find((t) => t.messages[0].userId === "U002")!.messages[0];
+      expect(botMsg.senderType).toBe("agent");
+      expect(humanMsg.senderType).toBe("human");
+    });
+
+    it("sets senderType to unknown for messages from users not in userInfoMap", async () => {
+      await adapter.connect({ token: "xoxp-valid-token" });
+
+      mockConversationsList.mockResolvedValue({
+        channels: [{ id: "C001", name: "general" }],
+        response_metadata: { next_cursor: "" },
+      });
+      mockConversationsHistory.mockResolvedValue({
+        messages: [
+          makeSlackMessage({ ts: "1700000001.000100", user: "UNKNOWN_USER", text: "Mystery message" }),
+        ],
+        response_metadata: { next_cursor: "" },
+      });
+
+      const threads = await adapter.readThreads(new Date("2024-01-01"));
+
+      expect(threads).toHaveLength(1);
+      expect(threads[0].messages[0].senderType).toBe("unknown");
+    });
+
+    it("populates senderType in getThreadMessages", async () => {
+      const localAdapter = new SlackAdapter();
+      (localAdapter as any).client = {
+        auth: { test: vi.fn().mockResolvedValue({ user: "test", team: "test", url: "https://test.slack.com/" }) },
+        conversations: {
+          list: vi.fn().mockResolvedValue({ channels: [], response_metadata: {} }),
+          replies: vi.fn().mockResolvedValue({
+            ok: true,
+            messages: [
+              { ts: "1711900000.000000", user: "U_BOT", text: "Agent says hi" },
+              { ts: "1711900100.000000", user: "U_HUMAN", text: "Human says hi" },
+            ],
+            response_metadata: {},
+          }),
+        },
+        users: { list: vi.fn().mockResolvedValue({ members: [], response_metadata: {} }) },
+      };
+      (localAdapter as any).channelMap = new Map([["C123", { name: "test", isPrivate: false }]]);
+      (localAdapter as any).userInfoMap = new Map([
+        ["U_BOT", { name: "Byte", avatar: "", isBot: true }],
+        ["U_HUMAN", { name: "Nir", avatar: "", isBot: false }],
+      ]);
+
+      const messages = await localAdapter.getThreadMessages("1711900000.000000", "C123");
+
+      expect(messages[0].senderType).toBe("agent");
+      expect(messages[1].senderType).toBe("human");
+    });
+  });
+
   // -- Error handling --
 
   describe("error handling", () => {
