@@ -934,6 +934,76 @@ describe("Pipeline", () => {
     });
   });
 
+  describe("senderType to isBot passthrough", () => {
+    it("passes senderType as isBot to agent upsert", async () => {
+      const upsertSpy = vi.spyOn(graph, "upsertAgent");
+
+      const message: Message = {
+        id: "msg-bot-1",
+        threadId: "t1",
+        channelId: "C001",
+        channelName: "general",
+        userId: "U001",
+        userName: "Byte",
+        text: "Working on it",
+        timestamp: new Date().toISOString(),
+        platform: "slack",
+        senderType: "agent",
+      };
+
+      await pipeline.processMessage(message, "t1", "C001");
+
+      expect(upsertSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ isBot: true }),
+      );
+    });
+
+    it("passes isBot=false for human senderType", async () => {
+      const upsertSpy = vi.spyOn(graph, "upsertAgent");
+
+      const message: Message = {
+        id: "msg-human-1",
+        threadId: "t1",
+        channelId: "C001",
+        channelName: "general",
+        userId: "U002",
+        userName: "Nir",
+        text: "Looks good",
+        timestamp: new Date().toISOString(),
+        platform: "slack",
+        senderType: "human",
+      };
+
+      await pipeline.processMessage(message, "t1", "C001");
+
+      expect(upsertSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ isBot: false }),
+      );
+    });
+
+    it("passes isBot=null for unknown senderType", async () => {
+      const upsertSpy = vi.spyOn(graph, "upsertAgent");
+
+      const message: Message = {
+        id: "msg-unknown-1",
+        threadId: "t1",
+        channelId: "C001",
+        channelName: "general",
+        userId: "U003",
+        userName: "Unknown",
+        text: "Some message",
+        timestamp: new Date().toISOString(),
+        platform: "slack",
+      };
+
+      await pipeline.processMessage(message, "t1", "C001");
+
+      expect(upsertSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ isBot: null }),
+      );
+    });
+  });
+
   describe("work item deduplication via classifier context", () => {
     it("passes open work item summaries to the classifier", async () => {
       const msg = makeMessage({ text: "Missing API key for Anthropic again" });

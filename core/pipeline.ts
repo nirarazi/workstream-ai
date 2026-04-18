@@ -250,6 +250,7 @@ export class Pipeline {
           platform: message.platform,
           platformUserId: message.userId,
           avatarUrl: message.userAvatarUrl ?? null,
+          isBot: message.senderType === "agent" ? true : message.senderType === "human" ? false : null,
         });
         this.graph.insertEvent({
           threadId: thread.id,
@@ -285,6 +286,7 @@ export class Pipeline {
         platform: message.platform,
         platformUserId: message.userId,
         avatarUrl: message.userAvatarUrl ?? null,
+        isBot: message.senderType === "agent" ? true : message.senderType === "human" ? false : null,
       });
       this.graph.insertEvent({
         threadId: thread.id,
@@ -360,6 +362,7 @@ export class Pipeline {
       platform: message.platform,
       platformUserId: message.userId,
       avatarUrl: message.userAvatarUrl ?? null,
+      isBot: message.senderType === "agent" ? true : message.senderType === "human" ? false : null,
     });
 
     // Step 4: Upsert thread in graph — preserve manually linked work items
