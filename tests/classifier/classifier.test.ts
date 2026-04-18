@@ -240,7 +240,7 @@ describe("OpenAICompatibleProvider", () => {
 
     const result = await provider.classify("AI-100 is done", "System prompt", []);
 
-    expect(result).toEqual(mockResponse);
+    expect(result).toEqual({ ...mockResponse, action_required_from: null, next_action: null });
     expect(fetchSpy).toHaveBeenCalledTimes(1);
 
     const [url, options] = fetchSpy.mock.calls[0];
@@ -282,7 +282,7 @@ describe("OpenAICompatibleProvider", () => {
 
     const result = await provider.classify("Need approval for IT-200", "System prompt", []);
 
-    expect(result).toEqual(mockResponse);
+    expect(result).toEqual({ ...mockResponse, action_required_from: null, next_action: null });
 
     const [url, options] = fetchSpy.mock.calls[0];
     expect(url).toBe("https://api.anthropic.com/messages");
@@ -418,7 +418,7 @@ describe("OpenAICompatibleProvider", () => {
 
     const result = await provider.classify("test", "sys", []);
 
-    expect(result).toEqual(successResponse);
+    expect(result).toEqual({ ...successResponse, action_required_from: null, next_action: null });
     expect(fetchSpy).toHaveBeenCalledTimes(3);
     expect(provider.backoffState.active).toBe(false);
     expect(provider.backoffState.lastError).toBeNull();
@@ -489,6 +489,9 @@ describe("OpenAICompatibleProvider", () => {
       confidence: 0.95,
       reason: "PR merged",
       title: "PR deployment",
+      targeted_at_operator: undefined,
+      action_required_from: null,
+      next_action: null,
     });
     expect(result.breakdown![1].status).toBe("blocked_on_human");
 
@@ -513,6 +516,95 @@ describe("OpenAICompatibleProvider", () => {
 
     const result = await provider.classify("AI-1 is done", "sys", []);
     expect(result.breakdown).toBeUndefined();
+
+    fetchSpy.mockRestore();
+  });
+
+  it("parses action_required_from and next_action from response", async () => {
+    const mockResponse = {
+      status: "blocked_on_human",
+      confidence: 0.9,
+      reason: "Waiting for Guy to review",
+      workItemIds: ["AI-100"],
+      title: "PR review needed",
+      action_required_from: ["UA2V04ZU2"],
+      next_action: "Review and approve PR #716",
+    };
+
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          choices: [{ message: { content: JSON.stringify(mockResponse) } }],
+        }),
+        { status: 200 },
+      ),
+    );
+
+    const provider = new OpenAICompatibleProvider({
+      name: "test",
+      baseUrl: "http://localhost:11434/v1",
+      model: "llama3",
+    });
+
+    const result = await provider.classify("test", "sys", []);
+    expect(result.action_required_from).toEqual(["UA2V04ZU2"]);
+    expect(result.next_action).toBe("Review and approve PR #716");
+
+    fetchSpy.mockRestore();
+  });
+
+  it("returns null action_required_from and null next_action when not present", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          choices: [{ message: { content: '{"status":"noise","confidence":0.9,"reason":"FYI","workItemIds":[],"title":"Update"}' } }],
+        }),
+        { status: 200 },
+      ),
+    );
+
+    const provider = new OpenAICompatibleProvider({
+      name: "test",
+      baseUrl: "http://localhost:11434/v1",
+      model: "llama3",
+    });
+
+    const result = await provider.classify("test", "sys", []);
+    expect(result.action_required_from).toBeNull();
+    expect(result.next_action).toBeNull();
+
+    fetchSpy.mockRestore();
+  });
+
+  it("filters non-string values from action_required_from", async () => {
+    const mockResponse = {
+      status: "blocked_on_human",
+      confidence: 0.9,
+      reason: "test",
+      workItemIds: [],
+      title: "test",
+      action_required_from: ["UA2V04ZU2", 123, null, "U0ALFEVQ940"],
+      next_action: "Fix the flaky test",
+    };
+
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          choices: [{ message: { content: JSON.stringify(mockResponse) } }],
+        }),
+        { status: 200 },
+      ),
+    );
+
+    const provider = new OpenAICompatibleProvider({
+      name: "test",
+      baseUrl: "http://localhost:11434/v1",
+      model: "llama3",
+    });
+
+    const result = await provider.classify("test", "sys", []);
+    expect(result.action_required_from).toEqual(["UA2V04ZU2", "U0ALFEVQ940"]);
+    expect(result.next_action).toBe("Fix the flaky test");
 
     fetchSpy.mockRestore();
   });
