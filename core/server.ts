@@ -702,6 +702,9 @@ export function createApp(state: EngineState): Hono {
         if (threads.length > 0) {
           const thread = threads[0];
           await state.messagingAdapter.replyToThread(thread.id, thread.channelId, body.message);
+        } else {
+          log.warn("No threads found for work item — message not sent", body.workItemId);
+          return c.json({ ok: false, error: "No thread found to post message to" }, 404);
         }
       }
 
