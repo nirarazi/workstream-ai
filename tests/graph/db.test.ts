@@ -49,6 +49,11 @@ describe("Database", () => {
       expect(cols.some((c) => c.name === "targeted_at_operator")).toBe(true);
     });
 
+    it("migrates agents table to include is_bot column", () => {
+      const cols = db.db.pragma("table_info(agents)") as Array<{ name: string }>;
+      expect(cols.some((c) => c.name === "is_bot")).toBe(true);
+    });
+
     it("creates indexes", () => {
       const indexes = db.db
         .prepare("SELECT name FROM sqlite_master WHERE type='index' AND name LIKE 'idx_%'")

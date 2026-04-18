@@ -9,6 +9,7 @@ export interface AgentRow {
   platform_user_id: string;
   role: string | null;
   avatar_url: string | null;
+  is_bot: number | null;
   first_seen: string;
   last_seen: string;
 }

@@ -246,6 +246,13 @@ export class Database {
       this.db.exec("ALTER TABLE events ADD COLUMN next_action TEXT DEFAULT NULL");
       log.info("Migration: added action_required_from and next_action columns to events");
     }
+
+    // Add is_bot column to agents table
+    const agentColsForBot = this.db.pragma("table_info(agents)") as Array<{ name: string }>;
+    if (!agentColsForBot.some((c) => c.name === "is_bot")) {
+      this.db.exec("ALTER TABLE agents ADD COLUMN is_bot INTEGER DEFAULT NULL");
+      log.info("Migration: added is_bot column to agents");
+    }
   }
 
   prepare<T>(sql: string): BetterSqlite3Type.Statement<T[]> {
