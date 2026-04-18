@@ -208,7 +208,12 @@ describe("Pipeline", () => {
       expect(result.processed).toBe(1);
       expect(result.classified).toBe(1);
       expect(result.errors).toBe(0);
-      expect(classifier.classify).toHaveBeenCalledWith(thread.messages[0].text, expect.any(Array), null);
+      expect(classifier.classify).toHaveBeenCalledWith(
+        thread.messages[0].text,
+        expect.any(Array),
+        null,
+        { senderName: "Byte", senderType: "unknown", channelName: "agent-orchestrator" },
+      );
     });
 
     it("upserts agent from message metadata", async () => {
@@ -565,7 +570,12 @@ describe("Pipeline", () => {
       const result = await pipeline.processMessage(msg, "t-1", "C-1");
 
       expect(result.status).toBe("blocked_on_human");
-      expect(classifier.classify).toHaveBeenCalledWith(msg.text, expect.any(Array), null);
+      expect(classifier.classify).toHaveBeenCalledWith(
+        msg.text,
+        expect.any(Array),
+        null,
+        { senderName: "Byte", senderType: "unknown", channelName: "agent-orchestrator" },
+      );
     });
 
     it("upserts thread before processing", async () => {
@@ -840,58 +850,26 @@ describe("Pipeline", () => {
   });
 
   describe("operator identity passthrough", () => {
-    it("retrieves operator identity from messaging adapter", async () => {
-      const adapterWithIdentity = {
-        ...createMockMessagingAdapter(),
-        getAuthenticatedUser: vi.fn().mockReturnValue({ userId: "U-operator", userName: "Nir" }),
-      };
-      vi.mocked(adapterWithIdentity.readThreads).mockResolvedValue([makeThread()]);
+    it("passes operator identities map to classifier on classify call", async () => {
+      vi.mocked(adapter.readThreads).mockResolvedValue([makeThread()]);
 
-      const pipelineWithIdentity = new Pipeline(adapterWithIdentity, classifier, graph, linker, undefined, config);
-
-      await pipelineWithIdentity.processOnce();
-
-      expect(adapterWithIdentity.getAuthenticatedUser).toHaveBeenCalled();
-    });
-
-    it("passes operator identity to classifier on classify call", async () => {
-      const adapterWithIdentity = {
-        ...createMockMessagingAdapter(),
-        getAuthenticatedUser: vi.fn().mockReturnValue({ userId: "U-operator", userName: "Nir" }),
-      };
-      vi.mocked(adapterWithIdentity.readThreads).mockResolvedValue([makeThread()]);
-
-      const pipelineWithIdentity = new Pipeline(adapterWithIdentity, classifier, graph, linker, undefined, config);
+      const operatorIdentities = new Map([
+        ["slack", { userId: "U-operator", userName: "Nir" }],
+      ]);
+      const pipelineWithIdentity = new Pipeline(adapter, classifier, graph, linker, undefined, config, operatorIdentities);
 
       await pipelineWithIdentity.processOnce();
 
       expect(classifier.classify).toHaveBeenCalledWith(
         expect.any(String),
         expect.any(Array),
-        { userId: "U-operator", userName: "Nir" },
+        operatorIdentities,
+        expect.objectContaining({ senderName: "Byte" }),
       );
     });
 
-    it("does not call getAuthenticatedUser again after caching on second poll", async () => {
-      const adapterWithIdentity = {
-        ...createMockMessagingAdapter(),
-        getAuthenticatedUser: vi.fn().mockReturnValue({ userId: "U-operator", userName: "Nir" }),
-      };
-      vi.mocked(adapterWithIdentity.readThreads).mockResolvedValue([makeThread()]);
-
-      const pipelineWithIdentity = new Pipeline(adapterWithIdentity, classifier, graph, linker, undefined, config);
-
-      await pipelineWithIdentity.processOnce();
-      // Reset hasEvent so second processOnce classifies again
-      vi.mocked(graph.hasEvent).mockReturnValue(false);
-      await pipelineWithIdentity.processOnce();
-
-      // getAuthenticatedUser should only be called once (identity is cached)
-      expect(adapterWithIdentity.getAuthenticatedUser).toHaveBeenCalledTimes(1);
-    });
-
-    it("passes null identity when adapter does not implement getAuthenticatedUser", async () => {
-      // Default mock adapter has no getAuthenticatedUser
+    it("passes null identity when no operatorIdentities provided", async () => {
+      // Default pipeline has no operator identities
       vi.mocked(adapter.readThreads).mockResolvedValue([makeThread()]);
 
       await pipeline.processOnce();
@@ -900,6 +878,21 @@ describe("Pipeline", () => {
         expect.any(String),
         expect.any(Array),
         null,
+        expect.objectContaining({ senderName: "Byte" }),
+      );
+    });
+
+    it("passes sender context from message metadata", async () => {
+      const msg = makeMessage({ userName: "Pixel", senderType: "agent", channelName: "#design" });
+      vi.mocked(adapter.readThreads).mockResolvedValue([makeThread({}, [msg])]);
+
+      await pipeline.processOnce();
+
+      expect(classifier.classify).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.any(Array),
+        null,
+        { senderName: "Pixel", senderType: "agent", channelName: "#design" },
       );
     });
   });
@@ -1034,6 +1027,7 @@ describe("Pipeline", () => {
           { id: "AI-200", title: "Deploy to staging" },
         ],
         null,
+        expect.objectContaining({ senderName: "Byte" }),
       );
     });
 

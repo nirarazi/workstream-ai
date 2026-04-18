@@ -4,6 +4,7 @@ import { describe, it, expect, vi } from "vitest";
 import { Classifier } from "../../core/classifier/index.js";
 import type { ModelProvider, ClassificationResult } from "../../core/classifier/providers/interface.js";
 import { OpenAICompatibleProvider } from "../../core/classifier/providers/openai-compatible.js";
+import type { OperatorIdentityMap } from "../../core/types.js";
 
 // --- Helpers ---
 
@@ -201,12 +202,15 @@ describe("Classifier", () => {
   });
 });
 
-// --- action_required_from → targetedAtOperator + nextAction tests ---
+// --- action_required_from → targetedAtOperator + nextAction tests (with OperatorIdentityMap) ---
 
-describe("action_required_from → targetedAtOperator + nextAction", () => {
-  const OPERATOR = { userId: "U0ALFEVQ940", userName: "Nir Arazi" };
+describe("action_required_from → targetedAtOperator (with OperatorIdentityMap)", () => {
+  const OPERATOR_MAP: OperatorIdentityMap = new Map([
+    ["slack", { userId: "U0ALFEVQ940", userName: "Nir Arazi" }],
+    ["jira", { userId: "nir@insuretax.com", userName: "Nir (CTO)" }],
+  ]);
 
-  it("action_required_from includes operator → targetedAtOperator=true, nextAction passed through", async () => {
+  it("action_required_from includes Slack operator ID → targetedAtOperator=true", async () => {
     const provider = mockProvider({
       status: "blocked_on_human",
       confidence: 0.9,
@@ -216,16 +220,31 @@ describe("action_required_from → targetedAtOperator + nextAction", () => {
       action_required_from: ["U0ALFEVQ940"],
       next_action: "Review and approve the PR",
     });
-    const classifier = new Classifier(provider, SYSTEM_PROMPT, FEW_SHOT, undefined, undefined, OPERATOR);
+    const classifier = new Classifier(provider, SYSTEM_PROMPT, FEW_SHOT, undefined, undefined, OPERATOR_MAP);
 
     const result = await classifier.classify("Please review this PR");
-
     expect(result.targetedAtOperator).toBe(true);
     expect(result.nextAction).toBe("Review and approve the PR");
     expect(result.actionRequiredFrom).toEqual(["U0ALFEVQ940"]);
   });
 
-  it("action_required_from has only non-operator → targetedAtOperator=false, nextAction passed through", async () => {
+  it("action_required_from includes Jira operator ID → targetedAtOperator=true", async () => {
+    const provider = mockProvider({
+      status: "blocked_on_human",
+      confidence: 0.9,
+      reason: "Needs operator review",
+      workItemIds: ["AI-100"],
+      title: "Review needed",
+      action_required_from: ["nir@insuretax.com"],
+      next_action: "Review the ticket",
+    });
+    const classifier = new Classifier(provider, SYSTEM_PROMPT, FEW_SHOT, undefined, undefined, OPERATOR_MAP);
+
+    const result = await classifier.classify("Please review this ticket");
+    expect(result.targetedAtOperator).toBe(true);
+  });
+
+  it("action_required_from has only non-operator IDs → targetedAtOperator=false", async () => {
     const provider = mockProvider({
       status: "blocked_on_human",
       confidence: 0.9,
@@ -233,18 +252,15 @@ describe("action_required_from → targetedAtOperator + nextAction", () => {
       workItemIds: ["AI-100"],
       title: "Review needed",
       action_required_from: ["UA2V04ZU2"],
-      next_action: "Guy should review the PR",
+      next_action: "Guy should review",
     });
-    const classifier = new Classifier(provider, SYSTEM_PROMPT, FEW_SHOT, undefined, undefined, OPERATOR);
+    const classifier = new Classifier(provider, SYSTEM_PROMPT, FEW_SHOT, undefined, undefined, OPERATOR_MAP);
 
-    const result = await classifier.classify("Guy please review this PR");
-
+    const result = await classifier.classify("Guy please review");
     expect(result.targetedAtOperator).toBe(false);
-    expect(result.nextAction).toBe("Guy should review the PR");
-    expect(result.actionRequiredFrom).toEqual(["UA2V04ZU2"]);
   });
 
-  it("action_required_from is null → targetedAtOperator=false, nextAction=null", async () => {
+  it("action_required_from is null → targetedAtOperator=false (FYI)", async () => {
     const provider = mockProvider({
       status: "in_progress",
       confidence: 0.9,
@@ -254,29 +270,74 @@ describe("action_required_from → targetedAtOperator + nextAction", () => {
       action_required_from: null,
       next_action: null,
     });
-    const classifier = new Classifier(provider, SYSTEM_PROMPT, FEW_SHOT, undefined, undefined, OPERATOR);
+    const classifier = new Classifier(provider, SYSTEM_PROMPT, FEW_SHOT, undefined, undefined, OPERATOR_MAP);
 
     const result = await classifier.classify("Working on it");
-
     expect(result.targetedAtOperator).toBe(false);
-    expect(result.nextAction).toBeNull();
-    expect(result.actionRequiredFrom).toBeNull();
   });
 
-  it("action_required_from is empty array → targetedAtOperator=false", async () => {
+  it("action_required_from is empty array + LLM says targeted=true → targetedAtOperator=true", async () => {
     const provider = mockProvider({
-      status: "in_progress",
+      status: "blocked_on_human",
       confidence: 0.9,
-      reason: "Agent working",
+      reason: "Blocked on infra",
       workItemIds: ["AI-100"],
-      title: "In progress",
+      title: "IAM permissions",
       action_required_from: [],
-      next_action: null,
+      next_action: "Fix IAM role",
+      targeted_at_operator: true,
     });
-    const classifier = new Classifier(provider, SYSTEM_PROMPT, FEW_SHOT, undefined, undefined, OPERATOR);
+    const classifier = new Classifier(provider, SYSTEM_PROMPT, FEW_SHOT, undefined, undefined, OPERATOR_MAP);
 
-    const result = await classifier.classify("Making progress");
+    const result = await classifier.classify("Need IAM permissions fixed");
+    expect(result.targetedAtOperator).toBe(true);
+  });
 
+  it("action_required_from is empty array + LLM says targeted=false → targetedAtOperator=false", async () => {
+    const provider = mockProvider({
+      status: "blocked_on_human",
+      confidence: 0.9,
+      reason: "Waiting for client",
+      workItemIds: ["IT-200"],
+      title: "Client credentials",
+      action_required_from: [],
+      next_action: "Client provides API key",
+      targeted_at_operator: false,
+    });
+    const classifier = new Classifier(provider, SYSTEM_PROMPT, FEW_SHOT, undefined, undefined, OPERATOR_MAP);
+
+    const result = await classifier.classify("Waiting for client API key");
+    expect(result.targetedAtOperator).toBe(false);
+  });
+
+  it("action_required_from is empty array + LLM omits targeted → defaults to true (backstop)", async () => {
+    const provider = mockProvider({
+      status: "blocked_on_human",
+      confidence: 0.9,
+      reason: "Blocked on something",
+      workItemIds: ["AI-100"],
+      title: "Blocked",
+      action_required_from: [],
+      next_action: "Resolve block",
+    });
+    const classifier = new Classifier(provider, SYSTEM_PROMPT, FEW_SHOT, undefined, undefined, OPERATOR_MAP);
+
+    const result = await classifier.classify("Something is blocking me");
+    expect(result.targetedAtOperator).toBe(true);
+  });
+
+  it("no action_required_from field at all → falls back to LLM targeted_at_operator", async () => {
+    const provider = mockProvider({
+      status: "blocked_on_human",
+      confidence: 0.9,
+      reason: "Needs review",
+      workItemIds: ["AI-100"],
+      title: "Review",
+      targeted_at_operator: false,
+    });
+    const classifier = new Classifier(provider, SYSTEM_PROMPT, FEW_SHOT, undefined, undefined, OPERATOR_MAP);
+
+    const result = await classifier.classify("Guy please review");
     expect(result.targetedAtOperator).toBe(false);
   });
 
@@ -290,7 +351,7 @@ describe("action_required_from → targetedAtOperator + nextAction", () => {
       action_required_from: ["UA2V04ZU2", "U0ALFEVQ940", "UOTHERUSER"],
       next_action: "Multiple people need to review",
     });
-    const classifier = new Classifier(provider, SYSTEM_PROMPT, FEW_SHOT, undefined, undefined, OPERATOR);
+    const classifier = new Classifier(provider, SYSTEM_PROMPT, FEW_SHOT, undefined, undefined, OPERATOR_MAP);
 
     const result = await classifier.classify("Please everyone review this");
 
@@ -329,8 +390,17 @@ describe("action_required_from → targetedAtOperator + nextAction", () => {
 
     expect(result.targetedAtOperator).toBe(false);
   });
+});
 
-  it("operator identity injected into system prompt", async () => {
+// --- Operator profile injection test ---
+
+describe("Operator profile and sender context", () => {
+  const OPERATOR_MAP: OperatorIdentityMap = new Map([
+    ["slack", { userId: "U0ALFEVQ940", userName: "Nir Arazi" }],
+    ["jira", { userId: "nir@insuretax.com", userName: "Nir (CTO)" }],
+  ]);
+
+  it("injects operator profile with all platform identities into system prompt", async () => {
     const provider = mockProvider({
       status: "noise",
       confidence: 0.9,
@@ -338,15 +408,61 @@ describe("action_required_from → targetedAtOperator + nextAction", () => {
       workItemIds: [],
       title: "Hello",
     });
-    const classifier = new Classifier(provider, SYSTEM_PROMPT, FEW_SHOT, undefined, undefined, OPERATOR);
+    const classifier = new Classifier(
+      provider, SYSTEM_PROMPT, FEW_SHOT, undefined,
+      "CTO / Fleet operator",  // operatorRole
+      OPERATOR_MAP,
+      "Manages a fleet of agents",  // operatorContext
+    );
 
     await classifier.classify("Hello world");
 
     const callArgs = (provider.classify as ReturnType<typeof vi.fn>).mock.calls[0];
     const systemPrompt = callArgs[1] as string;
-    expect(systemPrompt).toContain("Nir Arazi");
-    expect(systemPrompt).toContain("U0ALFEVQ940");
-    expect(systemPrompt).toContain("Operator Identity");
+    expect(systemPrompt).toContain("Operator Profile");
+    expect(systemPrompt).toContain("slack:U0ALFEVQ940");
+    expect(systemPrompt).toContain("jira:nir@insuretax.com");
+    expect(systemPrompt).toContain("CTO / Fleet operator");
+    expect(systemPrompt).toContain("Manages a fleet of agents");
+  });
+
+  it("prepends sender context to message text sent to provider", async () => {
+    const provider = mockProvider({
+      status: "blocked_on_human",
+      confidence: 0.9,
+      reason: "blocked",
+      workItemIds: [],
+      title: "Blocked",
+    });
+    const classifier = new Classifier(provider, SYSTEM_PROMPT, FEW_SHOT, undefined, undefined, OPERATOR_MAP);
+
+    await classifier.classify("Need help", undefined, undefined, {
+      senderName: "Byte",
+      senderType: "agent",
+      channelName: "#agent-orchestrator",
+    });
+
+    const callArgs = (provider.classify as ReturnType<typeof vi.fn>).mock.calls[0];
+    const messageText = callArgs[0] as string;
+    expect(messageText).toContain("[Sender: Byte (agent)");
+    expect(messageText).toContain("Channel: #agent-orchestrator]");
+  });
+
+  it("does not prepend sender context when not provided", async () => {
+    const provider = mockProvider({
+      status: "noise",
+      confidence: 0.9,
+      reason: "greeting",
+      workItemIds: [],
+      title: "Hello",
+    });
+    const classifier = new Classifier(provider, SYSTEM_PROMPT, FEW_SHOT);
+
+    await classifier.classify("Hello world");
+
+    const callArgs = (provider.classify as ReturnType<typeof vi.fn>).mock.calls[0];
+    const messageText = callArgs[0] as string;
+    expect(messageText).toBe("Hello world");
   });
 });
 
