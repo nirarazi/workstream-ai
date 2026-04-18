@@ -613,6 +613,8 @@ export class ContextGraph {
         e.raw_text AS e_raw_text, e.timestamp AS e_timestamp, e.created_at AS e_created_at,
         e.entry_type AS e_entry_type,
         e.targeted_at_operator AS e_targeted_at_operator,
+        e.action_required_from AS e_action_required_from,
+        e.next_action AS e_next_action,
         a.id AS a_id, a.name AS a_name, a.platform AS a_platform,
         a.platform_user_id AS a_platform_user_id, a.role AS a_role,
         a.avatar_url AS a_avatar_url,
@@ -661,6 +663,8 @@ export class ContextGraph {
         e.raw_text AS e_raw_text, e.timestamp AS e_timestamp, e.created_at AS e_created_at,
         e.entry_type AS e_entry_type,
         e.targeted_at_operator AS e_targeted_at_operator,
+        e.action_required_from AS e_action_required_from,
+        e.next_action AS e_next_action,
         a.id AS a_id, a.name AS a_name, a.platform AS a_platform,
         a.platform_user_id AS a_platform_user_id, a.role AS a_role,
         a.avatar_url AS a_avatar_url,
@@ -707,6 +711,8 @@ export class ContextGraph {
         e.raw_text AS e_raw_text, e.timestamp AS e_timestamp, e.created_at AS e_created_at,
         e.entry_type AS e_entry_type,
         e.targeted_at_operator AS e_targeted_at_operator,
+        e.action_required_from AS e_action_required_from,
+        e.next_action AS e_next_action,
         a.id AS a_id, a.name AS a_name, a.platform AS a_platform,
         a.platform_user_id AS a_platform_user_id, a.role AS a_role,
         a.avatar_url AS a_avatar_url,
@@ -767,6 +773,8 @@ function mapActionableRow(row: Record<string, unknown>): ActionableItem {
     createdAt: row.e_created_at as string,
     entryType: (row.e_entry_type as EntryType) ?? "progress",
     targetedAtOperator: Boolean(row.e_targeted_at_operator ?? 1),
+    actionRequiredFrom: row.e_action_required_from ? (() => { try { return JSON.parse(row.e_action_required_from as string); } catch { return null; } })() : null,
+    nextAction: (row.e_next_action as string | null) ?? null,
   };
 
   const agent: Agent | null = row.a_id
