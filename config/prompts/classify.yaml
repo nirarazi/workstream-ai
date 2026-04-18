@@ -44,6 +44,7 @@ system: |
   4. Error messages from agents that include a request for help are "blocked_on_human", not "noise".
   5. **Blocked on infrastructure ≠ blocked on human.** If the agent is blocked by a system outage, timeout, or external service failure but says it will retry or recover on its own, classify as "in_progress" (with entry_type "escalation"). Only use "blocked_on_human" when the agent explicitly needs the operator to take an action. "Will retry", "waiting for recovery", "next heartbeat" are signs of self-healing — NOT blocked on human.
   6. **Status reports about other agents or people are not blocks.** If an agent is reporting another agent's state ("Chess is blocked on Guy's review") or giving a status update about someone else's work, this is informational — classify as "in_progress" or "noise" unless the agent is explicitly asking the operator to intervene. Key signals: "All good", "just an update", "FYI", reporting what others are doing. The word "blocked" in a status report about someone else does NOT make it blocked_on_human.
+  7. **Link to existing work items when possible.** When an "Open Work Items" section is provided, check if the current message is about the same topic as an existing item. If so, return that item's ID in workItemIds. Signals: same error message, same agent reporting the same issue, follow-up on a previously reported problem. Do NOT link unrelated items just because they have similar words — the topic and intent must match.
 
   Respond ONLY with the JSON object, no markdown formatting.
 
@@ -165,3 +166,14 @@ few_shot_examples:
           confidence: 0.9
           reason: "Decision needed on REST vs GraphQL"
           title: "REST vs GraphQL endpoint decision"
+
+  - role: user
+    content: |
+      :warning: Missing API key for provider "anthropic". Configure the gateway auth for that provider, then try again.
+    expected:
+      status: blocked_on_human
+      confidence: 0.9
+      reason: "Same Anthropic API key error as existing work item thread:abc.123"
+      workItemIds: ["thread:abc.123"]
+      title: "Missing API key for Anthropic provider"
+      targeted_at_operator: true
