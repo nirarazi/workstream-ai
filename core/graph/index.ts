@@ -759,6 +759,15 @@ function mapActionableRow(row: Record<string, unknown>): ActionableItem {
     updatedAt: row.updated_at as string,
   };
 
+  let eventActionRequiredFrom: string[] | null = null;
+  if (row.e_action_required_from) {
+    try {
+      eventActionRequiredFrom = JSON.parse(row.e_action_required_from as string);
+    } catch {
+      eventActionRequiredFrom = null;
+    }
+  }
+
   const latestEvent: Event = {
     id: row.e_id as string,
     threadId: row.e_thread_id as string,
@@ -773,7 +782,7 @@ function mapActionableRow(row: Record<string, unknown>): ActionableItem {
     createdAt: row.e_created_at as string,
     entryType: (row.e_entry_type as EntryType) ?? "progress",
     targetedAtOperator: Boolean(row.e_targeted_at_operator ?? 1),
-    actionRequiredFrom: row.e_action_required_from ? (() => { try { return JSON.parse(row.e_action_required_from as string); } catch { return null; } })() : null,
+    actionRequiredFrom: eventActionRequiredFrom,
     nextAction: (row.e_next_action as string | null) ?? null,
   };
 
