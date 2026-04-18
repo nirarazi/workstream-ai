@@ -7,9 +7,8 @@ describe("SlackAdapter.getAuthenticatedUser", () => {
     expect(adapter.getAuthenticatedUser()).toBeNull();
   });
 
-  it("returns user ID and name after connect", async () => {
+  it("returns null from a second instance (independent state)", () => {
     const adapter = new SlackAdapter();
-    const user = adapter.getAuthenticatedUser();
-    expect(user).toBeNull(); // Before connect
+    expect(adapter.getAuthenticatedUser()).toBeNull();
   });
 });

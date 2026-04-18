@@ -208,6 +208,10 @@ export class Classifier {
       if (op) {
         return result.action_required_from.includes(op.userId);
       }
+      // action_required_from has users but we don't know the operator — default to true
+      // (safer to surface the item than to hide it)
+      log.warn("action_required_from populated but no operator identity available — defaulting targetedAtOperator=true");
+      return true;
     }
     return result.targeted_at_operator !== false;
   }
