@@ -3,7 +3,7 @@
 import { createHash } from "node:crypto";
 import { createLogger } from "./logger.js";
 import type { Config } from "./config.js";
-import type { Classification, Message, Thread } from "./types.js";
+import type { Classification, Message, OperatorIdentity, Thread } from "./types.js";
 import type { MessagingAdapter } from "./adapters/messaging/interface.js";
 import type { TaskAdapter } from "./adapters/tasks/interface.js";
 import type { Classifier } from "./classifier/index.js";
@@ -33,6 +33,7 @@ export class Pipeline {
   private running = false;
   private recentContentHashes = new Map<string, Classification>();
   private readonly MAX_CONTENT_HASHES = 1000;
+  private operatorIdentity: OperatorIdentity | null = null;
 
   constructor(
     messagingAdapter: MessagingAdapter,
@@ -91,6 +92,14 @@ export class Pipeline {
     let processed = 0;
     let classified = 0;
     let errors = 0;
+
+    // Resolve operator identity from the messaging adapter (cached after first call)
+    if (!this.operatorIdentity) {
+      const adapter = this.messagingAdapter as { getAuthenticatedUser?: () => { userId: string; userName: string } | null };
+      if (adapter.getAuthenticatedUser) {
+        this.operatorIdentity = adapter.getAuthenticatedUser() ?? null;
+      }
+    }
 
     // Determine the since date per channel, using poll cursors or fallback
     const since = this.getSinceDate(channels);
@@ -295,7 +304,7 @@ export class Pipeline {
     const extractedIds = this.linker.linkMessage(message.text, thread.id);
 
     // Step 2: Classify the message
-    const classification = await this.classifier.classify(message.text, openWorkItems);
+    const classification = await this.classifier.classify(message.text, openWorkItems, this.operatorIdentity);
 
     // Separate LLM-suggested IDs into verified (match an extracted ID) and unverified
     const extractedSet = new Set(extractedIds);

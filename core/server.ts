@@ -755,10 +755,17 @@ export function createApp(state: EngineState): Hono {
       const { resolve } = await import("node:path");
       const { stringify: toYaml } = await import("yaml");
 
+      const { readFileSync, existsSync } = await import("node:fs");
+      const { parse: parseYaml } = await import("yaml");
+
       const configDir = resolve(projectRoot, "config");
       mkdirSync(configDir, { recursive: true });
 
-      const localConfig: Record<string, unknown> = {};
+      // Start from existing local.yaml so we don't lose fields the UI doesn't manage
+      const localPath = resolve(configDir, "local.yaml");
+      const localConfig: Record<string, unknown> = existsSync(localPath)
+        ? (parseYaml(readFileSync(localPath, "utf-8")) as Record<string, unknown>) ?? {}
+        : {};
       const envLines: string[] = [];
 
       // --- LLM ---
@@ -852,7 +859,7 @@ export function createApp(state: EngineState): Hono {
 
       // Write config/local.yaml
       writeFileSync(resolve(configDir, "local.yaml"), toYaml(localConfig), "utf-8");
-      log.info("Wrote config/local.yaml");
+      log.info("Wrote config/local.yaml", { model: (localConfig as any)?.classifier?.provider?.model, projectRoot });
 
       // Write .env (secrets only — not watched by Vite, see vite.config.ts envDir)
       if (envLines.length > 0) {
@@ -871,6 +878,7 @@ export function createApp(state: EngineState): Hono {
       // Reload config
       resetConfig();
       state.config = loadConfig(projectRoot);
+      log.info("Config reloaded", { model: state.config.classifier.provider.model, baseUrl: state.config.classifier.provider.baseUrl });
 
       if (state.usageTracker) {
         state.usageTracker.updateConfig(state.config.llmBudget);
@@ -940,7 +948,8 @@ export function createApp(state: EngineState): Hono {
       state.usageTracker = newUsageTracker;
       const newPrompt = loadPrompt(findProjectRoot());
       const newFewShot = buildFewShotMessages(newPrompt.few_shot_examples);
-      state.classifier = new Classifier(newUsageTracker, newPrompt.system, newFewShot, undefined, buildOperatorContext(state.config));
+      const operatorIdentity = state.messagingAdapter?.getAuthenticatedUser?.() ?? null;
+      state.classifier = new Classifier(newUsageTracker, newPrompt.system, newFewShot, undefined, buildOperatorContext(state.config), operatorIdentity);
       if (newLimiters.llm) state.classifier.setRateLimiter(newLimiters.llm);
 
       // Restart pipeline if we have a messaging adapter
@@ -953,8 +962,9 @@ export function createApp(state: EngineState): Hono {
           state.taskAdapter ?? undefined,
           state.config,
         );
-        await state.pipeline.start();
-        log.info("Pipeline restarted");
+        // Start in background — initial poll can take minutes with rate limiting
+        state.pipeline.start().catch((err) => log.error("Pipeline restart failed", err));
+        log.info("Pipeline restarting in background");
       }
 
       return c.json({ ok: true });
