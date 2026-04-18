@@ -5,7 +5,7 @@ import { resolve } from "node:path";
 import { parse as parseYaml } from "yaml";
 import { createLogger } from "../logger.js";
 import { findProjectRoot, type Config } from "../config.js";
-import type { Classification, EntryType, StatusCategory } from "../types.js";
+import type { Classification, EntryType, OperatorIdentity, StatusCategory } from "../types.js";
 import { OpenAICompatibleProvider, type BackoffState } from "./providers/openai-compatible.js";
 import type { ModelProvider } from "./providers/interface.js";
 import type { RateLimiter } from "../rate-limiter.js";
@@ -83,14 +83,16 @@ export class Classifier {
   private readonly systemPrompt: string;
   private readonly fewShotMessages: Array<{ role: string; content: string }>;
   private readonly operatorContext: string;
+  private readonly operatorIdentity: OperatorIdentity | null;
   private rateLimiter?: RateLimiter;
 
-  constructor(provider: ModelProvider, systemPrompt: string, fewShotMessages: Array<{ role: string; content: string }>, rateLimiter?: RateLimiter, operatorContext?: string) {
+  constructor(provider: ModelProvider, systemPrompt: string, fewShotMessages: Array<{ role: string; content: string }>, rateLimiter?: RateLimiter, operatorContext?: string, operatorIdentity?: OperatorIdentity | null) {
     this.provider = provider;
     this.systemPrompt = systemPrompt;
     this.fewShotMessages = fewShotMessages;
     this.rateLimiter = rateLimiter;
     this.operatorContext = operatorContext ?? "";
+    this.operatorIdentity = operatorIdentity ?? null;
   }
 
   setRateLimiter(limiter: RateLimiter): void {
@@ -126,6 +128,10 @@ export class Classifier {
         effectiveSystemPrompt += `\n\n## Operator Context\n\n${this.operatorContext}`;
       }
 
+      if (this.operatorIdentity) {
+        effectiveSystemPrompt += `\n\n## Operator Identity\n\nThe operator using this tool is ${this.operatorIdentity.userName} (platform user ID: ${this.operatorIdentity.userId}). When determining action_required_from, use platform user IDs from @mentions in the message. If the message uses "you"/"your" to address someone, resolve it to the appropriate user ID based on the conversation context.`;
+      }
+
       if (openWorkItems && openWorkItems.length > 0) {
         const itemLines = openWorkItems.map(wi => `- ${wi.id}: ${wi.title}`).join("\n");
         effectiveSystemPrompt += `\n\n## Open Work Items\n\nBelow are currently open work items. If the message is about the same topic as an existing item, return that item's ID in workItemIds instead of leaving it empty. This prevents duplicate work items.\n\n${itemLines}`;
@@ -150,7 +156,9 @@ export class Classifier {
         reason: result.reason,
         workItemIds: result.workItemIds,
         title: result.title,
-        targetedAtOperator: result.targeted_at_operator !== false,
+        targetedAtOperator: this.computeTargetedAtOperator(result),
+        actionRequiredFrom: result.action_required_from ?? null,
+        nextAction: result.next_action ?? null,
         breakdown: result.breakdown?.map((b) => {
           const bStatus = (VALID_STATUSES.has(b.status) ? b.status : "noise") as StatusCategory;
           return {
@@ -160,7 +168,9 @@ export class Classifier {
             confidence: Math.max(0, Math.min(1, b.confidence)),
             reason: b.reason,
             title: b.title,
-            targetedAtOperator: b.targeted_at_operator !== false,
+            targetedAtOperator: this.computeTargetedAtOperator(b),
+            actionRequiredFrom: b.action_required_from ?? null,
+            nextAction: b.next_action ?? null,
           };
         }),
       };
@@ -174,7 +184,23 @@ export class Classifier {
         workItemIds: [],
         title: "",
         targetedAtOperator: true,
+        actionRequiredFrom: null,
+        nextAction: null,
       };
     }
+  }
+
+  private computeTargetedAtOperator(
+    result: { action_required_from?: string[] | null; targeted_at_operator?: boolean },
+  ): boolean {
+    if (result.action_required_from !== undefined) {
+      if (result.action_required_from === null || result.action_required_from.length === 0) {
+        return false;
+      }
+      if (this.operatorIdentity) {
+        return result.action_required_from.includes(this.operatorIdentity.userId);
+      }
+    }
+    return result.targeted_at_operator !== false;
   }
 }
