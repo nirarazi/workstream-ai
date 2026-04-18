@@ -600,4 +600,62 @@ describe("Database", () => {
       expect(summaries.length).toBeLessThanOrEqual(100);
     });
   });
+
+  describe("Event actionRequiredFrom and nextAction persistence", () => {
+    let db: Database;
+    let graph: ContextGraph;
+
+    beforeEach(() => {
+      db = new Database(":memory:");
+      graph = new ContextGraph(db);
+    });
+
+    afterEach(() => {
+      db.close();
+    });
+
+    it("persists and retrieves actionRequiredFrom and nextAction", () => {
+      graph.upsertWorkItem({ id: "AI-1", source: "jira", title: "Test" });
+      graph.upsertThread({ id: "t1", channelId: "C1", platform: "slack", workItemId: "AI-1" });
+      graph.upsertAgent({ id: "a1", name: "Byte", platform: "slack", platformUserId: "U1" });
+
+      const event = graph.insertEvent({
+        threadId: "t1",
+        messageId: "m1",
+        workItemId: "AI-1",
+        agentId: "a1",
+        status: "blocked_on_human",
+        confidence: 0.9,
+        reason: "Needs approval",
+        rawText: "Please approve PR #716",
+        timestamp: new Date().toISOString(),
+        targetedAtOperator: true,
+        actionRequiredFrom: ["U_GUY123", "U_OPERATOR"],
+        nextAction: "Review and approve PR #716",
+      });
+
+      expect(event.actionRequiredFrom).toEqual(["U_GUY123", "U_OPERATOR"]);
+      expect(event.nextAction).toBe("Review and approve PR #716");
+    });
+
+    it("defaults actionRequiredFrom and nextAction to null when not provided", () => {
+      graph.upsertWorkItem({ id: "AI-2", source: "jira", title: "Test2" });
+      graph.upsertThread({ id: "t2", channelId: "C1", platform: "slack", workItemId: "AI-2" });
+      graph.upsertAgent({ id: "a1", name: "Byte", platform: "slack", platformUserId: "U1" });
+
+      const event = graph.insertEvent({
+        threadId: "t2",
+        messageId: "m2",
+        workItemId: "AI-2",
+        agentId: "a1",
+        status: "in_progress",
+        confidence: 0.8,
+        reason: "Working on it",
+        timestamp: new Date().toISOString(),
+      });
+
+      expect(event.actionRequiredFrom).toBeNull();
+      expect(event.nextAction).toBeNull();
+    });
+  });
 });

@@ -238,6 +238,14 @@ export class Database {
       this.db.exec("ALTER TABLE events ADD COLUMN targeted_at_operator INTEGER NOT NULL DEFAULT 1");
       log.info("Migration: added targeted_at_operator column to events");
     }
+
+    // Add action_required_from and next_action columns to events table
+    const eventColsForAction = this.db.pragma("table_info(events)") as Array<{ name: string }>;
+    if (!eventColsForAction.some((c) => c.name === "action_required_from")) {
+      this.db.exec("ALTER TABLE events ADD COLUMN action_required_from TEXT DEFAULT NULL");
+      this.db.exec("ALTER TABLE events ADD COLUMN next_action TEXT DEFAULT NULL");
+      log.info("Migration: added action_required_from and next_action columns to events");
+    }
   }
 
   prepare<T>(sql: string): BetterSqlite3Type.Statement<T[]> {

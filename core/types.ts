@@ -111,6 +111,8 @@ export interface Event {
   createdAt: string;
   entryType: EntryType;
   targetedAtOperator: boolean;
+  actionRequiredFrom: string[] | null;
+  nextAction: string | null;
 }
 
 export interface Enrichment {
