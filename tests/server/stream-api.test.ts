@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { Database } from "../../core/graph/db.js";
 import { ContextGraph } from "../../core/graph/index.js";
 import { buildUnifiedStatus, buildTimeline } from "../../core/stream.js";
-import type { Event, WorkItem } from "../../core/types.js";
+import type { Event, WorkItem, OperatorIdentityMap } from "../../core/types.js";
 
 describe("Stream", () => {
   let db: Database;
@@ -32,6 +32,8 @@ describe("Stream", () => {
         timestamp: new Date(Date.now() - 130 * 60000).toISOString(),
         createdAt: new Date().toISOString(), entryType: "block",
         targetedAtOperator: true,
+        actionRequiredFrom: null,
+        nextAction: null,
       };
       const result = buildUnifiedStatus(workItem, blockEvent);
       expect(result).toMatch(/Waiting on you · 2h \d+m/);
@@ -51,9 +53,9 @@ describe("Stream", () => {
   describe("buildTimeline", () => {
     it("filters noise and sorts newest first", () => {
       const events: Event[] = [
-        { id: "e1", threadId: "t1", messageId: "m1", workItemId: "AI-100", agentId: "a1", status: "in_progress", confidence: 0.9, reason: "Started work", rawText: "Starting", timestamp: "2026-04-15T10:00:00Z", createdAt: "2026-04-15T10:00:00Z", entryType: "progress", targetedAtOperator: true },
-        { id: "e2", threadId: "t1", messageId: "m2", workItemId: "AI-100", agentId: "a1", status: "noise", confidence: 0.8, reason: "Status update", rawText: "Still working", timestamp: "2026-04-15T11:00:00Z", createdAt: "2026-04-15T11:00:00Z", entryType: "noise", targetedAtOperator: true },
-        { id: "e3", threadId: "t2", messageId: "m3", workItemId: "AI-100", agentId: null, status: "completed", confidence: 1.0, reason: "Operator approved", rawText: "Looks good", timestamp: "2026-04-15T12:00:00Z", createdAt: "2026-04-15T12:00:00Z", entryType: "decision", targetedAtOperator: true },
+        { id: "e1", threadId: "t1", messageId: "m1", workItemId: "AI-100", agentId: "a1", status: "in_progress", confidence: 0.9, reason: "Started work", rawText: "Starting", timestamp: "2026-04-15T10:00:00Z", createdAt: "2026-04-15T10:00:00Z", entryType: "progress", targetedAtOperator: true, actionRequiredFrom: null, nextAction: null },
+        { id: "e2", threadId: "t1", messageId: "m2", workItemId: "AI-100", agentId: "a1", status: "noise", confidence: 0.8, reason: "Status update", rawText: "Still working", timestamp: "2026-04-15T11:00:00Z", createdAt: "2026-04-15T11:00:00Z", entryType: "noise", targetedAtOperator: true, actionRequiredFrom: null, nextAction: null },
+        { id: "e3", threadId: "t2", messageId: "m3", workItemId: "AI-100", agentId: null, status: "completed", confidence: 1.0, reason: "Operator approved", rawText: "Looks good", timestamp: "2026-04-15T12:00:00Z", createdAt: "2026-04-15T12:00:00Z", entryType: "decision", targetedAtOperator: true, actionRequiredFrom: null, nextAction: null },
       ];
       const agentMap = new Map([["a1", "Byte"]]);
       const threadChannelMap = new Map([["t1", "#agent-orchestrator"], ["t2", "#strategy"]]);
@@ -132,6 +134,156 @@ describe("Stream", () => {
       expect(blockEvent).toBeDefined();
       expect(blockEvent!.nextAction).toBe("Approve PR #716");
       expect(blockEvent!.actionRequiredFrom).toEqual(["U_OPERATOR"]);
+    });
+  });
+
+  describe("buildUnifiedStatus actor-aware labels", () => {
+    it("shows 'Waiting on you' when operator is in actionRequiredFrom", () => {
+      const workItem: WorkItem = {
+        id: "AI-100", source: "jira", title: "Test",
+        externalStatus: null, assignee: null, url: null,
+        currentAtcStatus: "blocked_on_human", currentConfidence: 0.9,
+        snoozedUntil: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+      };
+      const blockEvent: Event = {
+        id: "e1", threadId: "t1", messageId: "m1", workItemId: "AI-100",
+        agentId: "a1", status: "blocked_on_human", confidence: 0.9,
+        reason: "Needs approval", rawText: "Please approve",
+        timestamp: new Date(Date.now() - 30 * 60000).toISOString(),
+        createdAt: new Date().toISOString(), entryType: "block",
+        targetedAtOperator: true,
+        actionRequiredFrom: ["U_OPERATOR"],
+        nextAction: "Approve PR #716",
+      };
+      const operatorIdentities: OperatorIdentityMap = new Map([
+        ["slack", { userId: "U_OPERATOR", userName: "Nir" }],
+      ]);
+      const agentMap = new Map([["a1", "Byte"]]);
+      const result = buildUnifiedStatus(workItem, blockEvent, operatorIdentities, agentMap);
+      expect(result).toMatch(/Waiting on you · \d+m/);
+    });
+
+    it("shows actor name when someone else is in actionRequiredFrom", () => {
+      const workItem: WorkItem = {
+        id: "AI-100", source: "jira", title: "Test",
+        externalStatus: null, assignee: null, url: null,
+        currentAtcStatus: "blocked_on_human", currentConfidence: 0.9,
+        snoozedUntil: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+      };
+      const blockEvent: Event = {
+        id: "e1", threadId: "t1", messageId: "m1", workItemId: "AI-100",
+        agentId: "a1", status: "blocked_on_human", confidence: 0.9,
+        reason: "Needs Guy's review", rawText: "Waiting for Guy",
+        timestamp: new Date(Date.now() - 130 * 60000).toISOString(),
+        createdAt: new Date().toISOString(), entryType: "block",
+        targetedAtOperator: false,
+        actionRequiredFrom: ["U_GUY123"],
+        nextAction: "Review PR #716",
+      };
+      const operatorIdentities: OperatorIdentityMap = new Map([
+        ["slack", { userId: "U_OPERATOR", userName: "Nir" }],
+      ]);
+      const agentMap = new Map([["U_GUY123", "Guy"]]);
+      const result = buildUnifiedStatus(workItem, blockEvent, operatorIdentities, agentMap);
+      expect(result).toMatch(/Waiting on Guy · 2h \d+m/);
+    });
+
+    it("shows 'Needs your decision' when operator is action taker for needs_decision", () => {
+      const workItem: WorkItem = {
+        id: "AI-100", source: "jira", title: "Test",
+        externalStatus: null, assignee: null, url: null,
+        currentAtcStatus: "needs_decision", currentConfidence: 0.9,
+        snoozedUntil: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+      };
+      const blockEvent: Event = {
+        id: "e1", threadId: "t1", messageId: "m1", workItemId: "AI-100",
+        agentId: "a1", status: "needs_decision", confidence: 0.9,
+        reason: "Choose palette", rawText: "Pick a color",
+        timestamp: new Date(Date.now() - 10 * 60000).toISOString(),
+        createdAt: new Date().toISOString(), entryType: "block",
+        targetedAtOperator: true,
+        actionRequiredFrom: ["U_OPERATOR"],
+        nextAction: "Choose between 3 palette options",
+      };
+      const operatorIdentities: OperatorIdentityMap = new Map([
+        ["slack", { userId: "U_OPERATOR", userName: "Nir" }],
+      ]);
+      const agentMap = new Map<string, string>();
+      const result = buildUnifiedStatus(workItem, blockEvent, operatorIdentities, agentMap);
+      expect(result).toMatch(/Needs your decision · \d+m/);
+    });
+
+    it("shows actor name for needs_decision when someone else", () => {
+      const workItem: WorkItem = {
+        id: "AI-100", source: "jira", title: "Test",
+        externalStatus: null, assignee: null, url: null,
+        currentAtcStatus: "needs_decision", currentConfidence: 0.9,
+        snoozedUntil: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+      };
+      const blockEvent: Event = {
+        id: "e1", threadId: "t1", messageId: "m1", workItemId: "AI-100",
+        agentId: "a1", status: "needs_decision", confidence: 0.9,
+        reason: "Guy needs to decide", rawText: "Decision needed",
+        timestamp: new Date(Date.now() - 90 * 60000).toISOString(),
+        createdAt: new Date().toISOString(), entryType: "block",
+        targetedAtOperator: false,
+        actionRequiredFrom: ["U_GUY123"],
+        nextAction: null,
+      };
+      const operatorIdentities: OperatorIdentityMap = new Map([
+        ["slack", { userId: "U_OPERATOR", userName: "Nir" }],
+      ]);
+      const agentMap = new Map([["U_GUY123", "Guy"]]);
+      const result = buildUnifiedStatus(workItem, blockEvent, operatorIdentities, agentMap);
+      expect(result).toMatch(/Needs Guy's decision · 1h \d+m/);
+    });
+
+    it("falls back to hardcoded labels when actionRequiredFrom is null", () => {
+      const workItem: WorkItem = {
+        id: "AI-100", source: "jira", title: "Test",
+        externalStatus: null, assignee: null, url: null,
+        currentAtcStatus: "blocked_on_human", currentConfidence: 0.9,
+        snoozedUntil: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+      };
+      const blockEvent: Event = {
+        id: "e1", threadId: "t1", messageId: "m1", workItemId: "AI-100",
+        agentId: "a1", status: "blocked_on_human", confidence: 0.9,
+        reason: "Needs approval", rawText: "Please approve",
+        timestamp: new Date(Date.now() - 5 * 60000).toISOString(),
+        createdAt: new Date().toISOString(), entryType: "block",
+        targetedAtOperator: true,
+        actionRequiredFrom: null,
+        nextAction: null,
+      };
+      const operatorIdentities: OperatorIdentityMap = new Map();
+      const agentMap = new Map<string, string>();
+      const result = buildUnifiedStatus(workItem, blockEvent, operatorIdentities, agentMap);
+      expect(result).toMatch(/Waiting on you · 5m/);
+    });
+
+    it("uses raw user ID when name cannot be resolved", () => {
+      const workItem: WorkItem = {
+        id: "AI-100", source: "jira", title: "Test",
+        externalStatus: null, assignee: null, url: null,
+        currentAtcStatus: "blocked_on_human", currentConfidence: 0.9,
+        snoozedUntil: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+      };
+      const blockEvent: Event = {
+        id: "e1", threadId: "t1", messageId: "m1", workItemId: "AI-100",
+        agentId: "a1", status: "blocked_on_human", confidence: 0.9,
+        reason: "Needs review", rawText: "Please review",
+        timestamp: new Date(Date.now() - 15 * 60000).toISOString(),
+        createdAt: new Date().toISOString(), entryType: "block",
+        targetedAtOperator: false,
+        actionRequiredFrom: ["U_UNKNOWN"],
+        nextAction: null,
+      };
+      const operatorIdentities: OperatorIdentityMap = new Map([
+        ["slack", { userId: "U_OPERATOR", userName: "Nir" }],
+      ]);
+      const agentMap = new Map<string, string>();
+      const result = buildUnifiedStatus(workItem, blockEvent, operatorIdentities, agentMap);
+      expect(result).toMatch(/Waiting on U_UNKNOWN · \d+m/);
     });
   });
 

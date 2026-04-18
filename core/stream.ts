@@ -1,6 +1,6 @@
 // core/stream.ts — Work Item Stream: aggregated view for the operator
 
-import type { EntryType, StatusCategory, Event, WorkItem, Agent, Enrichment } from "./types.js";
+import type { EntryType, OperatorIdentityMap, StatusCategory, Event, WorkItem, Agent, Enrichment } from "./types.js";
 
 export interface TimelineEntry {
   id: string;
@@ -25,28 +25,60 @@ export interface StreamData {
   timeline: TimelineEntry[];
   latestThreadId: string | null;
   latestChannelId: string | null;
+  nextAction: string | null;
 }
 
 export function buildUnifiedStatus(
   workItem: WorkItem,
   latestBlockEvent: Event | null,
+  operatorIdentities?: OperatorIdentityMap,
+  agentNameMap?: Map<string, string>,
 ): string {
   if (!workItem.currentAtcStatus) return "Unknown";
 
-  const statusLabels: Record<string, string> = {
-    blocked_on_human: "Waiting on you",
-    needs_decision: "Needs your decision",
-    in_progress: "In progress",
-    completed: "Completed",
-    noise: "No action needed",
-  };
+  const status = workItem.currentAtcStatus;
 
-  const label = statusLabels[workItem.currentAtcStatus] ?? workItem.currentAtcStatus;
+  // Resolve the actor-aware label for blocked/decision statuses
+  let label: string;
 
   if (
     latestBlockEvent &&
-    (workItem.currentAtcStatus === "blocked_on_human" ||
-      workItem.currentAtcStatus === "needs_decision")
+    (status === "blocked_on_human" || status === "needs_decision") &&
+    latestBlockEvent.actionRequiredFrom &&
+    latestBlockEvent.actionRequiredFrom.length > 0 &&
+    operatorIdentities
+  ) {
+    // Check if operator is in actionRequiredFrom
+    const isOperator = [...operatorIdentities.values()].some(
+      (identity) => latestBlockEvent.actionRequiredFrom!.includes(identity.userId),
+    );
+
+    if (isOperator) {
+      label = status === "needs_decision" ? "Needs your decision" : "Waiting on you";
+    } else {
+      // Resolve first action taker to a display name
+      const firstActorId = latestBlockEvent.actionRequiredFrom[0];
+      const actorName = agentNameMap?.get(firstActorId) ?? firstActorId;
+      label = status === "needs_decision"
+        ? `Needs ${actorName}'s decision`
+        : `Waiting on ${actorName}`;
+    }
+  } else {
+    // Fallback to hardcoded labels (backwards-compatible)
+    const statusLabels: Record<string, string> = {
+      blocked_on_human: "Waiting on you",
+      needs_decision: "Needs your decision",
+      in_progress: "In progress",
+      completed: "Completed",
+      noise: "No action needed",
+    };
+    label = statusLabels[status] ?? status;
+  }
+
+  // Append waiting time for blocked/decision statuses
+  if (
+    latestBlockEvent &&
+    (status === "blocked_on_human" || status === "needs_decision")
   ) {
     const blockTime = new Date(latestBlockEvent.timestamp);
     const now = new Date();
