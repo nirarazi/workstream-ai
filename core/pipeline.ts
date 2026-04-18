@@ -264,10 +264,14 @@ export class Pipeline {
         });
         return {
           status: "noise",
+          entryType: "noise" as const,
           confidence: 0,
           reason: "Work item already completed — skipping classification",
           workItemIds: [inheritedWorkItemId],
           title: "",
+          targetedAtOperator: false,
+          actionRequiredFrom: null,
+          nextAction: null,
         };
       }
     }
