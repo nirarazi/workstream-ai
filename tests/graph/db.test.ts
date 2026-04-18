@@ -321,6 +321,55 @@ describe("Database", () => {
       expect(items[1].workItem.currentAtcStatus).toBe("needs_decision");
     });
 
+    it("getActionableItems finds events linked via thread work_item_id", () => {
+      // Create a work item
+      graph.upsertWorkItem({
+        id: "WI-THREAD",
+        source: "inferred",
+        title: "Thread-linked item",
+        currentAtcStatus: "blocked_on_human",
+        currentConfidence: 0.9,
+      });
+
+      // Create a thread linked to this work item
+      graph.upsertThread({
+        id: "thread-linked-1",
+        channelId: "C001",
+        channelName: "general",
+        platform: "slack",
+        workItemId: "WI-THREAD",
+        lastActivity: new Date().toISOString(),
+        messageCount: 1,
+      });
+
+      // Create an agent
+      graph.upsertAgent({
+        id: "agent-1",
+        name: "Byte",
+        platform: "slack",
+        platformUserId: "U001",
+      });
+
+      // Insert event linked via thread (event.work_item_id is NULL, but thread.work_item_id = "WI-THREAD")
+      graph.insertEvent({
+        threadId: "thread-linked-1",
+        messageId: "msg-via-thread",
+        workItemId: null,  // NOT directly tagged
+        agentId: "agent-1",
+        status: "blocked_on_human",
+        confidence: 0.9,
+        reason: "Blocked",
+        rawText: "I'm blocked",
+        timestamp: new Date().toISOString(),
+        targetedAtOperator: true,
+      });
+
+      const items = graph.getActionableItems();
+      const found = items.find((i) => i.workItem.id === "WI-THREAD");
+      expect(found).toBeDefined();
+      expect(found!.latestEvent.rawText).toBe("I'm blocked");
+    });
+
     it("excludes snoozed items", () => {
       graph.upsertWorkItem({
         id: "AI-1",
