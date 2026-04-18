@@ -151,6 +151,7 @@ function createMockGraph(): ContextGraph {
     getThreadById: vi.fn().mockReturnValue(null),
     getPollCursor: vi.fn().mockReturnValue(null),
     setPollCursor: vi.fn(),
+    getOpenWorkItemSummaries: vi.fn().mockReturnValue([]),
     upsertEnrichment: vi.fn(),
   } as unknown as ContextGraph;
 }
@@ -205,7 +206,7 @@ describe("Pipeline", () => {
       expect(result.processed).toBe(1);
       expect(result.classified).toBe(1);
       expect(result.errors).toBe(0);
-      expect(classifier.classify).toHaveBeenCalledWith(thread.messages[0].text);
+      expect(classifier.classify).toHaveBeenCalledWith(thread.messages[0].text, expect.any(Array));
     });
 
     it("upserts agent from message metadata", async () => {
@@ -562,7 +563,7 @@ describe("Pipeline", () => {
       const result = await pipeline.processMessage(msg, "t-1", "C-1");
 
       expect(result.status).toBe("blocked_on_human");
-      expect(classifier.classify).toHaveBeenCalledWith(msg.text);
+      expect(classifier.classify).toHaveBeenCalledWith(msg.text, expect.any(Array));
     });
 
     it("upserts thread before processing", async () => {
@@ -833,6 +834,73 @@ describe("Pipeline", () => {
       const itUpdate = upsertCalls.find((c) => c[0].id === "IT-100" && c[0].currentAtcStatus);
       expect(aiUpdate).toBeDefined();
       expect(itUpdate).toBeDefined();
+    });
+  });
+
+  describe("work item deduplication via classifier context", () => {
+    it("passes open work item summaries to the classifier", async () => {
+      const msg = makeMessage({ text: "Missing API key for Anthropic again" });
+      const thread = makeThread({ id: "t-new" }, [msg]);
+      vi.mocked(adapter.readThreads).mockResolvedValue([thread]);
+
+      vi.mocked(classifier.classify).mockResolvedValue(
+        makeClassification({
+          status: "blocked_on_human",
+          workItemIds: ["thread:existing.123"],
+          title: "Missing API key for Anthropic",
+        }),
+      );
+
+      // Return existing open work items
+      (graph as any).getOpenWorkItemSummaries = vi.fn().mockReturnValue([
+        { id: "thread:existing.123", title: "Missing API key for Anthropic" },
+        { id: "AI-200", title: "Deploy to staging" },
+      ]);
+
+      await pipeline.processOnce();
+
+      // Classifier should have been called with the open work items as second argument
+      expect(classifier.classify).toHaveBeenCalledWith(
+        msg.text,
+        [
+          { id: "thread:existing.123", title: "Missing API key for Anthropic" },
+          { id: "AI-200", title: "Deploy to staging" },
+        ],
+      );
+    });
+
+    it("links thread to existing work item when classifier returns existing ID", async () => {
+      const msg = makeMessage({
+        id: "msg-new",
+        text: "Missing API key for Anthropic again",
+        threadId: "t-new",
+      });
+      const thread = makeThread({ id: "t-new" }, [msg]);
+      vi.mocked(adapter.readThreads).mockResolvedValue([thread]);
+
+      vi.mocked(classifier.classify).mockResolvedValue(
+        makeClassification({
+          status: "blocked_on_human",
+          workItemIds: ["thread:existing.123"],
+          title: "Missing API key for Anthropic",
+        }),
+      );
+
+      (graph as any).getOpenWorkItemSummaries = vi.fn().mockReturnValue([
+        { id: "thread:existing.123", title: "Missing API key for Anthropic" },
+      ]);
+
+      await pipeline.processOnce();
+
+      // The thread should be linked to the existing work item, NOT creating a new thread:t-new
+      const upsertThreadCalls = vi.mocked(graph.upsertThread).mock.calls;
+      const lastThreadUpsert = upsertThreadCalls[upsertThreadCalls.length - 1][0];
+      expect(lastThreadUpsert.workItemId).toBe("thread:existing.123");
+
+      // Should NOT have created a synthetic work item for thread:t-new
+      const upsertWorkItemCalls = vi.mocked(graph.upsertWorkItem).mock.calls;
+      const syntheticIds = upsertWorkItemCalls.map((c: any[]) => c[0].id);
+      expect(syntheticIds).not.toContain("thread:t-new");
     });
   });
 });
