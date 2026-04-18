@@ -567,4 +567,37 @@ describe("Database", () => {
       expect(stats.total).toBe(3);
     });
   });
+
+  describe("getOpenWorkItemSummaries", () => {
+    it("returns non-completed, non-noise work items with id and title", () => {
+      graph.upsertWorkItem({ id: "AI-100", source: "extracted", title: "Fix login bug", currentAtcStatus: "in_progress" });
+      graph.upsertWorkItem({ id: "AI-101", source: "extracted", title: "Deploy staging", currentAtcStatus: "completed" });
+      graph.upsertWorkItem({ id: "thread:abc.123", source: "inferred", title: "Missing API key", currentAtcStatus: "blocked_on_human" });
+      graph.upsertWorkItem({ id: "AI-102", source: "extracted", title: "Noisy alert", currentAtcStatus: "noise" });
+      graph.upsertWorkItem({ id: "AI-103", source: "extracted", title: "No status yet" });
+
+      const summaries = graph.getOpenWorkItemSummaries();
+
+      // Should include in_progress, blocked_on_human, needs_decision, and null-status items
+      // Should exclude completed and noise
+      expect(summaries).toHaveLength(3);
+      expect(summaries.map(s => s.id)).toContain("AI-100");
+      expect(summaries.map(s => s.id)).toContain("thread:abc.123");
+      expect(summaries.map(s => s.id)).toContain("AI-103");
+      expect(summaries.map(s => s.id)).not.toContain("AI-101");
+      expect(summaries.map(s => s.id)).not.toContain("AI-102");
+
+      // Each summary has id and title
+      const ai100 = summaries.find(s => s.id === "AI-100")!;
+      expect(ai100.title).toBe("Fix login bug");
+    });
+
+    it("limits results to 100 items", () => {
+      for (let i = 0; i < 120; i++) {
+        graph.upsertWorkItem({ id: `WI-${i}`, source: "extracted", title: `Item ${i}`, currentAtcStatus: "in_progress" });
+      }
+      const summaries = graph.getOpenWorkItemSummaries();
+      expect(summaries.length).toBeLessThanOrEqual(100);
+    });
+  });
 });

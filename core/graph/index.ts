@@ -488,6 +488,21 @@ export class ContextGraph {
     `).run(summary.workItemId, summary.summaryText, now, summary.latestEventId);
   }
 
+  // --- Open Work Item Summaries (for classifier dedup) ---
+
+  getOpenWorkItemSummaries(): Array<{ id: string; title: string }> {
+    const rows = this.db.db
+      .prepare(`
+        SELECT id, title FROM work_items
+        WHERE current_atc_status NOT IN ('completed', 'noise')
+           OR current_atc_status IS NULL
+        ORDER BY updated_at DESC
+        LIMIT 100
+      `)
+      .all() as Array<{ id: string; title: string }>;
+    return rows;
+  }
+
   // --- Sidekick query methods ---
 
   searchWorkItems(query: string): WorkItem[] {
