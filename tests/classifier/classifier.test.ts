@@ -201,6 +201,155 @@ describe("Classifier", () => {
   });
 });
 
+// --- action_required_from → targetedAtOperator + nextAction tests ---
+
+describe("action_required_from → targetedAtOperator + nextAction", () => {
+  const OPERATOR = { userId: "U0OPERATOR1", userName: "Nir Arazi" };
+
+  it("action_required_from includes operator → targetedAtOperator=true, nextAction passed through", async () => {
+    const provider = mockProvider({
+      status: "blocked_on_human",
+      confidence: 0.9,
+      reason: "Needs operator review",
+      workItemIds: ["OPS-100"],
+      title: "Review needed",
+      action_required_from: ["U0OPERATOR1"],
+      next_action: "Review and approve the PR",
+    });
+    const classifier = new Classifier(provider, SYSTEM_PROMPT, FEW_SHOT, undefined, undefined, OPERATOR);
+
+    const result = await classifier.classify("Please review this PR");
+
+    expect(result.targetedAtOperator).toBe(true);
+    expect(result.nextAction).toBe("Review and approve the PR");
+    expect(result.actionRequiredFrom).toEqual(["U0OPERATOR1"]);
+  });
+
+  it("action_required_from has only non-operator → targetedAtOperator=false, nextAction passed through", async () => {
+    const provider = mockProvider({
+      status: "blocked_on_human",
+      confidence: 0.9,
+      reason: "Needs Dana to review",
+      workItemIds: ["OPS-100"],
+      title: "Review needed",
+      action_required_from: ["U0SECONDHUMAN"],
+      next_action: "Dana should review the PR",
+    });
+    const classifier = new Classifier(provider, SYSTEM_PROMPT, FEW_SHOT, undefined, undefined, OPERATOR);
+
+    const result = await classifier.classify("Dana please review this PR");
+
+    expect(result.targetedAtOperator).toBe(false);
+    expect(result.nextAction).toBe("Dana should review the PR");
+    expect(result.actionRequiredFrom).toEqual(["U0SECONDHUMAN"]);
+  });
+
+  it("action_required_from is null → targetedAtOperator=false, nextAction=null", async () => {
+    const provider = mockProvider({
+      status: "in_progress",
+      confidence: 0.9,
+      reason: "Agent working",
+      workItemIds: ["OPS-100"],
+      title: "In progress",
+      action_required_from: null,
+      next_action: null,
+    });
+    const classifier = new Classifier(provider, SYSTEM_PROMPT, FEW_SHOT, undefined, undefined, OPERATOR);
+
+    const result = await classifier.classify("Working on it");
+
+    expect(result.targetedAtOperator).toBe(false);
+    expect(result.nextAction).toBeNull();
+    expect(result.actionRequiredFrom).toBeNull();
+  });
+
+  it("action_required_from is empty array → targetedAtOperator=false", async () => {
+    const provider = mockProvider({
+      status: "in_progress",
+      confidence: 0.9,
+      reason: "Agent working",
+      workItemIds: ["OPS-100"],
+      title: "In progress",
+      action_required_from: [],
+      next_action: null,
+    });
+    const classifier = new Classifier(provider, SYSTEM_PROMPT, FEW_SHOT, undefined, undefined, OPERATOR);
+
+    const result = await classifier.classify("Making progress");
+
+    expect(result.targetedAtOperator).toBe(false);
+  });
+
+  it("operator is among multiple action takers → targetedAtOperator=true", async () => {
+    const provider = mockProvider({
+      status: "blocked_on_human",
+      confidence: 0.9,
+      reason: "Needs multiple reviewers",
+      workItemIds: ["OPS-100"],
+      title: "Multi-review needed",
+      action_required_from: ["U0SECONDHUMAN", "U0OPERATOR1", "UOTHERUSER"],
+      next_action: "Multiple people need to review",
+    });
+    const classifier = new Classifier(provider, SYSTEM_PROMPT, FEW_SHOT, undefined, undefined, OPERATOR);
+
+    const result = await classifier.classify("Please everyone review this");
+
+    expect(result.targetedAtOperator).toBe(true);
+    expect(result.actionRequiredFrom).toEqual(["U0SECONDHUMAN", "U0OPERATOR1", "UOTHERUSER"]);
+  });
+
+  it("no action_required_from, no operator identity → falls back to targeted_at_operator boolean", async () => {
+    const provider = mockProvider({
+      status: "blocked_on_human",
+      confidence: 0.9,
+      reason: "Needs human review",
+      workItemIds: ["OPS-100"],
+      title: "Review needed",
+      targeted_at_operator: true,
+    });
+    const classifier = new Classifier(provider, SYSTEM_PROMPT, FEW_SHOT);
+
+    const result = await classifier.classify("Please review this");
+
+    expect(result.targetedAtOperator).toBe(true);
+  });
+
+  it("targeted_at_operator=false with no action_required_from → targetedAtOperator=false", async () => {
+    const provider = mockProvider({
+      status: "blocked_on_human",
+      confidence: 0.9,
+      reason: "Needs someone else",
+      workItemIds: ["OPS-100"],
+      title: "Review needed",
+      targeted_at_operator: false,
+    });
+    const classifier = new Classifier(provider, SYSTEM_PROMPT, FEW_SHOT);
+
+    const result = await classifier.classify("Dana please review this");
+
+    expect(result.targetedAtOperator).toBe(false);
+  });
+
+  it("operator identity injected into system prompt", async () => {
+    const provider = mockProvider({
+      status: "noise",
+      confidence: 0.9,
+      reason: "greeting",
+      workItemIds: [],
+      title: "Hello",
+    });
+    const classifier = new Classifier(provider, SYSTEM_PROMPT, FEW_SHOT, undefined, undefined, OPERATOR);
+
+    await classifier.classify("Hello world");
+
+    const callArgs = (provider.classify as ReturnType<typeof vi.fn>).mock.calls[0];
+    const systemPrompt = callArgs[1] as string;
+    expect(systemPrompt).toContain("Nir Arazi");
+    expect(systemPrompt).toContain("U0OPERATOR1");
+    expect(systemPrompt).toContain("Operator Identity");
+  });
+});
+
 // --- OpenAICompatibleProvider response parsing tests ---
 
 describe("OpenAICompatibleProvider", () => {

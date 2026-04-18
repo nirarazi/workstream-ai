@@ -15,6 +15,11 @@ export type EntryType =
   | "escalation"
   | "noise";
 
+export interface OperatorIdentity {
+  userId: string;
+  userName: string;
+}
+
 export interface ClassificationBreakdown {
   workItemId: string;
   status: StatusCategory;
@@ -23,6 +28,8 @@ export interface ClassificationBreakdown {
   reason: string;
   title: string;
   targetedAtOperator: boolean;
+  actionRequiredFrom: string[] | null;
+  nextAction: string | null;
 }
 
 export interface Classification {
@@ -33,6 +40,8 @@ export interface Classification {
   workItemIds: string[];
   title: string;
   targetedAtOperator: boolean;
+  actionRequiredFrom: string[] | null;
+  nextAction: string | null;
   /** Per-work-item statuses when a message is a summary/brief mentioning multiple items */
   breakdown?: ClassificationBreakdown[];
 }
