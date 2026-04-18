@@ -94,11 +94,8 @@ export class Pipeline {
     let errors = 0;
 
     // Resolve operator identity from the messaging adapter (cached after first call)
-    if (!this.operatorIdentity) {
-      const adapter = this.messagingAdapter as { getAuthenticatedUser?: () => { userId: string; userName: string } | null };
-      if (adapter.getAuthenticatedUser) {
-        this.operatorIdentity = adapter.getAuthenticatedUser() ?? null;
-      }
+    if (!this.operatorIdentity && this.messagingAdapter.getAuthenticatedUser) {
+      this.operatorIdentity = this.messagingAdapter.getAuthenticatedUser() ?? null;
     }
 
     // Determine the since date per channel, using poll cursors or fallback
