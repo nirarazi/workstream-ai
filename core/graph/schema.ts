@@ -53,6 +53,8 @@ export interface EventRow {
   created_at: string;
   entry_type: string;
   targeted_at_operator: number;
+  action_required_from: string | null;
+  next_action: string | null;
 }
 
 export interface EnrichmentRow {

@@ -60,6 +60,15 @@ function toThread(row: ThreadRow): Thread {
 }
 
 function toEvent(row: EventRow): Event {
+  let actionRequiredFrom: string[] | null = null;
+  if (row.action_required_from) {
+    try {
+      actionRequiredFrom = JSON.parse(row.action_required_from);
+    } catch {
+      actionRequiredFrom = null;
+    }
+  }
+
   return {
     id: row.id,
     threadId: row.thread_id,
@@ -74,6 +83,8 @@ function toEvent(row: EventRow): Event {
     createdAt: row.created_at,
     entryType: (row.entry_type as EntryType) ?? "progress",
     targetedAtOperator: Boolean(row.targeted_at_operator ?? 1),
+    actionRequiredFrom,
+    nextAction: row.next_action ?? null,
   };
 }
 
@@ -325,13 +336,15 @@ export class ContextGraph {
     rawText?: string;
     timestamp: string;
     targetedAtOperator?: boolean;
+    actionRequiredFrom?: string[] | null;
+    nextAction?: string | null;
   }): Event {
     const id = randomUUID();
     const now = new Date().toISOString();
 
     const stmt = this.db.db.prepare(`
-      INSERT OR IGNORE INTO events (id, thread_id, message_id, work_item_id, agent_id, status, confidence, reason, raw_text, timestamp, created_at, entry_type, targeted_at_operator)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT OR IGNORE INTO events (id, thread_id, message_id, work_item_id, agent_id, status, confidence, reason, raw_text, timestamp, created_at, entry_type, targeted_at_operator, action_required_from, next_action)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     const result = stmt.run(
       id,
@@ -347,6 +360,8 @@ export class ContextGraph {
       now,
       event.entryType ?? "progress",
       (event.targetedAtOperator ?? true) ? 1 : 0,
+      event.actionRequiredFrom ? JSON.stringify(event.actionRequiredFrom) : null,
+      event.nextAction ?? null,
     );
 
     if (result.changes === 0) {
