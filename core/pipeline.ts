@@ -288,11 +288,14 @@ export class Pipeline {
       return cachedResult;
     }
 
+    // Step 0e: Get open work items for classifier context (dedup)
+    const openWorkItems = this.graph.getOpenWorkItemSummaries();
+
     // Step 1: Link work items from message text (regex — only known prefixes)
     const extractedIds = this.linker.linkMessage(message.text, thread.id);
 
     // Step 2: Classify the message
-    const classification = await this.classifier.classify(message.text);
+    const classification = await this.classifier.classify(message.text, openWorkItems);
 
     // Separate LLM-suggested IDs into verified (match an extracted ID) and unverified
     const extractedSet = new Set(extractedIds);
