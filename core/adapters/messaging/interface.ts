@@ -40,6 +40,9 @@ export interface MessagingAdapter {
   /** Serialize a user ID into the platform's native mention format (e.g. <@U123> for Slack) */
   serializeMention?(userId: string): string;
 
+  /** Return the authenticated user's identity (the operator). Null if not connected or not supported. */
+  getAuthenticatedUser?(): { userId: string; userName: string } | null;
+
   /** Backfill agent names/avatars from platform user data. Called once after connect. */
   backfillAgents?(graph: ContextGraph): Promise<number>;
 
