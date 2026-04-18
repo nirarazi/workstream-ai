@@ -62,8 +62,8 @@ export function buildFewShotMessages(
 }
 
 export function buildOperatorContext(config: Config): string {
-  const name = (config as any).operator?.name ?? "";
-  const context = (config as any).operator?.context ?? "";
+  const name = config.operator?.name ?? "";
+  const context = config.operator?.context ?? "";
   if (!name && !context) return "";
   const parts: string[] = [];
   if (name) parts.push(`The operator's name is ${name}.`);
