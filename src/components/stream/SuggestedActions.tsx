@@ -45,9 +45,11 @@ function toServerAction(action: ActionKind): string {
 interface SuggestedActionsProps {
   data: StreamData;
   onActioned?: () => void;
+  getReplyText?: () => string | undefined;
+  onActionComplete?: () => void;
 }
 
-export default function SuggestedActions({ data, onActioned }: SuggestedActionsProps) {
+export default function SuggestedActions({ data, onActioned, getReplyText, onActionComplete }: SuggestedActionsProps) {
   const { workItem } = data;
   const [acting, setActing] = useState<ActionKind | null>(null);
   const [creatingTicket, setCreatingTicket] = useState(false);
@@ -60,8 +62,10 @@ export default function SuggestedActions({ data, onActioned }: SuggestedActionsP
     setActing(action);
     setError(null);
     try {
-      await postAction(workItem.id, toServerAction(action), undefined, action === "snooze" ? 60 : undefined);
+      const message = getReplyText?.() || undefined;
+      await postAction(workItem.id, toServerAction(action), message, action === "snooze" ? 60 : undefined);
       onActioned?.();
+      onActionComplete?.();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Action failed");
     } finally {

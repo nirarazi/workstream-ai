@@ -696,12 +696,34 @@ export function createApp(state: EngineState): Hono {
         }
       }
 
+      // Record the operator's action as an event in the timeline
+      const threads = state.graph.getThreadsForWorkItem(body.workItemId);
+      const actionThread = threads[0];
+      const actionStatus = body.action === "approve" || body.action === "close" ? "completed" : "in_progress";
+      const actionLabels: Record<string, string> = {
+        approve: "Operator approved",
+        redirect: "Operator unblocked",
+        close: "Operator dismissed",
+        snooze: "Operator snoozed",
+      };
+      state.graph.insertEvent({
+        threadId: actionThread?.id ?? null,
+        messageId: `operator-action-${Date.now()}`,
+        workItemId: body.workItemId,
+        agentId: null,
+        status: actionStatus,
+        confidence: 1.0,
+        reason: actionLabels[body.action] ?? `Operator action: ${body.action}`,
+        rawText: body.message ?? null,
+        timestamp: new Date().toISOString(),
+        entryType: "decision",
+        targetedAtOperator: false,
+      });
+
       // If there's a message and a messaging adapter, post it to the related thread
       if (body.message && state.messagingAdapter) {
-        const threads = state.graph.getThreadsForWorkItem(body.workItemId);
-        if (threads.length > 0) {
-          const thread = threads[0];
-          await state.messagingAdapter.replyToThread(thread.id, thread.channelId, body.message);
+        if (actionThread) {
+          await state.messagingAdapter.replyToThread(actionThread.id, actionThread.channelId, body.message);
         } else {
           log.warn("No threads found for work item — message not sent", body.workItemId);
           return c.json({ ok: false, error: "No thread found to post message to" }, 404);
