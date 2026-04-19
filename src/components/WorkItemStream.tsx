@@ -58,6 +58,15 @@ export default function WorkItemStream({
     onActioned?.();
   }
 
+  function getReplyText(): string | undefined {
+    return replyInputRef.current?.serialize() || undefined;
+  }
+
+  function handleActionComplete() {
+    replyInputRef.current?.clear();
+    onClose();
+  }
+
   async function handleReply(serializedText: string) {
     if (!serializedText.trim() || !data) return;
     setSending(true);
@@ -121,7 +130,7 @@ export default function WorkItemStream({
         </div>
         <StatusSnapshot data={data} />
         <Timeline entries={data.timeline} />
-        <SuggestedActions data={data} onActioned={handleActioned} />
+        <SuggestedActions data={data} onActioned={handleActioned} getReplyText={getReplyText} onActionComplete={handleActionComplete} />
         <div className="sticky bottom-0 bg-gray-950 border-t border-gray-800 px-5 py-3">
           <MentionInput
             ref={replyInputRef}
