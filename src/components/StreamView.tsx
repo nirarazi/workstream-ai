@@ -24,6 +24,7 @@ export default function StreamView({
   const [allActiveItems, setAllActiveItems] = useState<ActionableItem[]>([]);
   const [selectedWorkItemId, setSelectedWorkItemId] = useState<string | null>(null);
   const [actionStates, setActionStates] = useState<Map<string, ActionState>>(new Map());
+  const [resolvingIds, setResolvingIds] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -108,6 +109,7 @@ export default function StreamView({
               item={item}
               selected={selectedWorkItemId === item.workItem.id}
               actionState={actionStates.get(item.workItem.id) ?? null}
+              resolving={resolvingIds.has(item.workItem.id)}
               onSelect={() => handleSelect(item.workItem.id)}
             />
           ))}
@@ -125,6 +127,17 @@ export default function StreamView({
             onActioned={poll}
             onActionStateChange={(id, state) => {
               setActionStates(prev => new Map(prev).set(id, state));
+              // Auto-resolve terminal actions after animation completes
+              if (state === "unblocked" || state === "done") {
+                setResolvingIds(prev => new Set(prev).add(id));
+                setTimeout(() => {
+                  setResolvingIds(prev => {
+                    const next = new Set(prev);
+                    next.delete(id);
+                    return next;
+                  });
+                }, 2000);
+              }
             }}
           />
         ) : (

@@ -8,6 +8,7 @@ import StatusSnapshot from "./StatusSnapshot";
 import Timeline from "./Timeline";
 import SuggestedActions from "./SuggestedActions";
 import MentionInput, { type MentionInputHandle } from "../MentionInput";
+import SendConfirmation from "./SendConfirmation";
 
 interface StreamDetailProps {
   workItemId: string;
@@ -27,6 +28,7 @@ export default function StreamDetail({
   const [data, setData] = useState<StreamData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
+  const [confirmation, setConfirmation] = useState<{ action: string; channelName: string } | null>(null);
   const replyInputRef = useRef<MentionInputHandle>(null);
 
   // Fetch stream data on mount / workItemId change
@@ -90,6 +92,11 @@ export default function StreamDetail({
     }
     if (state) {
       onActionStateChange?.(workItemId, state);
+    }
+    // Show inline send confirmation for terminal actions (not snooze)
+    if (state === "unblocked" || state === "done") {
+      const channelName = data?.channels[0]?.name ?? "thread";
+      setConfirmation({ action, channelName });
     }
   }
 
@@ -217,6 +224,13 @@ export default function StreamDetail({
             </div>
           )}
         </div>
+        {confirmation && (
+          <SendConfirmation
+            channelName={confirmation.channelName}
+            action={confirmation.action}
+            onComplete={() => setConfirmation(null)}
+          />
+        )}
       </div>
     </div>
   );
