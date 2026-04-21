@@ -595,7 +595,7 @@ export function createApp(state: EngineState): Hono {
   app.post("/api/action", async (c) => {
     const body = await c.req.json<{
       workItemId: string;
-      action: "approve" | "redirect" | "close" | "snooze" | "create_ticket";
+      action: "approve" | "redirect" | "close" | "snooze" | "create_ticket" | "dismiss" | "noise";
       message?: string;
       snoozeDuration?: number;
       projectKey?: string;
@@ -605,7 +605,7 @@ export function createApp(state: EngineState): Hono {
       return c.json({ ok: false, error: "Missing required fields: workItemId, action" }, 400);
     }
 
-    const validActions = new Set(["approve", "redirect", "close", "snooze", "create_ticket"]);
+    const validActions = new Set(["approve", "redirect", "close", "snooze", "create_ticket", "dismiss", "noise"]);
     if (!validActions.has(body.action)) {
       return c.json({ ok: false, error: `Invalid action: ${body.action}` }, 400);
     }
@@ -645,6 +645,49 @@ export function createApp(state: EngineState): Hono {
             currentAtcStatus: "in_progress",
           });
           break;
+
+        case "dismiss": {
+          state.graph.dismissWorkItem(body.workItemId);
+          // Insert an event recording the operator dismissal
+          const dismissThreads = state.graph.getThreadsForWorkItem(body.workItemId);
+          state.graph.insertEvent({
+            threadId: dismissThreads[0]?.id ?? null,
+            messageId: `operator-dismiss-${Date.now()}`,
+            workItemId: body.workItemId,
+            agentId: null,
+            status: workItem.currentAtcStatus ?? "in_progress",
+            confidence: 1.0,
+            reason: "Operator dismissed from stream",
+            rawText: body.message ?? null,
+            timestamp: new Date().toISOString(),
+            entryType: "decision",
+            targetedAtOperator: false,
+          });
+          break;
+        }
+
+        case "noise": {
+          state.graph.upsertWorkItem({
+            id: body.workItemId,
+            source: workItem.source,
+            currentAtcStatus: "noise",
+          });
+          const noiseThreads = state.graph.getThreadsForWorkItem(body.workItemId);
+          state.graph.insertEvent({
+            threadId: noiseThreads[0]?.id ?? null,
+            messageId: `operator-noise-${Date.now()}`,
+            workItemId: body.workItemId,
+            agentId: null,
+            status: "noise",
+            confidence: 1.0,
+            reason: "Operator classified as noise",
+            rawText: body.message ?? null,
+            timestamp: new Date().toISOString(),
+            entryType: "decision",
+            targetedAtOperator: false,
+          });
+          break;
+        }
 
         case "create_ticket": {
           if (!state.taskAdapter?.createWorkItem) {
@@ -707,40 +750,45 @@ export function createApp(state: EngineState): Hono {
       }
 
       // Record the operator's action as an event in the timeline
+      // (dismiss and noise already inserted their own events above)
       const threads = state.graph.getThreadsForWorkItem(body.workItemId);
       const actionThread = threads[0];
-      const actionStatus = body.action === "approve" || body.action === "close" ? "completed" : "in_progress";
-      const actionLabels: Record<string, string> = {
-        approve: "Operator approved",
-        redirect: "Operator unblocked",
-        close: "Operator dismissed",
-        snooze: "Operator snoozed",
-      };
-      state.graph.insertEvent({
-        threadId: actionThread?.id ?? null,
-        messageId: `operator-action-${Date.now()}`,
-        workItemId: body.workItemId,
-        agentId: null,
-        status: actionStatus,
-        confidence: 1.0,
-        reason: actionLabels[body.action] ?? `Operator action: ${body.action}`,
-        rawText: body.message ?? null,
-        timestamp: new Date().toISOString(),
-        entryType: "decision",
-        targetedAtOperator: false,
-      });
+      if (body.action !== "dismiss" && body.action !== "noise") {
+        const actionStatus = body.action === "approve" || body.action === "close" ? "completed" : "in_progress";
+        const actionLabels: Record<string, string> = {
+          approve: "Operator approved",
+          redirect: "Operator unblocked",
+          close: "Operator dismissed",
+          snooze: "Operator snoozed",
+        };
+        state.graph.insertEvent({
+          threadId: actionThread?.id ?? null,
+          messageId: `operator-action-${Date.now()}`,
+          workItemId: body.workItemId,
+          agentId: null,
+          status: actionStatus,
+          confidence: 1.0,
+          reason: actionLabels[body.action] ?? `Operator action: ${body.action}`,
+          rawText: body.message ?? null,
+          timestamp: new Date().toISOString(),
+          entryType: "decision",
+          targetedAtOperator: false,
+        });
+      }
 
       // If there's a message and a messaging adapter, post it to the related thread
+      let delivered = false;
       if (body.message && state.messagingAdapter) {
         if (actionThread) {
           await state.messagingAdapter.replyToThread(actionThread.id, actionThread.channelId, body.message);
+          delivered = true;
         } else {
           log.warn("No threads found for work item — message not sent", body.workItemId);
           return c.json({ ok: false, error: "No thread found to post message to" }, 404);
         }
       }
 
-      return c.json({ ok: true });
+      return c.json({ ok: true, delivered });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       log.error("Action failed", message);
