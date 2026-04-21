@@ -18,8 +18,22 @@ export interface WorkItem {
   currentAtcStatus: string | null;
   currentConfidence: number | null;
   snoozedUntil: string | null;
+  pinned: boolean;
+  dismissedAt: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export type StreamFilter = "needs-me" | "all-active" | "snoozed";
+
+export interface ActionResponse {
+  ok: boolean;
+  delivered: boolean;
+}
+
+export interface PinResponse {
+  ok: boolean;
+  pinned: boolean;
 }
 
 export interface LatestEvent {
@@ -324,7 +338,7 @@ export function postAction(
   action: string,
   message?: string,
   snoozeDuration?: number,
-): Promise<{ ok: boolean }> {
+): Promise<ActionResponse> {
   return apiFetch("/api/action", {
     method: "POST",
     body: JSON.stringify({ workItemId, action, message, snoozeDuration }),
@@ -371,10 +385,31 @@ export interface StreamData {
   latestThreadId: string | null;
   latestChannelId: string | null;
   nextAction: string | null;
+  hasOlder: boolean;
 }
 
-export async function fetchStream(workItemId: string): Promise<StreamData> {
-  return apiFetch(`/api/work-item/${encodeURIComponent(workItemId)}/stream`);
+export async function fetchStream(
+  workItemId: string,
+  options?: { limit?: number; before?: string },
+): Promise<StreamData> {
+  let url = `/api/work-item/${encodeURIComponent(workItemId)}/stream`;
+  const params = new URLSearchParams();
+  if (options?.limit) params.set("limit", String(options.limit));
+  if (options?.before) params.set("before", options.before);
+  const qs = params.toString();
+  if (qs) url += `?${qs}`;
+  return apiFetch(url);
+}
+
+export async function fetchAllActive(): Promise<{ items: ActionableItem[] }> {
+  return apiFetch("/api/stream/all-active");
+}
+
+export async function togglePin(workItemId: string): Promise<PinResponse> {
+  return apiFetch(`/api/work-item/${encodeURIComponent(workItemId)}/pin`, {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
 }
 
 export function generateSummary(id: string): Promise<{ summary: string }> {
