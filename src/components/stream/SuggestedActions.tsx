@@ -38,7 +38,7 @@ function toServerAction(action: ActionKind): string {
   switch (action) {
     case "done": return "approve";
     case "unblock": return "redirect";
-    case "dismiss": return "close";
+    case "dismiss": return "dismiss";
     case "snooze": return "snooze";
     case "noise": return "noise";
   }
