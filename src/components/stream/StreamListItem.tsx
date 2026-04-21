@@ -1,3 +1,4 @@
+import { useState, useEffect } from "react";
 import { type ActionableItem } from "../../lib/api";
 import StatusBadge, { type ActionState } from "../StatusBadge";
 
@@ -13,15 +14,24 @@ interface StreamListItemProps {
   item: ActionableItem;
   selected: boolean;
   actionState: ActionState;
+  resolving?: boolean;
   onSelect: () => void;
 }
 
-export default function StreamListItem({ item, selected, actionState, onSelect }: StreamListItemProps) {
+export default function StreamListItem({ item, selected, actionState, resolving, onSelect }: StreamListItemProps) {
   const { workItem, latestEvent, agent } = item;
   const status = workItem.currentAtcStatus ?? "noise";
   const borderColor = BORDER_COLORS[status] ?? "border-l-gray-600";
   const isSnoozed = Boolean(workItem.snoozedUntil);
   const isPinned = workItem.pinned;
+  // Track whether this item has just mounted so we can apply the enter animation once
+  const [entered, setEntered] = useState(false);
+
+  useEffect(() => {
+    // Trigger enter animation on mount
+    const t = requestAnimationFrame(() => setEntered(true));
+    return () => cancelAnimationFrame(t);
+  }, []);
 
   const timeAgo = latestEvent?.timestamp
     ? formatRelativeTime(new Date(latestEvent.timestamp))
@@ -36,6 +46,7 @@ export default function StreamListItem({ item, selected, actionState, onSelect }
         ${borderColor}
         ${selected ? "bg-gray-900/80" : "hover:bg-gray-900/40"}
         ${isSnoozed ? "opacity-50" : ""}
+        ${resolving ? "animate-list-exit pointer-events-none" : !entered ? "animate-list-enter" : ""}
       `}
     >
       <div className="flex justify-between items-center">

@@ -120,3 +120,38 @@ html.light .animate-shimmer {
 .animate-fade-in {
   animation: fade-in 0.15s ease-out;
 }
+
+@keyframes list-item-enter {
+  from { opacity: 0; transform: translateY(-8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes list-item-exit {
+  from { opacity: 1; transform: translateY(0); }
+  to { opacity: 0; transform: translateY(4px); }
+}
+
+@keyframes input-success {
+  0% { border-color: rgb(34 197 94 / 0.6); box-shadow: 0 0 12px rgb(34 197 94 / 0.2); }
+  100% { border-color: rgb(55 65 81); box-shadow: none; }
+}
+
+@keyframes input-error {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-4px); }
+  40% { transform: translateX(4px); }
+  60% { transform: translateX(-2px); }
+  80% { transform: translateX(2px); }
+}
+
+@keyframes badge-pop {
+  0% { transform: scale(1); }
+  50% { transform: scale(1.15); }
+  100% { transform: scale(1); }
+}
+
+.animate-list-enter { animation: list-item-enter 0.2s ease-out; }
+.animate-list-exit { animation: list-item-exit 0.3s ease-in forwards; }
+.animate-input-success { animation: input-success 0.8s ease forwards; }
+.animate-input-error { animation: input-error 0.4s ease; }
+.animate-badge-pop { animation: badge-pop 0.3s ease; }
