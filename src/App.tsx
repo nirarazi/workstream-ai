@@ -202,7 +202,7 @@ function App(): JSX.Element {
   }
 
   return (
-    <div className="min-h-screen bg-gray-950 text-gray-100">
+    <div className="flex flex-col h-screen bg-gray-950 text-gray-100">
       {/* Sticky chrome — title bar + tab bar together so no gap appears */}
       <div className="sticky top-0 z-50 bg-gray-950">
         <header
@@ -281,7 +281,7 @@ function App(): JSX.Element {
       </div>
 
       {/* Main content */}
-      <main className="p-6">
+      <main className={view === "stream" ? "flex-1 overflow-hidden" : "p-6"}>
         {view === "loading" && (
           <div className="flex flex-col items-center justify-center py-32 gap-6">
             <div className="text-center">
