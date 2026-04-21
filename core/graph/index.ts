@@ -444,6 +444,35 @@ export class ContextGraph {
     return rows.map(toEvent);
   }
 
+  getEventsForWorkItemPaginated(
+    workItemId: string,
+    limit: number = 10,
+    before?: string,
+  ): { events: Event[]; hasOlder: boolean } {
+    let sql = `
+      SELECT e.* FROM events e
+      LEFT JOIN threads t ON e.thread_id = t.id
+      WHERE (e.work_item_id = ? OR t.work_item_id = ?)
+    `;
+    const params: any[] = [workItemId, workItemId];
+
+    if (before) {
+      sql += " AND e.timestamp < ?";
+      params.push(before);
+    }
+
+    sql += " ORDER BY e.timestamp DESC LIMIT ?";
+    params.push(limit + 1); // fetch one extra to check hasOlder
+
+    const rows = this.db.db.prepare(sql).all(...params) as EventRow[];
+    const hasOlder = rows.length > limit;
+    const eventRows = hasOlder ? rows.slice(0, limit) : rows;
+
+    // Reverse to oldest-first for chat-style display
+    const events = eventRows.map(toEvent).reverse();
+    return { events, hasOlder };
+  }
+
   // --- Enrichments ---
 
   upsertEnrichment(enrichment: {
