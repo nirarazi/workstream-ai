@@ -20,9 +20,11 @@ const STATUS_LABELS: Record<string, string> = {
 
 interface StatusSnapshotProps {
   data: StreamData;
+  pinned?: boolean;
+  onTogglePin?: () => void;
 }
 
-export default function StatusSnapshot({ data }: StatusSnapshotProps) {
+export default function StatusSnapshot({ data, pinned, onTogglePin }: StatusSnapshotProps) {
   const { workItem, unifiedStatus, statusSummary, agents, channels, threadCount, enrichment } = data;
   const status = workItem.currentAtcStatus ?? "noise";
   const style = STREAM_STATUS_STYLE[status] ?? STREAM_STATUS_STYLE.noise;
@@ -32,9 +34,20 @@ export default function StatusSnapshot({ data }: StatusSnapshotProps) {
       {!workItem.id.startsWith("thread:") && (
         <div className="text-xs font-mono text-gray-500 mb-1">{workItem.id}</div>
       )}
-      <h2 className="text-lg font-semibold text-white mb-2">
-        {workItem.title || (workItem.id.startsWith("thread:") ? "Untitled conversation" : workItem.id)}
-      </h2>
+      <div className="flex items-start justify-between gap-2 mb-2">
+        <h2 className="text-lg font-semibold text-white">
+          {workItem.title || (workItem.id.startsWith("thread:") ? "Untitled conversation" : workItem.id)}
+        </h2>
+        {onTogglePin && (
+          <button
+            onClick={onTogglePin}
+            className="cursor-pointer flex-shrink-0 text-xs text-gray-500 hover:text-gray-300 transition-colors mt-1"
+            title={pinned ? "Unpin" : "Pin"}
+          >
+            {pinned ? "Unpin" : "Pin"}
+          </button>
+        )}
+      </div>
       {import.meta.env.DEV && (
         <div className="mb-2"><CopyableId id={workItem.id} /></div>
       )}

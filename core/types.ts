@@ -86,6 +86,8 @@ export interface WorkItem {
   currentAtcStatus: StatusCategory | null;
   currentConfidence: number | null;
   snoozedUntil: string | null;
+  pinned: boolean;
+  dismissedAt: string | null;
   createdAt: string;
   updatedAt: string;
 }

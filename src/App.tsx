@@ -1,10 +1,45 @@
-import { useState, useEffect, useRef, useCallback, type JSX } from "react";
-import { fetchSetupStatus, fetchStatus, type ServiceStatuses } from "./lib/api";
+import { useState, useEffect, useRef, useCallback, useMemo, type JSX } from "react";
+
+function SyncIndicator({ lastSyncAt, error }: { lastSyncAt: Date | null; error: boolean }): JSX.Element | null {
+  const [, forceUpdate] = useState(0);
+
+  // Update relative time every second
+  useEffect(() => {
+    const interval = setInterval(() => forceUpdate(n => n + 1), 1000);
+    return () => clearInterval(interval);
+  }, []);
+
+  if (!lastSyncAt) return null;
+
+  const secondsAgo = Math.floor((Date.now() - lastSyncAt.getTime()) / 1000);
+  const isStale = secondsAgo > 30;
+
+  const dotColor = error
+    ? "bg-red-500"
+    : isStale
+      ? "bg-amber-500"
+      : "bg-green-500";
+
+  const label = error
+    ? "Reconnecting..."
+    : isStale
+      ? `Last synced ${secondsAgo}s ago`
+      : `Live · synced ${secondsAgo}s ago`;
+
+  return (
+    <div className="flex items-center gap-1.5">
+      <div className={`w-1.5 h-1.5 rounded-full ${dotColor}`} />
+      <span className="text-[10px] text-gray-600">{label}</span>
+    </div>
+  );
+}
+import { fetchSetupStatus, fetchStatus, fetchAgents, agentsToMentionables, type ServiceStatuses, type Mentionable } from "./lib/api";
 import { useTheme, type ThemeMode } from "./lib/theme";
-import Stream from "./components/Inbox";
+import StreamView from "./components/StreamView";
 import FleetBoard from "./components/FleetBoard";
 import Sidekick from "./components/Sidekick";
 import Setup from "./components/Setup";
+import { getSerializeMention } from "./messaging/registry";
 
 type View = "loading" | "setup" | "stream" | "fleet" | "settings";
 type DotStatus = "ok" | "degraded" | "disconnected";
@@ -57,6 +92,9 @@ function App(): JSX.Element {
   const [retryVisible, setRetryVisible] = useState(false);
   const [sidekickOpen, setSidekickOpen] = useState(false);
   const [services, setServices] = useState<ServiceStatuses>(DEFAULT_SERVICES);
+  const [mentionables, setMentionables] = useState<Mentionable[]>([]);
+  const [agentPlatform, setAgentPlatform] = useState("slack");
+  const [syncState, setSyncState] = useState<{ lastSyncAt: Date | null; error: boolean }>({ lastSyncAt: null, error: false });
   const { mode: themeMode, cycle: cycleTheme } = useTheme();
   const statusInterval = useRef<ReturnType<typeof setInterval> | null>(null);
   const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -71,6 +109,20 @@ function App(): JSX.Element {
       setServices(DEFAULT_SERVICES);
     }
   }, []);
+
+  const refreshAgents = useCallback(async () => {
+    try {
+      const res = await fetchAgents();
+      setMentionables(agentsToMentionables(res.agents));
+      const firstPlatform = res.agents[0]?.platform;
+      if (firstPlatform) setAgentPlatform(firstPlatform);
+    } catch { /* non-fatal */ }
+  }, []);
+
+  const serializeMention = useMemo(
+    () => getSerializeMention(agentPlatform),
+    [agentPlatform],
+  );
 
   const initAttempts = useRef(0);
   const initPollTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -137,13 +189,20 @@ function App(): JSX.Element {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, []);
 
+  // Fetch agents whenever the stream view becomes active
+  useEffect(() => {
+    if (view === "stream") {
+      refreshAgents();
+    }
+  }, [view, refreshAgents]);
+
   function handleSetupComplete() {
     // Re-init to pick up new platformMeta
     init();
   }
 
   return (
-    <div className="min-h-screen bg-gray-950 text-gray-100">
+    <div className="flex flex-col h-screen bg-gray-950 text-gray-100">
       {/* Sticky chrome — title bar + tab bar together so no gap appears */}
       <div className="sticky top-0 z-50 bg-gray-950">
         <header
@@ -177,6 +236,11 @@ function App(): JSX.Element {
                   <path fillRule="evenodd" d="M8.34 1.804A1 1 0 0 1 9.32 1h1.36a1 1 0 0 1 .98.804l.295 1.473c.497.144.971.342 1.416.587l1.25-.834a1 1 0 0 1 1.262.125l.962.962a1 1 0 0 1 .125 1.262l-.834 1.25c.245.445.443.919.587 1.416l1.473.294a1 1 0 0 1 .804.98v1.361a1 1 0 0 1-.804.98l-1.473.295a6.95 6.95 0 0 1-.587 1.416l.834 1.25a1 1 0 0 1-.125 1.262l-.962.962a1 1 0 0 1-1.262.125l-1.25-.834a6.953 6.953 0 0 1-1.416.587l-.294 1.473a1 1 0 0 1-.98.804H9.32a1 1 0 0 1-.98-.804l-.295-1.473a6.957 6.957 0 0 1-1.416-.587l-1.25.834a1 1 0 0 1-1.262-.125l-.962-.962a1 1 0 0 1-.125-1.262l.834-1.25a6.957 6.957 0 0 1-.587-1.416l-1.473-.294A1 1 0 0 1 1 11.06V9.7a1 1 0 0 1 .804-.98l1.473-.295c.144-.497.342-.971.587-1.416l-.834-1.25a1 1 0 0 1 .125-1.262l.962-.962A1 1 0 0 1 5.38 3.41l1.25.834a6.957 6.957 0 0 1 1.416-.587l.294-1.473ZM13 10a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" clipRule="evenodd" />
                 </svg>
               </button>
+            )}
+
+            {/* Sync indicator */}
+            {view === "stream" && (
+              <SyncIndicator lastSyncAt={syncState.lastSyncAt} error={syncState.error} />
             )}
 
             {/* Service indicators */}
@@ -217,7 +281,7 @@ function App(): JSX.Element {
       </div>
 
       {/* Main content */}
-      <main className="p-6">
+      <main className={view === "stream" ? "flex-1 overflow-hidden" : "p-6"}>
         {view === "loading" && (
           <div className="flex flex-col items-center justify-center py-32 gap-6">
             <div className="text-center">
@@ -239,7 +303,9 @@ function App(): JSX.Element {
           </div>
         )}
         {view === "setup" && <Setup onComplete={handleSetupComplete} />}
-        {view === "stream" && <Stream platformMeta={platformMeta} />}
+        {view === "stream" && (
+          <StreamView mentionables={mentionables} serializeMention={serializeMention} onSyncStateChange={setSyncState} />
+        )}
         {view === "fleet" && <FleetBoard platformMeta={platformMeta} />}
         {view === "settings" && (
           <Setup onComplete={() => { init(); setView("stream"); }} />
