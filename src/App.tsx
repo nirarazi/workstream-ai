@@ -1,10 +1,11 @@
-import { useState, useEffect, useRef, useCallback, type JSX } from "react";
-import { fetchSetupStatus, fetchStatus, type ServiceStatuses } from "./lib/api";
+import { useState, useEffect, useRef, useCallback, useMemo, type JSX } from "react";
+import { fetchSetupStatus, fetchStatus, fetchAgents, agentsToMentionables, type ServiceStatuses, type Mentionable } from "./lib/api";
 import { useTheme, type ThemeMode } from "./lib/theme";
-import Stream from "./components/Inbox";
+import StreamView from "./components/StreamView";
 import FleetBoard from "./components/FleetBoard";
 import Sidekick from "./components/Sidekick";
 import Setup from "./components/Setup";
+import { getSerializeMention } from "./messaging/registry";
 
 type View = "loading" | "setup" | "stream" | "fleet" | "settings";
 type DotStatus = "ok" | "degraded" | "disconnected";
@@ -57,6 +58,8 @@ function App(): JSX.Element {
   const [retryVisible, setRetryVisible] = useState(false);
   const [sidekickOpen, setSidekickOpen] = useState(false);
   const [services, setServices] = useState<ServiceStatuses>(DEFAULT_SERVICES);
+  const [mentionables, setMentionables] = useState<Mentionable[]>([]);
+  const [agentPlatform, setAgentPlatform] = useState("slack");
   const { mode: themeMode, cycle: cycleTheme } = useTheme();
   const statusInterval = useRef<ReturnType<typeof setInterval> | null>(null);
   const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -71,6 +74,20 @@ function App(): JSX.Element {
       setServices(DEFAULT_SERVICES);
     }
   }, []);
+
+  const refreshAgents = useCallback(async () => {
+    try {
+      const res = await fetchAgents();
+      setMentionables(agentsToMentionables(res.agents));
+      const firstPlatform = res.agents[0]?.platform;
+      if (firstPlatform) setAgentPlatform(firstPlatform);
+    } catch { /* non-fatal */ }
+  }, []);
+
+  const serializeMention = useMemo(
+    () => getSerializeMention(agentPlatform),
+    [agentPlatform],
+  );
 
   const initAttempts = useRef(0);
   const initPollTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -136,6 +153,13 @@ function App(): JSX.Element {
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, []);
+
+  // Fetch agents whenever the stream view becomes active
+  useEffect(() => {
+    if (view === "stream") {
+      refreshAgents();
+    }
+  }, [view, refreshAgents]);
 
   function handleSetupComplete() {
     // Re-init to pick up new platformMeta
@@ -239,7 +263,9 @@ function App(): JSX.Element {
           </div>
         )}
         {view === "setup" && <Setup onComplete={handleSetupComplete} />}
-        {view === "stream" && <Stream platformMeta={platformMeta} />}
+        {view === "stream" && (
+          <StreamView mentionables={mentionables} serializeMention={serializeMention} />
+        )}
         {view === "fleet" && <FleetBoard platformMeta={platformMeta} />}
         {view === "settings" && (
           <Setup onComplete={() => { init(); setView("stream"); }} />
