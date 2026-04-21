@@ -3,6 +3,7 @@
 import type { MessagingAdapter } from "./adapters/messaging/interface.js";
 import type { ContextGraph } from "./graph/index.js";
 import { createLogger } from "./logger.js";
+import type { StatusCategory } from "./types.js";
 
 const log = createLogger("actions");
 
@@ -50,6 +51,36 @@ export class ActionHandler {
     }
   }
 
+  private insertOperatorEvent(
+    workItemId: string,
+    action: ActionType,
+    message?: string,
+  ): void {
+    const threads = this.graph.getThreadsForWorkItem(workItemId);
+    const thread = threads[0];
+    if (!thread) return;
+
+    const statusMap: Record<ActionType, StatusCategory> = {
+      approve: "completed",
+      close: "completed",
+      redirect: "in_progress",
+      snooze: "in_progress",
+    };
+
+    this.graph.insertEvent({
+      threadId: thread.id,
+      messageId: `operator-${action}-${Date.now()}`,
+      workItemId,
+      agentId: null,
+      status: statusMap[action],
+      confidence: 1.0,
+      reason: `Operator ${action}`,
+      rawText: message ?? "",
+      timestamp: new Date().toISOString(),
+      entryType: "decision",
+    });
+  }
+
   private async sendThreadMessage(workItemId: string, text: string): Promise<void> {
     if (!this.messagingAdapter) return;
 
@@ -68,6 +99,7 @@ export class ActionHandler {
 
   private async handleApprove(workItemId: string, message?: string): Promise<ActionResult> {
     await this.sendThreadMessage(workItemId, `✅ Approved. ${message || ""}`.trim());
+    this.insertOperatorEvent(workItemId, "approve", message);
 
     this.graph.upsertWorkItem({
       id: workItemId,
@@ -82,6 +114,7 @@ export class ActionHandler {
 
   private async handleRedirect(workItemId: string, message?: string): Promise<ActionResult> {
     await this.sendThreadMessage(workItemId, `↩️ Redirecting. ${message || ""}`.trim());
+    this.insertOperatorEvent(workItemId, "redirect", message);
 
     // Keep work item status as-is — operator handles redirection manually
     log.info("Redirected work item", workItemId);
@@ -90,6 +123,7 @@ export class ActionHandler {
 
   private async handleClose(workItemId: string, message?: string): Promise<ActionResult> {
     await this.sendThreadMessage(workItemId, `🔒 Closed. ${message || ""}`.trim());
+    this.insertOperatorEvent(workItemId, "close", message);
 
     this.graph.upsertWorkItem({
       id: workItemId,
@@ -103,6 +137,7 @@ export class ActionHandler {
   }
 
   private handleSnooze(workItemId: string, snoozeDuration?: number): ActionResult {
+    this.insertOperatorEvent(workItemId, "snooze");
     const minutes = snoozeDuration ?? 60;
     const snoozedUntil = new Date(Date.now() + minutes * 60 * 1000).toISOString();
 

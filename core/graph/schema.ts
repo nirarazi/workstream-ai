@@ -9,6 +9,7 @@ export interface AgentRow {
   platform_user_id: string;
   role: string | null;
   avatar_url: string | null;
+  is_bot: number | null;
   first_seen: string;
   last_seen: string;
 }
@@ -51,6 +52,10 @@ export interface EventRow {
   raw_text: string;
   timestamp: string;
   created_at: string;
+  entry_type: string;
+  targeted_at_operator: number;
+  action_required_from: string | null;
+  next_action: string | null;
 }
 
 export interface EnrichmentRow {

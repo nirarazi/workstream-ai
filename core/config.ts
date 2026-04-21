@@ -78,6 +78,15 @@ const ConfigSchema = z.object({
     maxToolCalls: 5,
     maxHistoryTurns: 10,
   }),
+  operator: z.object({
+    name: z.string(),
+    role: z.string(),
+    context: z.string(),
+  }).optional().default({
+    name: "",
+    role: "",
+    context: "",
+  }),
   llmBudget: z.object({
     dailyBudget: z.number().nullable(),
     inputCostPerMillion: z.number().nullable(),

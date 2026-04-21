@@ -7,20 +7,44 @@ export type StatusCategory =
   | "needs_decision"
   | "noise";
 
+export type EntryType =
+  | "block"
+  | "decision"
+  | "progress"
+  | "assignment"
+  | "escalation"
+  | "noise";
+
+export interface OperatorIdentity {
+  userId: string;
+  userName: string;
+}
+
+/** Operator identities keyed by adapter/platform name (e.g., "slack", "jira") */
+export type OperatorIdentityMap = Map<string, OperatorIdentity>;
+
 export interface ClassificationBreakdown {
   workItemId: string;
   status: StatusCategory;
+  entryType: EntryType;
   confidence: number;
   reason: string;
   title: string;
+  targetedAtOperator: boolean;
+  actionRequiredFrom: string[] | null;
+  nextAction: string | null;
 }
 
 export interface Classification {
   status: StatusCategory;
+  entryType: EntryType;
   confidence: number;
   reason: string;
   workItemIds: string[];
   title: string;
+  targetedAtOperator: boolean;
+  actionRequiredFrom: string[] | null;
+  nextAction: string | null;
   /** Per-work-item statuses when a message is a summary/brief mentioning multiple items */
   breakdown?: ClassificationBreakdown[];
 }
@@ -36,6 +60,7 @@ export interface Message {
   text: string;
   timestamp: string;
   platform: string;
+  senderType?: "agent" | "human" | "unknown";
 }
 
 export interface Thread {
@@ -72,6 +97,7 @@ export interface Agent {
   platformUserId: string;
   role: string | null;
   avatarUrl: string | null;
+  isBot: boolean | null;
   firstSeen: string;
   lastSeen: string;
 }
@@ -88,6 +114,10 @@ export interface Event {
   rawText: string;
   timestamp: string;
   createdAt: string;
+  entryType: EntryType;
+  targetedAtOperator: boolean;
+  actionRequiredFrom: string[] | null;
+  nextAction: string | null;
 }
 
 export interface Enrichment {
