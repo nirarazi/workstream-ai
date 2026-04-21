@@ -255,6 +255,12 @@ export function createApp(state: EngineState): Hono {
     return c.json({ summary });
   });
 
+  // --- GET /api/stream/all-active ---
+  app.get("/api/stream/all-active", (c) => {
+    const items = state.graph.getAllActiveItems();
+    return c.json({ items });
+  });
+
   // --- GET /api/fleet ---
   app.get("/api/fleet", (c) => {
     const items = state.graph.getFleetItems();
