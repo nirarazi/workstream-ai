@@ -62,7 +62,7 @@ export default function WorkItemStream({
     return replyInputRef.current?.serialize() || undefined;
   }
 
-  function handleActionComplete() {
+  function handleActionComplete(_actionKind: string) {
     replyInputRef.current?.clear();
     onClose();
   }
