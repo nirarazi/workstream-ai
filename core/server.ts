@@ -170,8 +170,11 @@ export function createApp(state: EngineState): Hono {
       return c.json({ error: "Work item not found" }, 404);
     }
 
+    const limit = Number(c.req.query("limit")) || 10;
+    const before = c.req.query("before") || undefined;
+
     const threads = state.graph.getThreadsForWorkItem(id);
-    const events = state.graph.getEventsForWorkItem(id);
+    const { events, hasOlder } = state.graph.getEventsForWorkItemPaginated(id, limit, before);
     const agents = state.graph.getAgentsForWorkItem(id);
     const channels = state.graph.getChannelsForWorkItem(id);
     const enrichments = state.graph.getEnrichmentsForWorkItem(id);
@@ -186,7 +189,9 @@ export function createApp(state: EngineState): Hono {
       threadChannelMap.set(t.id, t.channelName || t.channelId);
     }
 
-    const latestBlockEvent = events
+    // For latestBlockEvent, use all events (not paginated) to get accurate status
+    const allEvents = state.graph.getEventsForWorkItem(id);
+    const latestBlockEvent = allEvents
       .filter((e) => e.status === "blocked_on_human" || e.status === "needs_decision")
       .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())[0] ?? null;
 
@@ -195,7 +200,7 @@ export function createApp(state: EngineState): Hono {
 
     let statusSummary: string | null = null;
     const cached = state.graph.getSummary(id);
-    const latestEvent = events.length > 0 ? events[events.length - 1] : null;
+    const latestEvent = allEvents.length > 0 ? allEvents[allEvents.length - 1] : null;
     if (cached && latestEvent && cached.latestEventId === latestEvent.id) {
       statusSummary = cached.summaryText;
     }
@@ -207,7 +212,7 @@ export function createApp(state: EngineState): Hono {
         )
       : null;
 
-    const latestEventForTarget = events.length > 0 ? events[events.length - 1] : null;
+    const latestEventForTarget = allEvents.length > 0 ? allEvents[allEvents.length - 1] : null;
 
     return c.json({
       workItem,
@@ -218,6 +223,7 @@ export function createApp(state: EngineState): Hono {
       threadCount: threads.length,
       enrichment: enrichments[0] ?? null,
       timeline,
+      hasOlder,
       latestThreadId: latestThread?.id ?? null,
       latestChannelId: latestThread?.channelId ?? null,
       targetedAtOperator: latestEventForTarget?.targetedAtOperator ?? true,

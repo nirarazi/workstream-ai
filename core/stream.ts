@@ -101,6 +101,8 @@ export function buildTimeline(
   agentMap: Map<string, string>,
   threadChannelMap: Map<string, string>,
 ): TimelineEntry[] {
+  // Events are expected to arrive in oldest-first order (chat style).
+  // Preserve input order — do not re-sort.
   return events
     .filter((e) => e.entryType !== "noise")
     .map((e) => ({
@@ -113,6 +115,5 @@ export function buildTimeline(
       summary: e.reason,
       rawText: e.rawText,
       isOperator: e.agentId === null,
-    }))
-    .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+    }));
 }

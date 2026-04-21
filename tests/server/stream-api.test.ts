@@ -1,8 +1,46 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { Database } from "../../core/graph/db.js";
 import { ContextGraph } from "../../core/graph/index.js";
+import { Classifier } from "../../core/classifier/index.js";
+import { WorkItemLinker } from "../../core/graph/linker.js";
+import { DefaultExtractor } from "../../core/graph/extractors/default.js";
+import { createApp, type EngineState } from "../../core/server.js";
 import { buildUnifiedStatus, buildTimeline } from "../../core/stream.js";
 import type { Event, WorkItem, OperatorIdentityMap } from "../../core/types.js";
+
+function makeState(graph: ContextGraph, db: Database): EngineState {
+  const classifier = new Classifier(
+    { name: "mock", classify: vi.fn() },
+    "sys",
+    [],
+  );
+  const linker = new WorkItemLinker(graph, [
+    new DefaultExtractor({ ticketPatterns: [], prPatterns: [] }),
+  ]);
+  return {
+    config: {
+      messaging: { pollInterval: 30, channels: [] },
+      classifier: { provider: { baseUrl: "http://localhost", model: "test" }, confidenceThreshold: 0.6 },
+      taskAdapter: { enabled: false, ticketPrefixes: [] },
+      extractors: { ticketPatterns: [], prPatterns: [] },
+      mcp: { transport: "stdio" },
+      server: { port: 9847, host: "127.0.0.1" },
+      anomalies: { staleThresholdHours: 4, silentAgentThresholdHours: 2 },
+    } as any,
+    db,
+    graph,
+    classifier,
+    linker,
+    pipeline: null,
+    messagingAdapter: null,
+    taskAdapter: null,
+    rateLimiters: {},
+    startedAt: new Date(),
+    lastPoll: null,
+    processed: 0,
+    summarizer: null,
+  } as any;
+}
 
 describe("Stream", () => {
   let db: Database;
@@ -51,7 +89,7 @@ describe("Stream", () => {
   });
 
   describe("buildTimeline", () => {
-    it("filters noise and sorts newest first", () => {
+    it("filters noise and preserves oldest-first input order", () => {
       const events: Event[] = [
         { id: "e1", threadId: "t1", messageId: "m1", workItemId: "AI-100", agentId: "a1", status: "in_progress", confidence: 0.9, reason: "Started work", rawText: "Starting", timestamp: "2026-04-15T10:00:00Z", createdAt: "2026-04-15T10:00:00Z", entryType: "progress", targetedAtOperator: true, actionRequiredFrom: null, nextAction: null },
         { id: "e2", threadId: "t1", messageId: "m2", workItemId: "AI-100", agentId: "a1", status: "noise", confidence: 0.8, reason: "Status update", rawText: "Still working", timestamp: "2026-04-15T11:00:00Z", createdAt: "2026-04-15T11:00:00Z", entryType: "noise", targetedAtOperator: true, actionRequiredFrom: null, nextAction: null },
@@ -61,11 +99,12 @@ describe("Stream", () => {
       const threadChannelMap = new Map([["t1", "#agent-orchestrator"], ["t2", "#strategy"]]);
       const timeline = buildTimeline(events, agentMap, threadChannelMap);
       expect(timeline).toHaveLength(2);
-      expect(timeline[0].entryType).toBe("decision");
-      expect(timeline[0].isOperator).toBe(true);
-      expect(timeline[0].channelName).toBe("#strategy");
-      expect(timeline[1].entryType).toBe("progress");
-      expect(timeline[1].agentName).toBe("Byte");
+      // Oldest-first: progress (10:00) comes before decision (12:00)
+      expect(timeline[0].entryType).toBe("progress");
+      expect(timeline[0].agentName).toBe("Byte");
+      expect(timeline[1].entryType).toBe("decision");
+      expect(timeline[1].isOperator).toBe(true);
+      expect(timeline[1].channelName).toBe("#strategy");
     });
   });
 
@@ -309,5 +348,54 @@ describe("Stream", () => {
       expect(channels).toHaveLength(2);
       expect(channels.map((c) => c.name).sort()).toEqual(["orchestrator", "strategy"]);
     });
+  });
+});
+
+describe("timeline pagination", () => {
+  let db: Database;
+  let graph: ContextGraph;
+
+  beforeEach(() => {
+    db = new Database(":memory:");
+    graph = new ContextGraph(db);
+  });
+
+  afterEach(() => {
+    db.close();
+  });
+
+  it("returns hasOlder: true when more events exist before the page", async () => {
+    // Seed a work item with 15 events
+    graph.upsertWorkItem({ id: "AI-300", source: "jira", title: "Pagination test", currentAtcStatus: "in_progress" });
+    graph.upsertThread({ id: "T-300", channelId: "C001", channelName: "test", platform: "slack", workItemId: "AI-300" });
+    graph.upsertAgent({ id: "agent-1", name: "Byte", platform: "slack", platformUserId: "U001" });
+
+    for (let i = 0; i < 15; i++) {
+      graph.insertEvent({
+        threadId: "T-300", messageId: `msg-${i}`, workItemId: "AI-300",
+        agentId: "agent-1", status: "in_progress", confidence: 0.9,
+        reason: `Event ${i}`, rawText: `Message ${i}`,
+        timestamp: new Date(Date.now() - (15 - i) * 60000).toISOString(),
+        entryType: "progress", targetedAtOperator: false,
+      });
+    }
+
+    const state = makeState(graph, db);
+    const app = createApp(state);
+
+    // First page (no before param) — should get latest 10
+    const res1 = await app.request("/api/work-item/AI-300/stream?limit=10");
+    const body1 = await res1.json();
+    expect(body1.timeline.length).toBe(10);
+    expect(body1.hasOlder).toBe(true);
+    // Should be in oldest-first order (chat style)
+    expect(body1.timeline[0].summary).toContain("Event ");
+
+    // Second page — use oldest event's timestamp as "before"
+    const oldestTimestamp = body1.timeline[0].timestamp;
+    const res2 = await app.request(`/api/work-item/AI-300/stream?limit=10&before=${encodeURIComponent(oldestTimestamp)}`);
+    const body2 = await res2.json();
+    expect(body2.timeline.length).toBe(5);
+    expect(body2.hasOlder).toBe(false);
   });
 });
