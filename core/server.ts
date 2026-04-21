@@ -982,10 +982,13 @@ export function createApp(state: EngineState): Hono {
         state.usageTracker.updateConfig(state.config.llmBudget);
       }
 
-      // Stop existing pipeline
+      // Stop existing pipeline and abort in-flight LLM calls
       if (state.pipeline) {
         state.pipeline.stop();
         state.pipeline = null;
+      }
+      if (state.usageTracker) {
+        state.usageTracker.abort();
       }
 
       // Recreate rate limiters

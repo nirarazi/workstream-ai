@@ -228,6 +228,13 @@ export class UsageTracker implements ModelProvider {
     return null;
   }
 
+  /** Abort all in-flight LLM calls (e.g. when provider config changes) */
+  abort(): void {
+    if (this.provider instanceof OpenAICompatibleProvider) {
+      this.provider.abort();
+    }
+  }
+
   /** Prune records older than 365 days */
   pruneOldRecords(): number {
     const cutoff = new Date();
