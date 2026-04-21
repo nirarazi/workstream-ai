@@ -39,6 +39,8 @@ function toWorkItem(row: WorkItemRow): WorkItem {
     currentAtcStatus: row.current_atc_status as StatusCategory | null,
     currentConfidence: row.current_confidence,
     snoozedUntil: row.snoozed_until,
+    pinned: Boolean(row.pinned),
+    dismissedAt: row.dismissed_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -195,12 +197,13 @@ export class ContextGraph {
     currentAtcStatus?: StatusCategory | null;
     currentConfidence?: number | null;
     snoozedUntil?: string | null;
+    pinned?: boolean;
   }): WorkItem {
     const now = new Date().toISOString();
 
     const stmt = this.db.db.prepare(`
-      INSERT INTO work_items (id, source, title, external_status, assignee, url, current_atc_status, current_confidence, snoozed_until, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO work_items (id, source, title, external_status, assignee, url, current_atc_status, current_confidence, snoozed_until, pinned, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         source = COALESCE(excluded.source, work_items.source),
         title = CASE WHEN excluded.title = '' THEN work_items.title ELSE excluded.title END,
@@ -210,6 +213,7 @@ export class ContextGraph {
         current_atc_status = COALESCE(excluded.current_atc_status, work_items.current_atc_status),
         current_confidence = COALESCE(excluded.current_confidence, work_items.current_confidence),
         snoozed_until = excluded.snoozed_until,
+        pinned = COALESCE(excluded.pinned, work_items.pinned),
         updated_at = excluded.updated_at
     `);
     stmt.run(
@@ -222,6 +226,7 @@ export class ContextGraph {
       item.currentAtcStatus ?? null,
       item.currentConfidence ?? null,
       item.snoozedUntil ?? null,
+      item.pinned != null ? (item.pinned ? 1 : 0) : 0,
       now,
       now,
     );
@@ -235,6 +240,22 @@ export class ContextGraph {
       | WorkItemRow
       | undefined;
     return row ? toWorkItem(row) : null;
+  }
+
+  togglePin(workItemId: string): boolean {
+    const row = this.db.db.prepare("SELECT pinned FROM work_items WHERE id = ?").get(workItemId) as
+      | { pinned: number }
+      | undefined;
+    if (!row) return false;
+    const newValue = row.pinned ? 0 : 1;
+    this.db.db.prepare("UPDATE work_items SET pinned = ? WHERE id = ?").run(newValue, workItemId);
+    log.debug("Toggled pin for work item", workItemId, "pinned:", Boolean(newValue));
+    return Boolean(newValue);
+  }
+
+  dismissWorkItem(workItemId: string): void {
+    this.db.db.prepare("UPDATE work_items SET dismissed_at = ? WHERE id = ?").run(new Date().toISOString(), workItemId);
+    log.debug("Dismissed work item", workItemId);
   }
 
   // --- Threads ---
@@ -421,6 +442,35 @@ export class ContextGraph {
       `)
       .all(workItemId, workItemId) as EventRow[];
     return rows.map(toEvent);
+  }
+
+  getEventsForWorkItemPaginated(
+    workItemId: string,
+    limit: number = 10,
+    before?: string,
+  ): { events: Event[]; hasOlder: boolean } {
+    let sql = `
+      SELECT e.* FROM events e
+      LEFT JOIN threads t ON e.thread_id = t.id
+      WHERE (e.work_item_id = ? OR t.work_item_id = ?)
+    `;
+    const params: any[] = [workItemId, workItemId];
+
+    if (before) {
+      sql += " AND e.timestamp < ?";
+      params.push(before);
+    }
+
+    sql += " ORDER BY e.timestamp DESC LIMIT ?";
+    params.push(limit + 1); // fetch one extra to check hasOlder
+
+    const rows = this.db.db.prepare(sql).all(...params) as EventRow[];
+    const hasOlder = rows.length > limit;
+    const eventRows = hasOlder ? rows.slice(0, limit) : rows;
+
+    // Reverse to oldest-first for chat-style display
+    const events = eventRows.map(toEvent).reverse();
+    return { events, hasOlder };
   }
 
   // --- Enrichments ---
@@ -691,12 +741,63 @@ export class ContextGraph {
       WHERE wi.current_atc_status IN ('blocked_on_human', 'needs_decision')
         AND (wi.snoozed_until IS NULL OR wi.snoozed_until <= datetime('now'))
         AND e.targeted_at_operator = 1
+        AND (wi.dismissed_at IS NULL OR e.timestamp > wi.dismissed_at)
       ORDER BY
         CASE wi.current_atc_status
           WHEN 'blocked_on_human' THEN 0
           WHEN 'needs_decision' THEN 1
         END,
         e.timestamp DESC
+    `,
+      )
+      .all() as Array<Record<string, unknown>>;
+
+    return rows.map(mapActionableRow);
+  }
+
+  getAllActiveItems(): ActionableItem[] {
+    const rows = this.db.db
+      .prepare(
+        `
+      SELECT
+        wi.*,
+        e.id AS e_id, e.thread_id AS e_thread_id, e.message_id AS e_message_id,
+        e.work_item_id AS e_work_item_id, e.agent_id AS e_agent_id,
+        e.status AS e_status, e.confidence AS e_confidence, e.reason AS e_reason,
+        e.raw_text AS e_raw_text, e.timestamp AS e_timestamp, e.created_at AS e_created_at,
+        e.entry_type AS e_entry_type,
+        e.targeted_at_operator AS e_targeted_at_operator,
+        e.action_required_from AS e_action_required_from,
+        e.next_action AS e_next_action,
+        a.id AS a_id, a.name AS a_name, a.platform AS a_platform,
+        a.platform_user_id AS a_platform_user_id, a.role AS a_role,
+        a.avatar_url AS a_avatar_url, a.is_bot AS a_is_bot,
+        a.first_seen AS a_first_seen, a.last_seen AS a_last_seen,
+        t.id AS t_id, t.channel_id AS t_channel_id, t.channel_name AS t_channel_name,
+        t.platform_meta AS t_platform_meta,
+        t.platform AS t_platform, t.work_item_id AS t_work_item_id,
+        t.last_activity AS t_last_activity, t.message_count AS t_message_count
+      FROM work_items wi
+      LEFT JOIN events e ON e.id = (
+          SELECT e2.id FROM events e2
+          LEFT JOIN threads t2 ON e2.thread_id = t2.id
+          WHERE e2.work_item_id = wi.id
+             OR t2.work_item_id = wi.id
+          ORDER BY e2.timestamp DESC
+          LIMIT 1
+        )
+      LEFT JOIN agents a ON e.agent_id = a.id
+      LEFT JOIN threads t ON e.thread_id = t.id
+      WHERE wi.current_atc_status IS NOT NULL
+        AND wi.current_atc_status NOT IN ('completed', 'noise')
+      ORDER BY
+        CASE wi.current_atc_status
+          WHEN 'blocked_on_human' THEN 0
+          WHEN 'needs_decision' THEN 1
+          WHEN 'in_progress' THEN 2
+          ELSE 3
+        END,
+        wi.updated_at DESC
     `,
       )
       .all() as Array<Record<string, unknown>>;
@@ -760,6 +861,8 @@ function mapActionableRow(row: Record<string, unknown>): ActionableItem {
     currentAtcStatus: row.current_atc_status as StatusCategory | null,
     currentConfidence: row.current_confidence as number | null,
     snoozedUntil: row.snoozed_until as string | null,
+    pinned: Boolean(row.pinned),
+    dismissedAt: (row.dismissed_at as string | null) ?? null,
     createdAt: row.created_at as string,
     updatedAt: row.updated_at as string,
   };

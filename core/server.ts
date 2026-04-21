@@ -170,8 +170,11 @@ export function createApp(state: EngineState): Hono {
       return c.json({ error: "Work item not found" }, 404);
     }
 
+    const limit = Number(c.req.query("limit")) || 10;
+    const before = c.req.query("before") || undefined;
+
     const threads = state.graph.getThreadsForWorkItem(id);
-    const events = state.graph.getEventsForWorkItem(id);
+    const { events, hasOlder } = state.graph.getEventsForWorkItemPaginated(id, limit, before);
     const agents = state.graph.getAgentsForWorkItem(id);
     const channels = state.graph.getChannelsForWorkItem(id);
     const enrichments = state.graph.getEnrichmentsForWorkItem(id);
@@ -186,7 +189,9 @@ export function createApp(state: EngineState): Hono {
       threadChannelMap.set(t.id, t.channelName || t.channelId);
     }
 
-    const latestBlockEvent = events
+    // For latestBlockEvent, use all events (not paginated) to get accurate status
+    const allEvents = state.graph.getEventsForWorkItem(id);
+    const latestBlockEvent = allEvents
       .filter((e) => e.status === "blocked_on_human" || e.status === "needs_decision")
       .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())[0] ?? null;
 
@@ -195,7 +200,7 @@ export function createApp(state: EngineState): Hono {
 
     let statusSummary: string | null = null;
     const cached = state.graph.getSummary(id);
-    const latestEvent = events.length > 0 ? events[events.length - 1] : null;
+    const latestEvent = allEvents.length > 0 ? allEvents[allEvents.length - 1] : null;
     if (cached && latestEvent && cached.latestEventId === latestEvent.id) {
       statusSummary = cached.summaryText;
     }
@@ -207,7 +212,7 @@ export function createApp(state: EngineState): Hono {
         )
       : null;
 
-    const latestEventForTarget = events.length > 0 ? events[events.length - 1] : null;
+    const latestEventForTarget = allEvents.length > 0 ? allEvents[allEvents.length - 1] : null;
 
     return c.json({
       workItem,
@@ -218,6 +223,7 @@ export function createApp(state: EngineState): Hono {
       threadCount: threads.length,
       enrichment: enrichments[0] ?? null,
       timeline,
+      hasOlder,
       latestThreadId: latestThread?.id ?? null,
       latestChannelId: latestThread?.channelId ?? null,
       targetedAtOperator: latestEventForTarget?.targetedAtOperator ?? true,
@@ -253,6 +259,12 @@ export function createApp(state: EngineState): Hono {
     });
 
     return c.json({ summary });
+  });
+
+  // --- GET /api/stream/all-active ---
+  app.get("/api/stream/all-active", (c) => {
+    const items = state.graph.getAllActiveItems();
+    return c.json({ items });
   });
 
   // --- GET /api/fleet ---
@@ -410,6 +422,16 @@ export function createApp(state: EngineState): Hono {
       log.error("Reply failed", message);
       return c.json({ ok: false, error: message }, 500);
     }
+  });
+
+  // --- POST /api/work-item/:id/pin ---
+  app.post("/api/work-item/:id/pin", async (c) => {
+    const { id } = c.req.param();
+    if (!state.graph.getWorkItemById(id)) {
+      return c.json({ ok: false, error: "Work item not found" }, 404);
+    }
+    const pinned = state.graph.togglePin(id);
+    return c.json({ ok: true, pinned });
   });
 
   // --- POST /api/work-item/:id/link-thread ---
@@ -585,7 +607,7 @@ export function createApp(state: EngineState): Hono {
   app.post("/api/action", async (c) => {
     const body = await c.req.json<{
       workItemId: string;
-      action: "approve" | "redirect" | "close" | "snooze" | "create_ticket";
+      action: "approve" | "redirect" | "close" | "snooze" | "create_ticket" | "dismiss" | "noise";
       message?: string;
       snoozeDuration?: number;
       projectKey?: string;
@@ -595,7 +617,7 @@ export function createApp(state: EngineState): Hono {
       return c.json({ ok: false, error: "Missing required fields: workItemId, action" }, 400);
     }
 
-    const validActions = new Set(["approve", "redirect", "close", "snooze", "create_ticket"]);
+    const validActions = new Set(["approve", "redirect", "close", "snooze", "create_ticket", "dismiss", "noise"]);
     if (!validActions.has(body.action)) {
       return c.json({ ok: false, error: `Invalid action: ${body.action}` }, 400);
     }
@@ -635,6 +657,49 @@ export function createApp(state: EngineState): Hono {
             currentAtcStatus: "in_progress",
           });
           break;
+
+        case "dismiss": {
+          state.graph.dismissWorkItem(body.workItemId);
+          // Insert an event recording the operator dismissal
+          const dismissThreads = state.graph.getThreadsForWorkItem(body.workItemId);
+          state.graph.insertEvent({
+            threadId: dismissThreads[0]?.id ?? null,
+            messageId: `operator-dismiss-${Date.now()}`,
+            workItemId: body.workItemId,
+            agentId: null,
+            status: workItem.currentAtcStatus ?? "in_progress",
+            confidence: 1.0,
+            reason: "Operator dismissed from stream",
+            rawText: body.message ?? null,
+            timestamp: new Date().toISOString(),
+            entryType: "decision",
+            targetedAtOperator: false,
+          });
+          break;
+        }
+
+        case "noise": {
+          state.graph.upsertWorkItem({
+            id: body.workItemId,
+            source: workItem.source,
+            currentAtcStatus: "noise",
+          });
+          const noiseThreads = state.graph.getThreadsForWorkItem(body.workItemId);
+          state.graph.insertEvent({
+            threadId: noiseThreads[0]?.id ?? null,
+            messageId: `operator-noise-${Date.now()}`,
+            workItemId: body.workItemId,
+            agentId: null,
+            status: "noise",
+            confidence: 1.0,
+            reason: "Operator classified as noise",
+            rawText: body.message ?? null,
+            timestamp: new Date().toISOString(),
+            entryType: "decision",
+            targetedAtOperator: false,
+          });
+          break;
+        }
 
         case "create_ticket": {
           if (!state.taskAdapter?.createWorkItem) {
@@ -697,40 +762,45 @@ export function createApp(state: EngineState): Hono {
       }
 
       // Record the operator's action as an event in the timeline
+      // (dismiss and noise already inserted their own events above)
       const threads = state.graph.getThreadsForWorkItem(body.workItemId);
       const actionThread = threads[0];
-      const actionStatus = body.action === "approve" || body.action === "close" ? "completed" : "in_progress";
-      const actionLabels: Record<string, string> = {
-        approve: "Operator approved",
-        redirect: "Operator unblocked",
-        close: "Operator dismissed",
-        snooze: "Operator snoozed",
-      };
-      state.graph.insertEvent({
-        threadId: actionThread?.id ?? null,
-        messageId: `operator-action-${Date.now()}`,
-        workItemId: body.workItemId,
-        agentId: null,
-        status: actionStatus,
-        confidence: 1.0,
-        reason: actionLabels[body.action] ?? `Operator action: ${body.action}`,
-        rawText: body.message ?? null,
-        timestamp: new Date().toISOString(),
-        entryType: "decision",
-        targetedAtOperator: false,
-      });
+      if (body.action !== "dismiss" && body.action !== "noise") {
+        const actionStatus = body.action === "approve" || body.action === "close" ? "completed" : "in_progress";
+        const actionLabels: Record<string, string> = {
+          approve: "Operator approved",
+          redirect: "Operator unblocked",
+          close: "Operator dismissed",
+          snooze: "Operator snoozed",
+        };
+        state.graph.insertEvent({
+          threadId: actionThread?.id ?? null,
+          messageId: `operator-action-${Date.now()}`,
+          workItemId: body.workItemId,
+          agentId: null,
+          status: actionStatus,
+          confidence: 1.0,
+          reason: actionLabels[body.action] ?? `Operator action: ${body.action}`,
+          rawText: body.message ?? null,
+          timestamp: new Date().toISOString(),
+          entryType: "decision",
+          targetedAtOperator: false,
+        });
+      }
 
       // If there's a message and a messaging adapter, post it to the related thread
+      let delivered = false;
       if (body.message && state.messagingAdapter) {
         if (actionThread) {
           await state.messagingAdapter.replyToThread(actionThread.id, actionThread.channelId, body.message);
+          delivered = true;
         } else {
           log.warn("No threads found for work item — message not sent", body.workItemId);
           return c.json({ ok: false, error: "No thread found to post message to" }, 404);
         }
       }
 
-      return c.json({ ok: true });
+      return c.json({ ok: true, delivered });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       log.error("Action failed", message);
