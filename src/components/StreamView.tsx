@@ -13,11 +13,13 @@ const POLL_INTERVAL = 5000;
 interface StreamViewProps {
   mentionables: Mentionable[];
   serializeMention: (userId: string) => string;
+  onSyncStateChange?: (state: { lastSyncAt: Date | null; error: boolean }) => void;
 }
 
 export default function StreamView({
   mentionables,
   serializeMention,
+  onSyncStateChange,
 }: StreamViewProps): JSX.Element {
   const [filter, setFilter] = useState<StreamFilter>("needs-me");
   const [needsMeItems, setNeedsMeItems] = useState<ActionableItem[]>([]);
@@ -26,7 +28,13 @@ export default function StreamView({
   const [actionStates, setActionStates] = useState<Map<string, ActionState>>(new Map());
   const [resolvingIds, setResolvingIds] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
+  const [lastSyncAt, setLastSyncAt] = useState<Date | null>(null);
+  const [syncError, setSyncError] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(() => {
+    onSyncStateChange?.({ lastSyncAt, error: syncError });
+  }, [lastSyncAt, syncError, onSyncStateChange]);
 
   const poll = useCallback(async () => {
     try {
@@ -37,6 +45,8 @@ export default function StreamView({
       setNeedsMeItems(inbox.items);
       setAllActiveItems(allActive.items);
       setError(null);
+      setLastSyncAt(new Date());
+      setSyncError(false);
 
       // Update dock badge count (macOS)
       try {
@@ -45,6 +55,7 @@ export default function StreamView({
       } catch { /* not in Tauri */ }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to fetch");
+      setSyncError(true);
     }
   }, []);
 

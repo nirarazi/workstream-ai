@@ -1,4 +1,38 @@
 import { useState, useEffect, useRef, useCallback, useMemo, type JSX } from "react";
+
+function SyncIndicator({ lastSyncAt, error }: { lastSyncAt: Date | null; error: boolean }): JSX.Element | null {
+  const [, forceUpdate] = useState(0);
+
+  // Update relative time every second
+  useEffect(() => {
+    const interval = setInterval(() => forceUpdate(n => n + 1), 1000);
+    return () => clearInterval(interval);
+  }, []);
+
+  if (!lastSyncAt) return null;
+
+  const secondsAgo = Math.floor((Date.now() - lastSyncAt.getTime()) / 1000);
+  const isStale = secondsAgo > 30;
+
+  const dotColor = error
+    ? "bg-red-500"
+    : isStale
+      ? "bg-amber-500"
+      : "bg-green-500";
+
+  const label = error
+    ? "Reconnecting..."
+    : isStale
+      ? `Last synced ${secondsAgo}s ago`
+      : `Live · synced ${secondsAgo}s ago`;
+
+  return (
+    <div className="flex items-center gap-1.5">
+      <div className={`w-1.5 h-1.5 rounded-full ${dotColor}`} />
+      <span className="text-[10px] text-gray-600">{label}</span>
+    </div>
+  );
+}
 import { fetchSetupStatus, fetchStatus, fetchAgents, agentsToMentionables, type ServiceStatuses, type Mentionable } from "./lib/api";
 import { useTheme, type ThemeMode } from "./lib/theme";
 import StreamView from "./components/StreamView";
@@ -60,6 +94,7 @@ function App(): JSX.Element {
   const [services, setServices] = useState<ServiceStatuses>(DEFAULT_SERVICES);
   const [mentionables, setMentionables] = useState<Mentionable[]>([]);
   const [agentPlatform, setAgentPlatform] = useState("slack");
+  const [syncState, setSyncState] = useState<{ lastSyncAt: Date | null; error: boolean }>({ lastSyncAt: null, error: false });
   const { mode: themeMode, cycle: cycleTheme } = useTheme();
   const statusInterval = useRef<ReturnType<typeof setInterval> | null>(null);
   const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -203,6 +238,11 @@ function App(): JSX.Element {
               </button>
             )}
 
+            {/* Sync indicator */}
+            {view === "stream" && (
+              <SyncIndicator lastSyncAt={syncState.lastSyncAt} error={syncState.error} />
+            )}
+
             {/* Service indicators */}
             <div data-tauri-drag-region className="flex items-center gap-3">
               <ServiceDot label="Engine" status={connected ? "ok" : "disconnected"} />
@@ -264,7 +304,7 @@ function App(): JSX.Element {
         )}
         {view === "setup" && <Setup onComplete={handleSetupComplete} />}
         {view === "stream" && (
-          <StreamView mentionables={mentionables} serializeMention={serializeMention} />
+          <StreamView mentionables={mentionables} serializeMention={serializeMention} onSyncStateChange={setSyncState} />
         )}
         {view === "fleet" && <FleetBoard platformMeta={platformMeta} />}
         {view === "settings" && (
