@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { StreamData } from "../../lib/api";
 import { postAction, createTicket, openExternalUrl } from "../../lib/api";
+import SnoozeDropdown from "./SnoozeDropdown";
 
 type ActionKind = "unblock" | "done" | "dismiss" | "snooze" | "noise";
 
@@ -25,11 +26,6 @@ const ACTION_BUTTONS: {
     action: "dismiss",
     label: "Dismiss",
     classes: "bg-gray-700/70 hover:bg-gray-600 text-gray-300",
-  },
-  {
-    action: "snooze",
-    label: "Snooze",
-    classes: "bg-amber-800/70 hover:bg-amber-700 text-amber-200",
   },
   {
     action: "noise",
@@ -66,12 +62,12 @@ export default function SuggestedActions({ data, onActioned, getReplyText, onAct
   const isInferred = workItem.source === "inferred" || workItem.id.startsWith("thread:");
   const busy = acting !== null || creatingTicket;
 
-  async function handleAction(action: ActionKind) {
+  async function handleAction(action: ActionKind, snoozeDuration?: number) {
     setActing(action);
     setError(null);
     try {
       const message = getReplyText?.() || undefined;
-      await postAction(workItem.id, toServerAction(action), message, action === "snooze" ? 60 : undefined);
+      await postAction(workItem.id, toServerAction(action), message, action === "snooze" ? (snoozeDuration ?? 60) : undefined);
       onActioned?.();
       onActionComplete?.(action);
     } catch (err) {
@@ -111,6 +107,10 @@ export default function SuggestedActions({ data, onActioned, getReplyText, onAct
             {acting === action ? "..." : label}
           </button>
         ))}
+        <SnoozeDropdown
+          disabled={busy}
+          onSnooze={(seconds) => handleAction("snooze", seconds)}
+        />
         {onTogglePin && (
           <button
             onClick={onTogglePin}
