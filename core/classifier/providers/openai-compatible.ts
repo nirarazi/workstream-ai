@@ -60,6 +60,7 @@ export class OpenAICompatibleProvider implements ModelProvider {
   private readonly model: string;
   private readonly apiKey: string | undefined;
   private readonly isAnthropic: boolean;
+  private abortController = new AbortController();
 
   // Backoff state — exposed so the server can surface it to the UI
   private _backoff: BackoffState = {
@@ -71,6 +72,13 @@ export class OpenAICompatibleProvider implements ModelProvider {
 
   get backoffState(): BackoffState {
     return { ...this._backoff };
+  }
+
+  /** Cancel all in-flight requests and retry delays */
+  abort(): void {
+    this.abortController.abort();
+    this.abortController = new AbortController();
+    this._backoff = { active: false, retryCount: 0, nextRetryAt: null, lastError: null };
   }
 
   constructor(config: OpenAICompatibleConfig) {
@@ -125,7 +133,13 @@ export class OpenAICompatibleProvider implements ModelProvider {
             `Retryable error (attempt ${attempt + 1}/${MAX_RETRIES}), backing off ${Math.ceil(delayMs / 1000)}s`,
             errorMsg,
           );
-          await new Promise((resolve) => setTimeout(resolve, delayMs));
+          await new Promise((resolve, reject) => {
+            const timer = setTimeout(resolve, delayMs);
+            this.abortController.signal.addEventListener("abort", () => {
+              clearTimeout(timer);
+              reject(new Error("Provider aborted"));
+            }, { once: true });
+          });
           continue;
         }
 
@@ -176,7 +190,7 @@ export class OpenAICompatibleProvider implements ModelProvider {
       method: "POST",
       headers,
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(30_000),
+      signal: AbortSignal.any([AbortSignal.timeout(30_000), this.abortController.signal]),
     });
 
     if (!response.ok) {
@@ -232,7 +246,7 @@ export class OpenAICompatibleProvider implements ModelProvider {
         method: "POST",
         headers,
         body: JSON.stringify(body),
-        signal: AbortSignal.timeout(30_000),
+        signal: AbortSignal.any([AbortSignal.timeout(30_000), this.abortController.signal]),
       });
 
       if (!response.ok) {
