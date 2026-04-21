@@ -5,6 +5,7 @@ import {
 } from "../lib/api";
 import FilterTabs from "./stream/FilterTabs";
 import StreamListItem from "./stream/StreamListItem";
+import StreamDetail from "./stream/StreamDetail";
 import { type ActionState } from "./StatusBadge";
 
 const POLL_INTERVAL = 5000;
@@ -15,8 +16,8 @@ interface StreamViewProps {
 }
 
 export default function StreamView({
-  mentionables: _mentionables,
-  serializeMention: _serializeMention,
+  mentionables,
+  serializeMention,
 }: StreamViewProps): JSX.Element {
   const [filter, setFilter] = useState<StreamFilter>("needs-me");
   const [needsMeItems, setNeedsMeItems] = useState<ActionableItem[]>([]);
@@ -116,12 +117,16 @@ export default function StreamView({
       {/* Right panel: detail */}
       <div className="flex-1 overflow-hidden">
         {selectedWorkItemId ? (
-          <div className="h-full">
-            {/* StreamDetail will replace this placeholder in Task 8 */}
-            <div className="p-4 text-gray-400 text-sm">
-              Detail panel for {selectedWorkItemId}
-            </div>
-          </div>
+          <StreamDetail
+            key={selectedWorkItemId}
+            workItemId={selectedWorkItemId}
+            mentionables={mentionables}
+            serializeMention={serializeMention}
+            onActioned={poll}
+            onActionStateChange={(id, state) => {
+              setActionStates(prev => new Map(prev).set(id, state));
+            }}
+          />
         ) : (
           <div className="h-full flex items-center justify-center">
             <div className="text-center">
