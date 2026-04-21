@@ -197,12 +197,13 @@ export class ContextGraph {
     currentAtcStatus?: StatusCategory | null;
     currentConfidence?: number | null;
     snoozedUntil?: string | null;
+    pinned?: boolean;
   }): WorkItem {
     const now = new Date().toISOString();
 
     const stmt = this.db.db.prepare(`
-      INSERT INTO work_items (id, source, title, external_status, assignee, url, current_atc_status, current_confidence, snoozed_until, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO work_items (id, source, title, external_status, assignee, url, current_atc_status, current_confidence, snoozed_until, pinned, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         source = COALESCE(excluded.source, work_items.source),
         title = CASE WHEN excluded.title = '' THEN work_items.title ELSE excluded.title END,
@@ -212,6 +213,7 @@ export class ContextGraph {
         current_atc_status = COALESCE(excluded.current_atc_status, work_items.current_atc_status),
         current_confidence = COALESCE(excluded.current_confidence, work_items.current_confidence),
         snoozed_until = excluded.snoozed_until,
+        pinned = COALESCE(excluded.pinned, work_items.pinned),
         updated_at = excluded.updated_at
     `);
     stmt.run(
@@ -224,6 +226,7 @@ export class ContextGraph {
       item.currentAtcStatus ?? null,
       item.currentConfidence ?? null,
       item.snoozedUntil ?? null,
+      item.pinned != null ? (item.pinned ? 1 : 0) : 0,
       now,
       now,
     );

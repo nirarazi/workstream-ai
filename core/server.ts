@@ -415,6 +415,9 @@ export function createApp(state: EngineState): Hono {
   // --- POST /api/work-item/:id/pin ---
   app.post("/api/work-item/:id/pin", async (c) => {
     const { id } = c.req.param();
+    if (!state.graph.getWorkItemById(id)) {
+      return c.json({ ok: false, error: "Work item not found" }, 404);
+    }
     const pinned = state.graph.togglePin(id);
     return c.json({ ok: true, pinned });
   });
