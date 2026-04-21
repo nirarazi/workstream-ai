@@ -4,6 +4,8 @@ import {
   type ActionableItem, type StreamFilter, type Mentionable,
 } from "../lib/api";
 import FilterTabs from "./stream/FilterTabs";
+import StreamListItem from "./stream/StreamListItem";
+import { type ActionState } from "./StatusBadge";
 
 const POLL_INTERVAL = 5000;
 
@@ -20,6 +22,7 @@ export default function StreamView({
   const [needsMeItems, setNeedsMeItems] = useState<ActionableItem[]>([]);
   const [allActiveItems, setAllActiveItems] = useState<ActionableItem[]>([]);
   const [selectedWorkItemId, setSelectedWorkItemId] = useState<string | null>(null);
+  const [actionStates, setActionStates] = useState<Map<string, ActionState>>(new Map());
   const [error, setError] = useState<string | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -70,6 +73,16 @@ export default function StreamView({
     setSelectedWorkItemId(prev => prev === id ? null : id);
   }
 
+  const sortedItems = [...currentItems].sort((a, b) => {
+    // Pinned items first
+    if (a.workItem.pinned && !b.workItem.pinned) return -1;
+    if (!a.workItem.pinned && b.workItem.pinned) return 1;
+    // Then by latest event timestamp (newest first)
+    const tA = a.latestEvent?.timestamp ?? a.workItem.updatedAt;
+    const tB = b.latestEvent?.timestamp ?? b.workItem.updatedAt;
+    return new Date(tB).getTime() - new Date(tA).getTime();
+  });
+
   return (
     <div className="flex h-full">
       {/* Left panel: list */}
@@ -79,7 +92,7 @@ export default function StreamView({
           {error && (
             <div className="px-4 py-2 text-xs text-red-400">{error}</div>
           )}
-          {currentItems.length === 0 && !error && (
+          {sortedItems.length === 0 && !error && (
             <div className="px-4 py-8 text-center text-gray-600 text-sm">
               {filter === "needs-me"
                 ? "All clear. No items need your attention."
@@ -88,26 +101,14 @@ export default function StreamView({
                   : "No active work items."}
             </div>
           )}
-          {/* StreamListItem components will go here in Task 7 */}
-          {currentItems.map(item => (
-            <div
+          {sortedItems.map(item => (
+            <StreamListItem
               key={item.workItem.id}
-              onClick={() => handleSelect(item.workItem.id)}
-              className={`px-4 py-3 border-b border-gray-800/50 cursor-pointer hover:bg-gray-900/50 transition-colors ${
-                selectedWorkItemId === item.workItem.id ? "bg-gray-900/80 border-l-2 border-l-cyan-500" : ""
-              }`}
-            >
-              <div className="flex justify-between items-center">
-                <span className="text-xs font-semibold text-gray-200">{item.workItem.id}</span>
-                <span className="text-[10px] text-gray-500">
-                  {item.latestEvent?.timestamp
-                    ? new Date(item.latestEvent.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
-                    : ""}
-                </span>
-              </div>
-              <div className="text-xs text-gray-400 mt-0.5 truncate">{item.workItem.title}</div>
-              <div className="text-[10px] text-gray-600 mt-0.5">{item.agent?.name ?? "Unknown"}</div>
-            </div>
+              item={item}
+              selected={selectedWorkItemId === item.workItem.id}
+              actionState={actionStates.get(item.workItem.id) ?? null}
+              onSelect={() => handleSelect(item.workItem.id)}
+            />
           ))}
         </div>
       </div>

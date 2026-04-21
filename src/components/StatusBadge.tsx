@@ -23,11 +23,55 @@ const STATUS_CONFIG: Record<string, { label: string; classes: string }> = {
   },
 };
 
+export type ActionState = "replied" | "unblocked" | "done" | "snoozed" | null;
+
 interface StatusBadgeProps {
   status: string;
+  actionState?: ActionState;
+  snoozedUntil?: string | null;
 }
 
-export default function StatusBadge({ status }: StatusBadgeProps): JSX.Element {
+function formatSnoozedLabel(snoozedUntil: string | null | undefined): string {
+  if (!snoozedUntil) return "Snoozed";
+  const diffMs = new Date(snoozedUntil).getTime() - Date.now();
+  if (diffMs <= 0) return "Snoozed";
+  const hours = Math.ceil(diffMs / 3600000);
+  return `Snoozed ${hours}h`;
+}
+
+export default function StatusBadge({ status, actionState, snoozedUntil }: StatusBadgeProps): JSX.Element {
+  if (actionState === "replied") {
+    return (
+      <span className="inline-block rounded-full border px-2 py-0.5 text-xs font-medium leading-tight bg-green-900/60 text-green-300 border-green-700/50">
+        Replied
+      </span>
+    );
+  }
+
+  if (actionState === "unblocked") {
+    return (
+      <span className="inline-block rounded-full border px-2 py-0.5 text-xs font-medium leading-tight bg-green-900/60 text-green-300 border-green-700/50">
+        ✓ Unblocked
+      </span>
+    );
+  }
+
+  if (actionState === "done") {
+    return (
+      <span className="inline-block rounded-full border px-2 py-0.5 text-xs font-medium leading-tight bg-green-900/60 text-green-300 border-green-700/50">
+        ✓ Done
+      </span>
+    );
+  }
+
+  if (actionState === "snoozed") {
+    return (
+      <span className="inline-block rounded-full border px-2 py-0.5 text-xs font-medium leading-tight bg-amber-900/60 text-amber-300 border-amber-700/50">
+        {formatSnoozedLabel(snoozedUntil)}
+      </span>
+    );
+  }
+
   const config = STATUS_CONFIG[status] ?? STATUS_CONFIG.noise;
   return (
     <span
