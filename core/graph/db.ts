@@ -253,6 +253,17 @@ export class Database {
       this.db.exec("ALTER TABLE agents ADD COLUMN is_bot INTEGER DEFAULT NULL");
       log.info("Migration: added is_bot column to agents");
     }
+
+    // Add pinned and dismissed_at columns to work_items table
+    const workItemCols = this.db.pragma("table_info(work_items)") as Array<{ name: string }>;
+    if (!workItemCols.some((c) => c.name === "pinned")) {
+      this.db.exec("ALTER TABLE work_items ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0");
+      log.info("Migration: added pinned column to work_items");
+    }
+    if (!workItemCols.some((c) => c.name === "dismissed_at")) {
+      this.db.exec("ALTER TABLE work_items ADD COLUMN dismissed_at TEXT DEFAULT NULL");
+      log.info("Migration: added dismissed_at column to work_items");
+    }
   }
 
   prepare<T>(sql: string): BetterSqlite3Type.Statement<T[]> {

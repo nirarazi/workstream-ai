@@ -39,6 +39,8 @@ function toWorkItem(row: WorkItemRow): WorkItem {
     currentAtcStatus: row.current_atc_status as StatusCategory | null,
     currentConfidence: row.current_confidence,
     snoozedUntil: row.snoozed_until,
+    pinned: Boolean(row.pinned),
+    dismissedAt: row.dismissed_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -235,6 +237,22 @@ export class ContextGraph {
       | WorkItemRow
       | undefined;
     return row ? toWorkItem(row) : null;
+  }
+
+  togglePin(workItemId: string): boolean {
+    const row = this.db.db.prepare("SELECT pinned FROM work_items WHERE id = ?").get(workItemId) as
+      | { pinned: number }
+      | undefined;
+    if (!row) return false;
+    const newValue = row.pinned ? 0 : 1;
+    this.db.db.prepare("UPDATE work_items SET pinned = ? WHERE id = ?").run(newValue, workItemId);
+    log.debug("Toggled pin for work item", workItemId, "pinned:", Boolean(newValue));
+    return Boolean(newValue);
+  }
+
+  dismissWorkItem(workItemId: string): void {
+    this.db.db.prepare("UPDATE work_items SET dismissed_at = ? WHERE id = ?").run(new Date().toISOString(), workItemId);
+    log.debug("Dismissed work item", workItemId);
   }
 
   // --- Threads ---
@@ -691,6 +709,7 @@ export class ContextGraph {
       WHERE wi.current_atc_status IN ('blocked_on_human', 'needs_decision')
         AND (wi.snoozed_until IS NULL OR wi.snoozed_until <= datetime('now'))
         AND e.targeted_at_operator = 1
+        AND (wi.dismissed_at IS NULL OR e.timestamp > wi.dismissed_at)
       ORDER BY
         CASE wi.current_atc_status
           WHEN 'blocked_on_human' THEN 0
@@ -760,6 +779,8 @@ function mapActionableRow(row: Record<string, unknown>): ActionableItem {
     currentAtcStatus: row.current_atc_status as StatusCategory | null,
     currentConfidence: row.current_confidence as number | null,
     snoozedUntil: row.snoozed_until as string | null,
+    pinned: Boolean(row.pinned),
+    dismissedAt: (row.dismissed_at as string | null) ?? null,
     createdAt: row.created_at as string,
     updatedAt: row.updated_at as string,
   };

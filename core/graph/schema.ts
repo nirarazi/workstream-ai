@@ -24,6 +24,8 @@ export interface WorkItemRow {
   current_atc_status: StatusCategory | null;
   current_confidence: number | null;
   snoozed_until: string | null;
+  pinned: number;         // 0 or 1
+  dismissed_at: string | null;
   created_at: string;
   updated_at: string;
 }

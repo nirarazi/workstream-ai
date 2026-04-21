@@ -412,6 +412,13 @@ export function createApp(state: EngineState): Hono {
     }
   });
 
+  // --- POST /api/work-item/:id/pin ---
+  app.post("/api/work-item/:id/pin", async (c) => {
+    const { id } = c.req.param();
+    const pinned = state.graph.togglePin(id);
+    return c.json({ ok: true, pinned });
+  });
+
   // --- POST /api/work-item/:id/link-thread ---
   app.post("/api/work-item/:id/link-thread", async (c) => {
     const id = c.req.param("id");
