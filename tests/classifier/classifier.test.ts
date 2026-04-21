@@ -4,6 +4,7 @@ import { describe, it, expect, vi } from "vitest";
 import { Classifier } from "../../core/classifier/index.js";
 import type { ModelProvider, ClassificationResult } from "../../core/classifier/providers/interface.js";
 import { OpenAICompatibleProvider } from "../../core/classifier/providers/openai-compatible.js";
+import type { OperatorIdentityMap } from "../../core/types.js";
 
 // --- Helpers ---
 
@@ -155,6 +156,314 @@ describe("Classifier", () => {
       expect(result.status).toBe(status);
     }
   });
+
+  it("appends work item context to the system prompt", async () => {
+    const provider = mockProvider({
+      status: "blocked_on_human",
+      confidence: 0.9,
+      reason: "test",
+      workItemIds: ["thread:existing.123"],
+      title: "Missing API key",
+    });
+    const classifier = new Classifier(provider, SYSTEM_PROMPT, FEW_SHOT);
+
+    const context = [
+      { id: "thread:existing.123", title: "Missing API key for Anthropic" },
+      { id: "AI-100", title: "Fix login bug" },
+    ];
+
+    await classifier.classify("Missing API key error again", context);
+
+    // The system prompt passed to the provider should contain the work item context
+    const callArgs = (provider.classify as ReturnType<typeof vi.fn>).mock.calls[0];
+    const systemPrompt = callArgs[1] as string;
+    expect(systemPrompt).toContain("thread:existing.123");
+    expect(systemPrompt).toContain("Missing API key for Anthropic");
+    expect(systemPrompt).toContain("AI-100");
+    expect(systemPrompt).toContain("Fix login bug");
+  });
+
+  it("works without work item context (backward compatible)", async () => {
+    const provider = mockProvider({
+      status: "noise",
+      confidence: 0.9,
+      reason: "test",
+      workItemIds: [],
+    });
+    const classifier = new Classifier(provider, SYSTEM_PROMPT, FEW_SHOT);
+
+    const result = await classifier.classify("Hello");
+
+    expect(result.status).toBe("noise");
+    // System prompt should NOT contain work item section when no context provided
+    const callArgs = (provider.classify as ReturnType<typeof vi.fn>).mock.calls[0];
+    const systemPrompt = callArgs[1] as string;
+    expect(systemPrompt).not.toContain("Open Work Items");
+  });
+});
+
+// --- action_required_from → targetedAtOperator + nextAction tests (with OperatorIdentityMap) ---
+
+describe("action_required_from → targetedAtOperator (with OperatorIdentityMap)", () => {
+  const OPERATOR_MAP: OperatorIdentityMap = new Map([
+    ["slack", { userId: "U0ALFEVQ940", userName: "Nir Arazi" }],
+    ["jira", { userId: "nir@insuretax.com", userName: "Nir (CTO)" }],
+  ]);
+
+  it("action_required_from includes Slack operator ID → targetedAtOperator=true", async () => {
+    const provider = mockProvider({
+      status: "blocked_on_human",
+      confidence: 0.9,
+      reason: "Needs operator review",
+      workItemIds: ["AI-100"],
+      title: "Review needed",
+      action_required_from: ["U0ALFEVQ940"],
+      next_action: "Review and approve the PR",
+    });
+    const classifier = new Classifier(provider, SYSTEM_PROMPT, FEW_SHOT, undefined, undefined, OPERATOR_MAP);
+
+    const result = await classifier.classify("Please review this PR");
+    expect(result.targetedAtOperator).toBe(true);
+    expect(result.nextAction).toBe("Review and approve the PR");
+    expect(result.actionRequiredFrom).toEqual(["U0ALFEVQ940"]);
+  });
+
+  it("action_required_from includes Jira operator ID → targetedAtOperator=true", async () => {
+    const provider = mockProvider({
+      status: "blocked_on_human",
+      confidence: 0.9,
+      reason: "Needs operator review",
+      workItemIds: ["AI-100"],
+      title: "Review needed",
+      action_required_from: ["nir@insuretax.com"],
+      next_action: "Review the ticket",
+    });
+    const classifier = new Classifier(provider, SYSTEM_PROMPT, FEW_SHOT, undefined, undefined, OPERATOR_MAP);
+
+    const result = await classifier.classify("Please review this ticket");
+    expect(result.targetedAtOperator).toBe(true);
+  });
+
+  it("action_required_from has only non-operator IDs → targetedAtOperator=false", async () => {
+    const provider = mockProvider({
+      status: "blocked_on_human",
+      confidence: 0.9,
+      reason: "Needs Guy to review",
+      workItemIds: ["AI-100"],
+      title: "Review needed",
+      action_required_from: ["UA2V04ZU2"],
+      next_action: "Guy should review",
+    });
+    const classifier = new Classifier(provider, SYSTEM_PROMPT, FEW_SHOT, undefined, undefined, OPERATOR_MAP);
+
+    const result = await classifier.classify("Guy please review");
+    expect(result.targetedAtOperator).toBe(false);
+  });
+
+  it("action_required_from is null → targetedAtOperator=false (FYI)", async () => {
+    const provider = mockProvider({
+      status: "in_progress",
+      confidence: 0.9,
+      reason: "Agent working",
+      workItemIds: ["AI-100"],
+      title: "In progress",
+      action_required_from: null,
+      next_action: null,
+    });
+    const classifier = new Classifier(provider, SYSTEM_PROMPT, FEW_SHOT, undefined, undefined, OPERATOR_MAP);
+
+    const result = await classifier.classify("Working on it");
+    expect(result.targetedAtOperator).toBe(false);
+  });
+
+  it("action_required_from is empty array + LLM says targeted=true → targetedAtOperator=true", async () => {
+    const provider = mockProvider({
+      status: "blocked_on_human",
+      confidence: 0.9,
+      reason: "Blocked on infra",
+      workItemIds: ["AI-100"],
+      title: "IAM permissions",
+      action_required_from: [],
+      next_action: "Fix IAM role",
+      targeted_at_operator: true,
+    });
+    const classifier = new Classifier(provider, SYSTEM_PROMPT, FEW_SHOT, undefined, undefined, OPERATOR_MAP);
+
+    const result = await classifier.classify("Need IAM permissions fixed");
+    expect(result.targetedAtOperator).toBe(true);
+  });
+
+  it("action_required_from is empty array + LLM says targeted=false → targetedAtOperator=false", async () => {
+    const provider = mockProvider({
+      status: "blocked_on_human",
+      confidence: 0.9,
+      reason: "Waiting for client",
+      workItemIds: ["IT-200"],
+      title: "Client credentials",
+      action_required_from: [],
+      next_action: "Client provides API key",
+      targeted_at_operator: false,
+    });
+    const classifier = new Classifier(provider, SYSTEM_PROMPT, FEW_SHOT, undefined, undefined, OPERATOR_MAP);
+
+    const result = await classifier.classify("Waiting for client API key");
+    expect(result.targetedAtOperator).toBe(false);
+  });
+
+  it("action_required_from is empty array + LLM omits targeted → defaults to true (backstop)", async () => {
+    const provider = mockProvider({
+      status: "blocked_on_human",
+      confidence: 0.9,
+      reason: "Blocked on something",
+      workItemIds: ["AI-100"],
+      title: "Blocked",
+      action_required_from: [],
+      next_action: "Resolve block",
+    });
+    const classifier = new Classifier(provider, SYSTEM_PROMPT, FEW_SHOT, undefined, undefined, OPERATOR_MAP);
+
+    const result = await classifier.classify("Something is blocking me");
+    expect(result.targetedAtOperator).toBe(true);
+  });
+
+  it("no action_required_from field at all → falls back to LLM targeted_at_operator", async () => {
+    const provider = mockProvider({
+      status: "blocked_on_human",
+      confidence: 0.9,
+      reason: "Needs review",
+      workItemIds: ["AI-100"],
+      title: "Review",
+      targeted_at_operator: false,
+    });
+    const classifier = new Classifier(provider, SYSTEM_PROMPT, FEW_SHOT, undefined, undefined, OPERATOR_MAP);
+
+    const result = await classifier.classify("Guy please review");
+    expect(result.targetedAtOperator).toBe(false);
+  });
+
+  it("operator is among multiple action takers → targetedAtOperator=true", async () => {
+    const provider = mockProvider({
+      status: "blocked_on_human",
+      confidence: 0.9,
+      reason: "Needs multiple reviewers",
+      workItemIds: ["AI-100"],
+      title: "Multi-review needed",
+      action_required_from: ["UA2V04ZU2", "U0ALFEVQ940", "UOTHERUSER"],
+      next_action: "Multiple people need to review",
+    });
+    const classifier = new Classifier(provider, SYSTEM_PROMPT, FEW_SHOT, undefined, undefined, OPERATOR_MAP);
+
+    const result = await classifier.classify("Please everyone review this");
+
+    expect(result.targetedAtOperator).toBe(true);
+    expect(result.actionRequiredFrom).toEqual(["UA2V04ZU2", "U0ALFEVQ940", "UOTHERUSER"]);
+  });
+
+  it("no action_required_from, no operator identity → falls back to targeted_at_operator boolean", async () => {
+    const provider = mockProvider({
+      status: "blocked_on_human",
+      confidence: 0.9,
+      reason: "Needs human review",
+      workItemIds: ["AI-100"],
+      title: "Review needed",
+      targeted_at_operator: true,
+    });
+    const classifier = new Classifier(provider, SYSTEM_PROMPT, FEW_SHOT);
+
+    const result = await classifier.classify("Please review this");
+
+    expect(result.targetedAtOperator).toBe(true);
+  });
+
+  it("targeted_at_operator=false with no action_required_from → targetedAtOperator=false", async () => {
+    const provider = mockProvider({
+      status: "blocked_on_human",
+      confidence: 0.9,
+      reason: "Needs someone else",
+      workItemIds: ["AI-100"],
+      title: "Review needed",
+      targeted_at_operator: false,
+    });
+    const classifier = new Classifier(provider, SYSTEM_PROMPT, FEW_SHOT);
+
+    const result = await classifier.classify("Guy please review this");
+
+    expect(result.targetedAtOperator).toBe(false);
+  });
+});
+
+// --- Operator profile injection test ---
+
+describe("Operator profile and sender context", () => {
+  const OPERATOR_MAP: OperatorIdentityMap = new Map([
+    ["slack", { userId: "U0ALFEVQ940", userName: "Nir Arazi" }],
+    ["jira", { userId: "nir@insuretax.com", userName: "Nir (CTO)" }],
+  ]);
+
+  it("injects operator profile with all platform identities into system prompt", async () => {
+    const provider = mockProvider({
+      status: "noise",
+      confidence: 0.9,
+      reason: "greeting",
+      workItemIds: [],
+      title: "Hello",
+    });
+    const classifier = new Classifier(
+      provider, SYSTEM_PROMPT, FEW_SHOT, undefined,
+      "CTO / Fleet operator",  // operatorRole
+      OPERATOR_MAP,
+      "Manages a fleet of agents",  // operatorContext
+    );
+
+    await classifier.classify("Hello world");
+
+    const callArgs = (provider.classify as ReturnType<typeof vi.fn>).mock.calls[0];
+    const systemPrompt = callArgs[1] as string;
+    expect(systemPrompt).toContain("Operator Profile");
+    expect(systemPrompt).toContain("slack:U0ALFEVQ940");
+    expect(systemPrompt).toContain("jira:nir@insuretax.com");
+    expect(systemPrompt).toContain("CTO / Fleet operator");
+    expect(systemPrompt).toContain("Manages a fleet of agents");
+  });
+
+  it("prepends sender context to message text sent to provider", async () => {
+    const provider = mockProvider({
+      status: "blocked_on_human",
+      confidence: 0.9,
+      reason: "blocked",
+      workItemIds: [],
+      title: "Blocked",
+    });
+    const classifier = new Classifier(provider, SYSTEM_PROMPT, FEW_SHOT, undefined, undefined, OPERATOR_MAP);
+
+    await classifier.classify("Need help", undefined, undefined, {
+      senderName: "Byte",
+      senderType: "agent",
+      channelName: "#agent-orchestrator",
+    });
+
+    const callArgs = (provider.classify as ReturnType<typeof vi.fn>).mock.calls[0];
+    const messageText = callArgs[0] as string;
+    expect(messageText).toContain("[Sender: Byte (agent)");
+    expect(messageText).toContain("Channel: #agent-orchestrator]");
+  });
+
+  it("does not prepend sender context when not provided", async () => {
+    const provider = mockProvider({
+      status: "noise",
+      confidence: 0.9,
+      reason: "greeting",
+      workItemIds: [],
+      title: "Hello",
+    });
+    const classifier = new Classifier(provider, SYSTEM_PROMPT, FEW_SHOT);
+
+    await classifier.classify("Hello world");
+
+    const callArgs = (provider.classify as ReturnType<typeof vi.fn>).mock.calls[0];
+    const messageText = callArgs[0] as string;
+    expect(messageText).toBe("Hello world");
+  });
 });
 
 // --- OpenAICompatibleProvider response parsing tests ---
@@ -196,7 +505,7 @@ describe("OpenAICompatibleProvider", () => {
 
     const result = await provider.classify("AI-100 is done", "System prompt", []);
 
-    expect(result).toEqual(mockResponse);
+    expect(result).toEqual({ ...mockResponse, action_required_from: null, next_action: null });
     expect(fetchSpy).toHaveBeenCalledTimes(1);
 
     const [url, options] = fetchSpy.mock.calls[0];
@@ -238,7 +547,7 @@ describe("OpenAICompatibleProvider", () => {
 
     const result = await provider.classify("Need approval for IT-200", "System prompt", []);
 
-    expect(result).toEqual(mockResponse);
+    expect(result).toEqual({ ...mockResponse, action_required_from: null, next_action: null });
 
     const [url, options] = fetchSpy.mock.calls[0];
     expect(url).toBe("https://api.anthropic.com/messages");
@@ -374,7 +683,7 @@ describe("OpenAICompatibleProvider", () => {
 
     const result = await provider.classify("test", "sys", []);
 
-    expect(result).toEqual(successResponse);
+    expect(result).toEqual({ ...successResponse, action_required_from: null, next_action: null });
     expect(fetchSpy).toHaveBeenCalledTimes(3);
     expect(provider.backoffState.active).toBe(false);
     expect(provider.backoffState.lastError).toBeNull();
@@ -445,6 +754,9 @@ describe("OpenAICompatibleProvider", () => {
       confidence: 0.95,
       reason: "PR merged",
       title: "PR deployment",
+      targeted_at_operator: undefined,
+      action_required_from: null,
+      next_action: null,
     });
     expect(result.breakdown![1].status).toBe("blocked_on_human");
 
@@ -469,6 +781,95 @@ describe("OpenAICompatibleProvider", () => {
 
     const result = await provider.classify("AI-1 is done", "sys", []);
     expect(result.breakdown).toBeUndefined();
+
+    fetchSpy.mockRestore();
+  });
+
+  it("parses action_required_from and next_action from response", async () => {
+    const mockResponse = {
+      status: "blocked_on_human",
+      confidence: 0.9,
+      reason: "Waiting for Guy to review",
+      workItemIds: ["AI-100"],
+      title: "PR review needed",
+      action_required_from: ["UA2V04ZU2"],
+      next_action: "Review and approve PR #716",
+    };
+
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          choices: [{ message: { content: JSON.stringify(mockResponse) } }],
+        }),
+        { status: 200 },
+      ),
+    );
+
+    const provider = new OpenAICompatibleProvider({
+      name: "test",
+      baseUrl: "http://localhost:11434/v1",
+      model: "llama3",
+    });
+
+    const result = await provider.classify("test", "sys", []);
+    expect(result.action_required_from).toEqual(["UA2V04ZU2"]);
+    expect(result.next_action).toBe("Review and approve PR #716");
+
+    fetchSpy.mockRestore();
+  });
+
+  it("returns null action_required_from and null next_action when not present", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          choices: [{ message: { content: '{"status":"noise","confidence":0.9,"reason":"FYI","workItemIds":[],"title":"Update"}' } }],
+        }),
+        { status: 200 },
+      ),
+    );
+
+    const provider = new OpenAICompatibleProvider({
+      name: "test",
+      baseUrl: "http://localhost:11434/v1",
+      model: "llama3",
+    });
+
+    const result = await provider.classify("test", "sys", []);
+    expect(result.action_required_from).toBeNull();
+    expect(result.next_action).toBeNull();
+
+    fetchSpy.mockRestore();
+  });
+
+  it("filters non-string values from action_required_from", async () => {
+    const mockResponse = {
+      status: "blocked_on_human",
+      confidence: 0.9,
+      reason: "test",
+      workItemIds: [],
+      title: "test",
+      action_required_from: ["UA2V04ZU2", 123, null, "U0ALFEVQ940"],
+      next_action: "Fix the flaky test",
+    };
+
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          choices: [{ message: { content: JSON.stringify(mockResponse) } }],
+        }),
+        { status: 200 },
+      ),
+    );
+
+    const provider = new OpenAICompatibleProvider({
+      name: "test",
+      baseUrl: "http://localhost:11434/v1",
+      model: "llama3",
+    });
+
+    const result = await provider.classify("test", "sys", []);
+    expect(result.action_required_from).toEqual(["UA2V04ZU2", "U0ALFEVQ940"]);
+    expect(result.next_action).toBe("Fix the flaky test");
 
     fetchSpy.mockRestore();
   });

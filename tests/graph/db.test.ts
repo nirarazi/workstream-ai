@@ -39,6 +39,21 @@ describe("Database", () => {
       expect(names).toContain("summaries");
     });
 
+    it("has entry_type column on events table", () => {
+      const cols = db.db.pragma("table_info(events)") as Array<{ name: string }>;
+      expect(cols.some((c) => c.name === "entry_type")).toBe(true);
+    });
+
+    it("adds targeted_at_operator column to events table", () => {
+      const cols = db.db.pragma("table_info(events)") as Array<{ name: string }>;
+      expect(cols.some((c) => c.name === "targeted_at_operator")).toBe(true);
+    });
+
+    it("migrates agents table to include is_bot column", () => {
+      const cols = db.db.pragma("table_info(agents)") as Array<{ name: string }>;
+      expect(cols.some((c) => c.name === "is_bot")).toBe(true);
+    });
+
     it("creates indexes", () => {
       const indexes = db.db
         .prepare("SELECT name FROM sqlite_master WHERE type='index' AND name LIKE 'idx_%'")
@@ -306,6 +321,55 @@ describe("Database", () => {
       expect(items[1].workItem.currentAtcStatus).toBe("needs_decision");
     });
 
+    it("getActionableItems finds events linked via thread work_item_id", () => {
+      // Create a work item
+      graph.upsertWorkItem({
+        id: "WI-THREAD",
+        source: "inferred",
+        title: "Thread-linked item",
+        currentAtcStatus: "blocked_on_human",
+        currentConfidence: 0.9,
+      });
+
+      // Create a thread linked to this work item
+      graph.upsertThread({
+        id: "thread-linked-1",
+        channelId: "C001",
+        channelName: "general",
+        platform: "slack",
+        workItemId: "WI-THREAD",
+        lastActivity: new Date().toISOString(),
+        messageCount: 1,
+      });
+
+      // Create an agent
+      graph.upsertAgent({
+        id: "agent-1",
+        name: "Byte",
+        platform: "slack",
+        platformUserId: "U001",
+      });
+
+      // Insert event linked via thread (event.work_item_id is NULL, but thread.work_item_id = "WI-THREAD")
+      graph.insertEvent({
+        threadId: "thread-linked-1",
+        messageId: "msg-via-thread",
+        workItemId: null,  // NOT directly tagged
+        agentId: "agent-1",
+        status: "blocked_on_human",
+        confidence: 0.9,
+        reason: "Blocked",
+        rawText: "I'm blocked",
+        timestamp: new Date().toISOString(),
+        targetedAtOperator: true,
+      });
+
+      const items = graph.getActionableItems();
+      const found = items.find((i) => i.workItem.id === "WI-THREAD");
+      expect(found).toBeDefined();
+      expect(found!.latestEvent.rawText).toBe("I'm blocked");
+    });
+
     it("excludes snoozed items", () => {
       graph.upsertWorkItem({
         id: "AI-1",
@@ -555,6 +619,97 @@ describe("Database", () => {
       expect(stats.blocked_on_human).toBe(1);
       expect(stats.completed).toBe(1);
       expect(stats.total).toBe(3);
+    });
+  });
+
+  describe("getOpenWorkItemSummaries", () => {
+    it("returns non-completed, non-noise work items with id and title", () => {
+      graph.upsertWorkItem({ id: "AI-100", source: "extracted", title: "Fix login bug", currentAtcStatus: "in_progress" });
+      graph.upsertWorkItem({ id: "AI-101", source: "extracted", title: "Deploy staging", currentAtcStatus: "completed" });
+      graph.upsertWorkItem({ id: "thread:abc.123", source: "inferred", title: "Missing API key", currentAtcStatus: "blocked_on_human" });
+      graph.upsertWorkItem({ id: "AI-102", source: "extracted", title: "Noisy alert", currentAtcStatus: "noise" });
+      graph.upsertWorkItem({ id: "AI-103", source: "extracted", title: "No status yet" });
+
+      const summaries = graph.getOpenWorkItemSummaries();
+
+      // Should include in_progress, blocked_on_human, needs_decision, and null-status items
+      // Should exclude completed and noise
+      expect(summaries).toHaveLength(3);
+      expect(summaries.map(s => s.id)).toContain("AI-100");
+      expect(summaries.map(s => s.id)).toContain("thread:abc.123");
+      expect(summaries.map(s => s.id)).toContain("AI-103");
+      expect(summaries.map(s => s.id)).not.toContain("AI-101");
+      expect(summaries.map(s => s.id)).not.toContain("AI-102");
+
+      // Each summary has id and title
+      const ai100 = summaries.find(s => s.id === "AI-100")!;
+      expect(ai100.title).toBe("Fix login bug");
+    });
+
+    it("limits results to 100 items", () => {
+      for (let i = 0; i < 120; i++) {
+        graph.upsertWorkItem({ id: `WI-${i}`, source: "extracted", title: `Item ${i}`, currentAtcStatus: "in_progress" });
+      }
+      const summaries = graph.getOpenWorkItemSummaries();
+      expect(summaries.length).toBeLessThanOrEqual(100);
+    });
+  });
+
+  describe("Event actionRequiredFrom and nextAction persistence", () => {
+    let db: Database;
+    let graph: ContextGraph;
+
+    beforeEach(() => {
+      db = new Database(":memory:");
+      graph = new ContextGraph(db);
+    });
+
+    afterEach(() => {
+      db.close();
+    });
+
+    it("persists and retrieves actionRequiredFrom and nextAction", () => {
+      graph.upsertWorkItem({ id: "AI-1", source: "jira", title: "Test" });
+      graph.upsertThread({ id: "t1", channelId: "C1", platform: "slack", workItemId: "AI-1" });
+      graph.upsertAgent({ id: "a1", name: "Byte", platform: "slack", platformUserId: "U1" });
+
+      const event = graph.insertEvent({
+        threadId: "t1",
+        messageId: "m1",
+        workItemId: "AI-1",
+        agentId: "a1",
+        status: "blocked_on_human",
+        confidence: 0.9,
+        reason: "Needs approval",
+        rawText: "Please approve PR #716",
+        timestamp: new Date().toISOString(),
+        targetedAtOperator: true,
+        actionRequiredFrom: ["U_GUY123", "U_OPERATOR"],
+        nextAction: "Review and approve PR #716",
+      });
+
+      expect(event.actionRequiredFrom).toEqual(["U_GUY123", "U_OPERATOR"]);
+      expect(event.nextAction).toBe("Review and approve PR #716");
+    });
+
+    it("defaults actionRequiredFrom and nextAction to null when not provided", () => {
+      graph.upsertWorkItem({ id: "AI-2", source: "jira", title: "Test2" });
+      graph.upsertThread({ id: "t2", channelId: "C1", platform: "slack", workItemId: "AI-2" });
+      graph.upsertAgent({ id: "a1", name: "Byte", platform: "slack", platformUserId: "U1" });
+
+      const event = graph.insertEvent({
+        threadId: "t2",
+        messageId: "m2",
+        workItemId: "AI-2",
+        agentId: "a1",
+        status: "in_progress",
+        confidence: 0.8,
+        reason: "Working on it",
+        timestamp: new Date().toISOString(),
+      });
+
+      expect(event.actionRequiredFrom).toBeNull();
+      expect(event.nextAction).toBeNull();
     });
   });
 });

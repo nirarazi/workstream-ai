@@ -23,6 +23,15 @@ export interface OpenAICompatibleConfig {
   apiKey?: string;
 }
 
+/** Error with an optional Retry-After hint (seconds) from 429 responses */
+class ApiError extends Error {
+  retryAfterSeconds?: number;
+  constructor(message: string, retryAfterSeconds?: number) {
+    super(message);
+    this.retryAfterSeconds = retryAfterSeconds;
+  }
+}
+
 function isRetryable(error: unknown): boolean {
   if (error instanceof Error) {
     if (error.name === "TimeoutError" || error.message.includes("timeout")) return true;
@@ -30,6 +39,13 @@ function isRetryable(error: unknown): boolean {
     if (error.message.includes("502") || error.message.includes("503") || error.message.includes("504")) return true;
   }
   return false;
+}
+
+function parseRetryAfter(response: Response): number | undefined {
+  const header = response.headers.get("retry-after");
+  if (!header) return undefined;
+  const seconds = Number(header);
+  return Number.isFinite(seconds) && seconds > 0 ? seconds : undefined;
 }
 
 function getBackoffMs(attempt: number): number {
@@ -84,12 +100,17 @@ export class OpenAICompatibleProvider implements ModelProvider {
         }
         this._backoff = { active: false, retryCount: 0, nextRetryAt: null, lastError: null };
 
-        return this.parseResponse(rawText);
+        const result = this.parseResponse(rawText);
+        log.debug("Classification result", { input: message.slice(0, 120), result });
+        return result;
       } catch (error) {
         lastError = error;
 
         if (attempt < MAX_RETRIES && isRetryable(error)) {
-          const delayMs = getBackoffMs(attempt);
+          const serverDelay = error instanceof ApiError && error.retryAfterSeconds
+            ? error.retryAfterSeconds * 1000
+            : undefined;
+          const delayMs = serverDelay ?? getBackoffMs(attempt);
           const nextRetryAt = new Date(Date.now() + delayMs).toISOString();
           const errorMsg = error instanceof Error ? error.message.slice(0, 200) : String(error);
 
@@ -160,7 +181,8 @@ export class OpenAICompatibleProvider implements ModelProvider {
 
     if (!response.ok) {
       const text = await response.text().catch(() => "");
-      throw new Error(`Anthropic API error ${response.status}: ${text}`);
+      const retryAfter = parseRetryAfter(response);
+      throw new ApiError(`Anthropic API error ${response.status}: ${text}`, retryAfter);
     }
 
     const json = (await response.json()) as {
@@ -182,36 +204,55 @@ export class OpenAICompatibleProvider implements ModelProvider {
       headers["Authorization"] = `Bearer ${this.apiKey}`;
     }
 
-    const messages = [
-      { role: "system" as const, content: systemPrompt },
-      ...fewShotExamples.map((ex) => ({ role: ex.role, content: ex.content })),
-      { role: "user" as const, content: message },
-    ];
-
-    const body = {
-      model: this.model,
-      messages,
-      temperature: 0,
+    const makeMessages = (useSystemRole: boolean) => {
+      if (useSystemRole) {
+        return [
+          { role: "system" as const, content: systemPrompt },
+          ...fewShotExamples.map((ex) => ({ role: ex.role, content: ex.content })),
+          { role: "user" as const, content: message },
+        ];
+      }
+      // Fold system prompt into the first user message for models that don't support system role
+      return [
+        ...fewShotExamples.map((ex) => ({ role: ex.role, content: ex.content })),
+        { role: "user" as const, content: `${systemPrompt}\n\n---\n\n${message}` },
+      ];
     };
 
-    log.debug("Calling OpenAI-compatible API", { url, model: this.model });
+    const doCall = async (useSystemRole: boolean): Promise<string> => {
+      const body = {
+        model: this.model,
+        messages: makeMessages(useSystemRole),
+        temperature: 0,
+      };
 
-    const response = await fetch(url, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(30_000),
-    });
+      log.debug("Calling OpenAI-compatible API", { url, model: this.model, useSystemRole });
 
-    if (!response.ok) {
-      const text = await response.text().catch(() => "");
-      throw new Error(`OpenAI API error ${response.status}: ${text}`);
-    }
+      const response = await fetch(url, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(30_000),
+      });
 
-    const json = (await response.json()) as {
-      choices: Array<{ message: { content: string } }>;
+      if (!response.ok) {
+        const text = await response.text().catch(() => "");
+        // Some models don't support system/developer role — retry with prompt folded into user message
+        if (response.status === 400 && text.includes("not enabled") && useSystemRole) {
+          log.warn("Model does not support system role, retrying with prompt in user message");
+          return doCall(false);
+        }
+        const retryAfter = parseRetryAfter(response);
+        throw new ApiError(`OpenAI API error ${response.status}: ${text}`, retryAfter);
+      }
+
+      const json = (await response.json()) as {
+        choices: Array<{ message: { content: string } }>;
+      };
+      return json.choices[0].message.content;
     };
-    return json.choices[0].message.content;
+
+    return doCall(true);
   }
 
   private parseResponse(rawText: string): ClassificationResult {
@@ -232,6 +273,16 @@ export class OpenAICompatibleProvider implements ModelProvider {
 
     const title = typeof parsed.title === "string" ? parsed.title : "";
 
+    const targeted_at_operator = typeof parsed.targeted_at_operator === "boolean"
+      ? parsed.targeted_at_operator
+      : undefined;
+
+    const action_required_from = Array.isArray(parsed.action_required_from)
+      ? (parsed.action_required_from.filter((id) => typeof id === "string") as string[])
+      : null;
+
+    const next_action = typeof parsed.next_action === "string" ? parsed.next_action : null;
+
     // Parse per-work-item breakdown for summary messages
     let breakdown: ClassificationResult["breakdown"];
     if (Array.isArray(parsed.breakdown) && parsed.breakdown.length > 0) {
@@ -243,9 +294,16 @@ export class OpenAICompatibleProvider implements ModelProvider {
           confidence: typeof b.confidence === "number" ? b.confidence : confidence,
           reason: typeof b.reason === "string" ? b.reason : "",
           title: typeof b.title === "string" ? b.title : "",
+          targeted_at_operator: typeof b.targeted_at_operator === "boolean"
+            ? b.targeted_at_operator
+            : undefined,
+          action_required_from: Array.isArray(b.action_required_from)
+            ? (b.action_required_from as unknown[]).filter((id) => typeof id === "string") as string[]
+            : null,
+          next_action: typeof b.next_action === "string" ? b.next_action : null,
         }));
     }
 
-    return { status, confidence, reason, workItemIds, title, breakdown };
+    return { status, confidence, reason, workItemIds, title, targeted_at_operator, action_required_from, next_action, breakdown };
   }
 }

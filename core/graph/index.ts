@@ -6,6 +6,7 @@ import type {
   ActionableItem,
   Agent,
   Enrichment,
+  EntryType,
   Event,
   PollCursor,
   StatusCategory,
@@ -59,6 +60,15 @@ function toThread(row: ThreadRow): Thread {
 }
 
 function toEvent(row: EventRow): Event {
+  let actionRequiredFrom: string[] | null = null;
+  if (row.action_required_from) {
+    try {
+      actionRequiredFrom = JSON.parse(row.action_required_from);
+    } catch {
+      actionRequiredFrom = null;
+    }
+  }
+
   return {
     id: row.id,
     threadId: row.thread_id,
@@ -71,6 +81,10 @@ function toEvent(row: EventRow): Event {
     rawText: row.raw_text,
     timestamp: row.timestamp,
     createdAt: row.created_at,
+    entryType: (row.entry_type as EntryType) ?? "progress",
+    targetedAtOperator: Boolean(row.targeted_at_operator ?? 1),
+    actionRequiredFrom,
+    nextAction: row.next_action ?? null,
   };
 }
 
@@ -82,6 +96,7 @@ function toAgent(row: AgentRow): Agent {
     platformUserId: row.platform_user_id,
     role: row.role,
     avatarUrl: row.avatar_url,
+    isBot: row.is_bot != null ? row.is_bot === 1 : null,
     firstSeen: row.first_seen,
     lastSeen: row.last_seen,
   };
@@ -130,22 +145,25 @@ export class ContextGraph {
     platformUserId: string;
     role?: string | null;
     avatarUrl?: string | null;
+    isBot?: boolean | null;
   }): Agent {
     const now = new Date().toISOString();
     const id = agent.id ?? randomUUID();
 
     const stmt = this.db.db.prepare(`
-      INSERT INTO agents (id, name, platform, platform_user_id, role, avatar_url, first_seen, last_seen)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO agents (id, name, platform, platform_user_id, role, avatar_url, is_bot, first_seen, last_seen)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         name = excluded.name,
         platform = excluded.platform,
         platform_user_id = excluded.platform_user_id,
         role = COALESCE(excluded.role, agents.role),
         avatar_url = COALESCE(excluded.avatar_url, agents.avatar_url),
+        is_bot = COALESCE(excluded.is_bot, agents.is_bot),
         last_seen = excluded.last_seen
     `);
-    stmt.run(id, agent.name, agent.platform, agent.platformUserId, agent.role ?? null, agent.avatarUrl ?? null, now, now);
+    const isBotValue = agent.isBot != null ? (agent.isBot ? 1 : 0) : null;
+    stmt.run(id, agent.name, agent.platform, agent.platformUserId, agent.role ?? null, agent.avatarUrl ?? null, isBotValue, now, now);
     log.debug("Upserted agent", id);
 
     return this.getAgentById(id)!;
@@ -316,17 +334,21 @@ export class ContextGraph {
     workItemId?: string | null;
     agentId?: string | null;
     status: StatusCategory;
+    entryType?: EntryType;
     confidence: number;
     reason?: string;
     rawText?: string;
     timestamp: string;
+    targetedAtOperator?: boolean;
+    actionRequiredFrom?: string[] | null;
+    nextAction?: string | null;
   }): Event {
     const id = randomUUID();
     const now = new Date().toISOString();
 
     const stmt = this.db.db.prepare(`
-      INSERT OR IGNORE INTO events (id, thread_id, message_id, work_item_id, agent_id, status, confidence, reason, raw_text, timestamp, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT OR IGNORE INTO events (id, thread_id, message_id, work_item_id, agent_id, status, confidence, reason, raw_text, timestamp, created_at, entry_type, targeted_at_operator, action_required_from, next_action)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     const result = stmt.run(
       id,
@@ -340,6 +362,10 @@ export class ContextGraph {
       event.rawText ?? "",
       event.timestamp,
       now,
+      event.entryType ?? "progress",
+      (event.targetedAtOperator ?? true) ? 1 : 0,
+      event.actionRequiredFrom ? JSON.stringify(event.actionRequiredFrom) : null,
+      event.nextAction ?? null,
     );
 
     if (result.changes === 0) {
@@ -388,13 +414,10 @@ export class ContextGraph {
     // under a different work item ID due to LLM/regex ID mismatches).
     const rows = this.db.db
       .prepare(`
-        SELECT DISTINCT e.* FROM events e
+        SELECT e.* FROM events e
         WHERE e.work_item_id = ?
-        UNION
-        SELECT DISTINCT e.* FROM events e
-        INNER JOIN threads t ON e.thread_id = t.id
-        WHERE t.work_item_id = ?
-        ORDER BY timestamp ASC
+           OR e.thread_id IN (SELECT id FROM threads WHERE work_item_id = ?)
+        ORDER BY e.timestamp ASC, e.rowid ASC
       `)
       .all(workItemId, workItemId) as EventRow[];
     return rows.map(toEvent);
@@ -484,6 +507,21 @@ export class ContextGraph {
     `).run(summary.workItemId, summary.summaryText, now, summary.latestEventId);
   }
 
+  // --- Open Work Item Summaries (for classifier dedup) ---
+
+  getOpenWorkItemSummaries(): Array<{ id: string; title: string }> {
+    const rows = this.db.db
+      .prepare(`
+        SELECT id, title FROM work_items
+        WHERE current_atc_status NOT IN ('completed', 'noise')
+           OR current_atc_status IS NULL
+        ORDER BY updated_at DESC
+        LIMIT 100
+      `)
+      .all() as Array<{ id: string; title: string }>;
+    return rows;
+  }
+
   // --- Sidekick query methods ---
 
   searchWorkItems(query: string): WorkItem[] {
@@ -539,6 +577,32 @@ export class ContextGraph {
     return stats;
   }
 
+  // --- Stream helpers ---
+
+  getAgentsForWorkItem(workItemId: string): Agent[] {
+    const rows = this.db.db
+      .prepare(`
+        SELECT DISTINCT a.* FROM agents a
+        INNER JOIN events e ON e.agent_id = a.id
+        WHERE e.work_item_id = ?
+        ORDER BY a.last_seen DESC
+      `)
+      .all(workItemId) as AgentRow[];
+    return rows.map(toAgent);
+  }
+
+  getChannelsForWorkItem(workItemId: string): Array<{ id: string; name: string }> {
+    const rows = this.db.db
+      .prepare(`
+        SELECT DISTINCT t.channel_id AS id, t.channel_name AS name
+        FROM threads t
+        WHERE t.work_item_id = ?
+        ORDER BY t.last_activity DESC
+      `)
+      .all(workItemId) as Array<{ id: string; name: string }>;
+    return rows;
+  }
+
   // --- Actionable Items ---
 
   getFleetItems(): ActionableItem[] {
@@ -551,9 +615,13 @@ export class ContextGraph {
         e.work_item_id AS e_work_item_id, e.agent_id AS e_agent_id,
         e.status AS e_status, e.confidence AS e_confidence, e.reason AS e_reason,
         e.raw_text AS e_raw_text, e.timestamp AS e_timestamp, e.created_at AS e_created_at,
+        e.entry_type AS e_entry_type,
+        e.targeted_at_operator AS e_targeted_at_operator,
+        e.action_required_from AS e_action_required_from,
+        e.next_action AS e_next_action,
         a.id AS a_id, a.name AS a_name, a.platform AS a_platform,
         a.platform_user_id AS a_platform_user_id, a.role AS a_role,
-        a.avatar_url AS a_avatar_url,
+        a.avatar_url AS a_avatar_url, a.is_bot AS a_is_bot,
         a.first_seen AS a_first_seen, a.last_seen AS a_last_seen,
         t.id AS t_id, t.channel_id AS t_channel_id, t.channel_name AS t_channel_name,
         t.platform_meta AS t_platform_meta,
@@ -597,19 +665,24 @@ export class ContextGraph {
         e.work_item_id AS e_work_item_id, e.agent_id AS e_agent_id,
         e.status AS e_status, e.confidence AS e_confidence, e.reason AS e_reason,
         e.raw_text AS e_raw_text, e.timestamp AS e_timestamp, e.created_at AS e_created_at,
+        e.entry_type AS e_entry_type,
+        e.targeted_at_operator AS e_targeted_at_operator,
+        e.action_required_from AS e_action_required_from,
+        e.next_action AS e_next_action,
         a.id AS a_id, a.name AS a_name, a.platform AS a_platform,
         a.platform_user_id AS a_platform_user_id, a.role AS a_role,
-        a.avatar_url AS a_avatar_url,
+        a.avatar_url AS a_avatar_url, a.is_bot AS a_is_bot,
         a.first_seen AS a_first_seen, a.last_seen AS a_last_seen,
         t.id AS t_id, t.channel_id AS t_channel_id, t.channel_name AS t_channel_name,
         t.platform_meta AS t_platform_meta,
         t.platform AS t_platform, t.work_item_id AS t_work_item_id,
         t.last_activity AS t_last_activity, t.message_count AS t_message_count
       FROM work_items wi
-      INNER JOIN events e ON e.work_item_id = wi.id
-        AND e.id = (
+      INNER JOIN events e ON e.id = (
           SELECT e2.id FROM events e2
+          LEFT JOIN threads t2 ON e2.thread_id = t2.id
           WHERE e2.work_item_id = wi.id
+             OR t2.work_item_id = wi.id
           ORDER BY e2.timestamp DESC
           LIMIT 1
         )
@@ -617,6 +690,7 @@ export class ContextGraph {
       LEFT JOIN threads t ON e.thread_id = t.id
       WHERE wi.current_atc_status IN ('blocked_on_human', 'needs_decision')
         AND (wi.snoozed_until IS NULL OR wi.snoozed_until <= datetime('now'))
+        AND e.targeted_at_operator = 1
       ORDER BY
         CASE wi.current_atc_status
           WHEN 'blocked_on_human' THEN 0
@@ -640,9 +714,13 @@ export class ContextGraph {
         e.work_item_id AS e_work_item_id, e.agent_id AS e_agent_id,
         e.status AS e_status, e.confidence AS e_confidence, e.reason AS e_reason,
         e.raw_text AS e_raw_text, e.timestamp AS e_timestamp, e.created_at AS e_created_at,
+        e.entry_type AS e_entry_type,
+        e.targeted_at_operator AS e_targeted_at_operator,
+        e.action_required_from AS e_action_required_from,
+        e.next_action AS e_next_action,
         a.id AS a_id, a.name AS a_name, a.platform AS a_platform,
         a.platform_user_id AS a_platform_user_id, a.role AS a_role,
-        a.avatar_url AS a_avatar_url,
+        a.avatar_url AS a_avatar_url, a.is_bot AS a_is_bot,
         a.first_seen AS a_first_seen, a.last_seen AS a_last_seen,
         t.id AS t_id, t.channel_id AS t_channel_id, t.channel_name AS t_channel_name,
         t.platform_meta AS t_platform_meta,
@@ -686,6 +764,15 @@ function mapActionableRow(row: Record<string, unknown>): ActionableItem {
     updatedAt: row.updated_at as string,
   };
 
+  let eventActionRequiredFrom: string[] | null = null;
+  if (row.e_action_required_from) {
+    try {
+      eventActionRequiredFrom = JSON.parse(row.e_action_required_from as string);
+    } catch {
+      eventActionRequiredFrom = null;
+    }
+  }
+
   const latestEvent: Event = {
     id: row.e_id as string,
     threadId: row.e_thread_id as string,
@@ -698,8 +785,13 @@ function mapActionableRow(row: Record<string, unknown>): ActionableItem {
     rawText: row.e_raw_text as string,
     timestamp: row.e_timestamp as string,
     createdAt: row.e_created_at as string,
+    entryType: (row.e_entry_type as EntryType) ?? "progress",
+    targetedAtOperator: Boolean(row.e_targeted_at_operator ?? 1),
+    actionRequiredFrom: eventActionRequiredFrom,
+    nextAction: (row.e_next_action as string | null) ?? null,
   };
 
+  const aIsBot = row.a_is_bot as number | null | undefined;
   const agent: Agent | null = row.a_id
     ? {
         id: row.a_id as string,
@@ -708,6 +800,7 @@ function mapActionableRow(row: Record<string, unknown>): ActionableItem {
         platformUserId: row.a_platform_user_id as string,
         role: row.a_role as string | null,
         avatarUrl: (row.a_avatar_url as string | null) ?? null,
+        isBot: aIsBot != null ? aIsBot === 1 : null,
         firstSeen: row.a_first_seen as string,
         lastSeen: row.a_last_seen as string,
       }

@@ -142,7 +142,7 @@ export default function ContextPane({
     setActing(true);
     try {
       const thread = context.threads[0];
-      await postReply(thread.id, thread.channelId, serializedText);
+      await postReply(thread.id, thread.channelId, serializedText, { workItemId });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Reply failed");
     } finally {
@@ -346,16 +346,16 @@ export default function ContextPane({
         <div className="sticky top-0 z-10 bg-gray-950 border-b border-gray-800 px-6 py-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <span className="font-mono text-sm font-semibold text-cyan-400">
-                {workItem.id}
-              </span>
+              {!workItem.id.startsWith("thread:") && (
+                <span className="font-mono text-sm font-semibold text-cyan-400">
+                  {workItem.id}
+                </span>
+              )}
               <StatusBadge status={workItem.currentAtcStatus ?? "noise"} />
             </div>
             <button onClick={onClose} className="text-gray-500 hover:text-gray-300 cursor-pointer text-lg">&#x2715;</button>
           </div>
-          {workItem.title && (
-            <p className="mt-1 text-sm text-gray-300">{workItem.title}</p>
-          )}
+          <p className="mt-1 text-sm text-gray-300">{workItem.title || "Untitled conversation"}</p>
           {workItem.externalStatus && (
             <p className="mt-0.5 text-xs text-gray-500">
               {workItem.externalStatus}

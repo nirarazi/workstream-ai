@@ -21,6 +21,8 @@ export interface TaskAdapter {
   prepareCredentials?(fields: Record<string, string>): Record<string, string>;
 
   connect(credentials: Credentials): Promise<void>;
+  /** Return the authenticated user's identity (the operator). Null if not connected or not supported. */
+  getAuthenticatedUser?(): { userId: string; userName: string } | null;
   getWorkItem(id: string): Promise<WorkItemDetail | null>;
   updateWorkItem(id: string, update: Partial<WorkItemDetail>): Promise<void>;
   searchWorkItems(query: string): Promise<WorkItemDetail[]>;

@@ -42,6 +42,7 @@ const PRESETS: Record<
       "anthropic/claude-haiku-4",
       "google/gemini-2.5-pro-preview",
       "google/gemini-2.5-flash-preview",
+      "google/gemma-4-31b-it:free",
       "openai/gpt-4o",
       "meta-llama/llama-4-maverick",
       "deepseek/deepseek-r1",
@@ -87,6 +88,8 @@ export default function Setup({ onComplete }: SetupProps): JSX.Element {
   const [llmModel, setLlmModel] = useState(PRESETS.anthropic.models[0]);
   const [preset, setPreset] = useState<ProviderPreset>("anthropic");
   const [llmEnv, setLlmEnv] = useState<Record<string, boolean>>({});
+
+  const [customModel, setCustomModel] = useState(false);
 
   // LLM Budget
   const [dailyBudget, setDailyBudget] = useState<string>("");
@@ -148,6 +151,13 @@ export default function Setup({ onComplete }: SetupProps): JSX.Element {
           if (prefill.llm.model) {
             setLlmModel(prefill.llm.model);
             envDetected.model = true;
+            // If prefilled model isn't in the current preset's list, show custom input
+            const matchedPreset = Object.values(PRESETS).find((p) =>
+              prefill.llm!.baseUrl && p.baseUrl && prefill.llm!.baseUrl.startsWith(p.baseUrl.replace("/v1", ""))
+            );
+            if (matchedPreset && !matchedPreset.models.includes(prefill.llm.model)) {
+              setCustomModel(true);
+            }
           }
           if (prefill.llm.dailyBudget != null) setDailyBudget(String(prefill.llm.dailyBudget));
           if (prefill.llm.inputCostPerMillion != null) setInputCostPerMillion(String(prefill.llm.inputCostPerMillion));
@@ -181,6 +191,7 @@ export default function Setup({ onComplete }: SetupProps): JSX.Element {
     const p = PRESETS[id];
     setLlmBaseUrl(p.baseUrl || llmBaseUrl);
     setLlmModel(p.models[0] ?? llmModel);
+    setCustomModel(false);
     if (!p.needsKey) setLlmApiKey("(not required)");
     setLlmEnv({});
   }
@@ -417,11 +428,19 @@ export default function Setup({ onComplete }: SetupProps): JSX.Element {
                 </span>
               )}
             </label>
-            {currentPreset.models.length > 0 ? (
+            {currentPreset.models.length > 0 && !customModel ? (
               <select
                 id="llmModel"
-                value={llmModel}
-                onChange={(e) => { setLlmModel(e.target.value); setLlmEnv((p) => ({ ...p, model: false })); }}
+                value={currentPreset.models.includes(llmModel) ? llmModel : "custom"}
+                onChange={(e) => {
+                  if (e.target.value === "custom") {
+                    setCustomModel(true);
+                    setLlmModel("");
+                  } else {
+                    setLlmModel(e.target.value);
+                  }
+                  setLlmEnv((p) => ({ ...p, model: false }));
+                }}
                 className={selectClass}
               >
                 {currentPreset.models.map((m) => (
@@ -430,24 +449,26 @@ export default function Setup({ onComplete }: SetupProps): JSX.Element {
                 <option value="custom">Custom…</option>
               </select>
             ) : (
-              <input
-                id="llmModel"
-                type="text"
-                value={llmModel}
-                onChange={(e) => { setLlmModel(e.target.value); setLlmEnv((p) => ({ ...p, model: false })); }}
-                placeholder="model name"
-                className={inputClass}
-              />
-            )}
-            {currentPreset.models.length > 0 && llmModel === "custom" && (
-              <input
-                type="text"
-                value=""
-                onChange={(e) => setLlmModel(e.target.value)}
-                placeholder="Enter model name"
-                className={`${inputClass} mt-1.5`}
-                autoFocus
-              />
+              <div className="flex gap-1.5">
+                <input
+                  id="llmModel"
+                  type="text"
+                  value={llmModel}
+                  onChange={(e) => { setLlmModel(e.target.value); setLlmEnv((p) => ({ ...p, model: false })); }}
+                  placeholder="model name (e.g. google/gemma-4-31b-it:free)"
+                  className={`${inputClass} flex-1`}
+                  autoFocus={customModel}
+                />
+                {customModel && currentPreset.models.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => { setCustomModel(false); setLlmModel(currentPreset.models[0]); }}
+                    className="rounded border border-gray-700 px-2 text-xs text-gray-500 hover:text-gray-300 hover:border-gray-600"
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
             )}
           </div>
 

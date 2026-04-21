@@ -6,7 +6,7 @@ import { createLogger } from "./logger.js";
 import { loadConfig, findProjectRoot, resetConfig, type Config } from "./config.js";
 import { Database } from "./graph/db.js";
 import { ContextGraph } from "./graph/index.js";
-import { Classifier, createProvider, loadPrompt, buildFewShotMessages } from "./classifier/index.js";
+import { Classifier, createProvider, loadPrompt, buildFewShotMessages, buildOperatorContext } from "./classifier/index.js";
 import { UsageTracker } from "./usage/tracker.js";
 import { DefaultExtractor } from "./graph/extractors/default.js";
 import { WorkItemLinker } from "./graph/linker.js";
@@ -18,6 +18,8 @@ import { createRateLimiter, type RateLimiter } from "./rate-limiter.js";
 import { Summarizer } from "./summarizer/index.js";
 import { detectAnomalies, type FleetItemInput } from "./graph/anomalies.js";
 import { Sidekick, type SidekickMessage } from "./sidekick/index.js";
+import { buildUnifiedStatus, buildTimeline } from "./stream.js";
+import type { OperatorIdentityMap } from "./types.js";
 
 const log = createLogger("server");
 
@@ -37,6 +39,7 @@ export interface EngineState {
   startedAt: Date;
   lastPoll: Date | null;
   processed: number;
+  operatorIdentities: OperatorIdentityMap;
 }
 
 // --- App factory (testable without starting the server) ---
@@ -156,6 +159,69 @@ export function createApp(state: EngineState): Hono {
       enrichments,
       quickReplies,
       summary,
+    });
+  });
+
+  // --- GET /api/work-item/:id/stream ---
+  app.get("/api/work-item/:id/stream", async (c) => {
+    const id = c.req.param("id");
+    const workItem = state.graph.getWorkItemById(id);
+    if (!workItem) {
+      return c.json({ error: "Work item not found" }, 404);
+    }
+
+    const threads = state.graph.getThreadsForWorkItem(id);
+    const events = state.graph.getEventsForWorkItem(id);
+    const agents = state.graph.getAgentsForWorkItem(id);
+    const channels = state.graph.getChannelsForWorkItem(id);
+    const enrichments = state.graph.getEnrichmentsForWorkItem(id);
+
+    const agentMap = new Map<string, string>();
+    for (const a of agents) {
+      agentMap.set(a.id, a.name);
+    }
+
+    const threadChannelMap = new Map<string, string>();
+    for (const t of threads) {
+      threadChannelMap.set(t.id, t.channelName || t.channelId);
+    }
+
+    const latestBlockEvent = events
+      .filter((e) => e.status === "blocked_on_human" || e.status === "needs_decision")
+      .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())[0] ?? null;
+
+    const unifiedStatus = buildUnifiedStatus(workItem, latestBlockEvent, state.operatorIdentities, agentMap);
+    const timeline = buildTimeline(events, agentMap, threadChannelMap);
+
+    let statusSummary: string | null = null;
+    const cached = state.graph.getSummary(id);
+    const latestEvent = events.length > 0 ? events[events.length - 1] : null;
+    if (cached && latestEvent && cached.latestEventId === latestEvent.id) {
+      statusSummary = cached.summaryText;
+    }
+
+    // Latest thread for the reply bar (most recently active)
+    const latestThread = threads.length > 0
+      ? threads.reduce((a, b) =>
+          new Date(a.lastActivity).getTime() >= new Date(b.lastActivity).getTime() ? a : b
+        )
+      : null;
+
+    const latestEventForTarget = events.length > 0 ? events[events.length - 1] : null;
+
+    return c.json({
+      workItem,
+      unifiedStatus,
+      statusSummary,
+      agents: agents.map((a) => ({ id: a.id, name: a.name, avatarUrl: a.avatarUrl })),
+      channels: channels.map((ch) => ({ id: ch.id, name: ch.name })),
+      threadCount: threads.length,
+      enrichment: enrichments[0] ?? null,
+      timeline,
+      latestThreadId: latestThread?.id ?? null,
+      latestChannelId: latestThread?.channelId ?? null,
+      targetedAtOperator: latestEventForTarget?.targetedAtOperator ?? true,
+      nextAction: latestBlockEvent?.nextAction ?? null,
     });
   });
 
@@ -282,6 +348,24 @@ export function createApp(state: EngineState): Hono {
       // Case 1: Reply to existing thread (original behavior)
       if (body.threadId && body.channelId) {
         await state.messagingAdapter.replyToThread(body.threadId, body.channelId, body.message);
+        if (body.workItemId) {
+          const threads = state.graph.getThreadsForWorkItem(body.workItemId);
+          const thread = threads.find((t) => t.id === body.threadId);
+          if (thread) {
+            state.graph.insertEvent({
+              threadId: body.threadId,
+              messageId: `operator-reply-${Date.now()}`,
+              workItemId: body.workItemId,
+              agentId: null,
+              status: "in_progress",
+              confidence: 1.0,
+              reason: "Operator reply",
+              rawText: body.message,
+              timestamp: new Date().toISOString(),
+              entryType: "decision",
+            });
+          }
+        }
         return c.json({ ok: true });
       }
 
@@ -612,12 +696,37 @@ export function createApp(state: EngineState): Hono {
         }
       }
 
+      // Record the operator's action as an event in the timeline
+      const threads = state.graph.getThreadsForWorkItem(body.workItemId);
+      const actionThread = threads[0];
+      const actionStatus = body.action === "approve" || body.action === "close" ? "completed" : "in_progress";
+      const actionLabels: Record<string, string> = {
+        approve: "Operator approved",
+        redirect: "Operator unblocked",
+        close: "Operator dismissed",
+        snooze: "Operator snoozed",
+      };
+      state.graph.insertEvent({
+        threadId: actionThread?.id ?? null,
+        messageId: `operator-action-${Date.now()}`,
+        workItemId: body.workItemId,
+        agentId: null,
+        status: actionStatus,
+        confidence: 1.0,
+        reason: actionLabels[body.action] ?? `Operator action: ${body.action}`,
+        rawText: body.message ?? null,
+        timestamp: new Date().toISOString(),
+        entryType: "decision",
+        targetedAtOperator: false,
+      });
+
       // If there's a message and a messaging adapter, post it to the related thread
       if (body.message && state.messagingAdapter) {
-        const threads = state.graph.getThreadsForWorkItem(body.workItemId);
-        if (threads.length > 0) {
-          const thread = threads[0];
-          await state.messagingAdapter.replyToThread(thread.id, thread.channelId, body.message);
+        if (actionThread) {
+          await state.messagingAdapter.replyToThread(actionThread.id, actionThread.channelId, body.message);
+        } else {
+          log.warn("No threads found for work item — message not sent", body.workItemId);
+          return c.json({ ok: false, error: "No thread found to post message to" }, 404);
         }
       }
 
@@ -674,10 +783,17 @@ export function createApp(state: EngineState): Hono {
       const { resolve } = await import("node:path");
       const { stringify: toYaml } = await import("yaml");
 
+      const { readFileSync, existsSync } = await import("node:fs");
+      const { parse: parseYaml } = await import("yaml");
+
       const configDir = resolve(projectRoot, "config");
       mkdirSync(configDir, { recursive: true });
 
-      const localConfig: Record<string, unknown> = {};
+      // Start from existing local.yaml so we don't lose fields the UI doesn't manage
+      const localPath = resolve(configDir, "local.yaml");
+      const localConfig: Record<string, unknown> = existsSync(localPath)
+        ? (parseYaml(readFileSync(localPath, "utf-8")) as Record<string, unknown>) ?? {}
+        : {};
       const envLines: string[] = [];
 
       // --- LLM ---
@@ -771,9 +887,9 @@ export function createApp(state: EngineState): Hono {
 
       // Write config/local.yaml
       writeFileSync(resolve(configDir, "local.yaml"), toYaml(localConfig), "utf-8");
-      log.info("Wrote config/local.yaml");
+      log.info("Wrote config/local.yaml", { model: (localConfig as any)?.classifier?.provider?.model, projectRoot });
 
-      // Write .env
+      // Write .env (secrets only — not watched by Vite, see vite.config.ts envDir)
       if (envLines.length > 0) {
         writeFileSync(resolve(projectRoot, ".env"), envLines.join("\n") + "\n", "utf-8");
         log.info("Wrote .env");
@@ -790,6 +906,7 @@ export function createApp(state: EngineState): Hono {
       // Reload config
       resetConfig();
       state.config = loadConfig(projectRoot);
+      log.info("Config reloaded", { model: state.config.classifier.provider.model, baseUrl: state.config.classifier.provider.baseUrl });
 
       if (state.usageTracker) {
         state.usageTracker.updateConfig(state.config.llmBudget);
@@ -836,6 +953,10 @@ export function createApp(state: EngineState): Hono {
           : body.messaging.fields;
         await adapter.connect(creds as Record<string, string> & { token: string });
         state.messagingAdapter = adapter;
+        const msgIdentity = adapter.getAuthenticatedUser?.();
+        if (msgIdentity) {
+          state.operatorIdentities.set(adapter.name, msgIdentity);
+        }
         log.info("Messaging adapter reconnected");
       }
 
@@ -850,7 +971,22 @@ export function createApp(state: EngineState): Hono {
           : body.task.fields;
         await adapter.connect(creds as Record<string, string> & { token: string });
         state.taskAdapter = adapter;
+        const taskIdentity = adapter.getAuthenticatedUser?.();
+        if (taskIdentity) {
+          state.operatorIdentities.set(adapter.name, taskIdentity);
+        }
         log.info("Task adapter reconnected");
+      }
+
+      // Refresh operator identities
+      state.operatorIdentities.clear();
+      const msgId = state.messagingAdapter?.getAuthenticatedUser?.();
+      if (msgId && state.messagingAdapter) {
+        state.operatorIdentities.set(state.messagingAdapter.name, msgId);
+      }
+      const taskId = state.taskAdapter?.getAuthenticatedUser?.();
+      if (taskId && state.taskAdapter) {
+        state.operatorIdentities.set(state.taskAdapter.name, taskId);
       }
 
       // Recreate classifier with new config, wired through a fresh UsageTracker
@@ -859,7 +995,8 @@ export function createApp(state: EngineState): Hono {
       state.usageTracker = newUsageTracker;
       const newPrompt = loadPrompt(findProjectRoot());
       const newFewShot = buildFewShotMessages(newPrompt.few_shot_examples);
-      state.classifier = new Classifier(newUsageTracker, newPrompt.system, newFewShot);
+      const operatorRole = state.config.operator?.role ?? "";
+      state.classifier = new Classifier(newUsageTracker, newPrompt.system, newFewShot, undefined, operatorRole, state.operatorIdentities, buildOperatorContext(state.config));
       if (newLimiters.llm) state.classifier.setRateLimiter(newLimiters.llm);
 
       // Restart pipeline if we have a messaging adapter
@@ -871,9 +1008,11 @@ export function createApp(state: EngineState): Hono {
           state.linker,
           state.taskAdapter ?? undefined,
           state.config,
+          state.operatorIdentities,
         );
-        await state.pipeline.start();
-        log.info("Pipeline restarted");
+        // Start in background — initial poll can take minutes with rate limiting
+        state.pipeline.start().catch((err) => log.error("Pipeline restart failed", err));
+        log.info("Pipeline restarting in background");
       }
 
       return c.json({ ok: true });
@@ -1046,7 +1185,8 @@ async function main(): Promise<void> {
 
   const prompt = loadPrompt(projectRoot);
   const fewShot = buildFewShotMessages(prompt.few_shot_examples);
-  const classifier = new Classifier(usageTracker, prompt.system, fewShot);
+  const operatorRole = config.operator?.role ?? "";
+  const classifier = new Classifier(usageTracker, prompt.system, fewShot, undefined, operatorRole, null, buildOperatorContext(config));
   classifier.setRateLimiter(rateLimiters.llm);
   const extractor = new DefaultExtractor({
     ticketPatterns: config.extractors.ticketPatterns,
@@ -1070,6 +1210,7 @@ async function main(): Promise<void> {
     startedAt: new Date(),
     lastPoll: null,
     processed: 0,
+    operatorIdentities: new Map(),
   };
 
   // 5. If messaging adapter configured, create and connect via registry
@@ -1084,6 +1225,10 @@ async function main(): Promise<void> {
       (adapter as { setRateLimiter?: (l: unknown) => void }).setRateLimiter?.(rateLimiters.slack);
       await adapter.connect({ token: slackToken });
       state.messagingAdapter = adapter;
+      const msgIdentity = adapter.getAuthenticatedUser?.();
+      if (msgIdentity) {
+        state.operatorIdentities.set(adapter.name, msgIdentity);
+      }
       log.info(`${adapter.displayName} adapter connected`);
 
       // Backfill agent data from platform
@@ -1114,6 +1259,10 @@ async function main(): Promise<void> {
         baseUrl: process.env.WORKSTREAM_JIRA_BASE_URL ?? config.taskAdapter.baseUrl ?? "",
       });
       state.taskAdapter = adapter;
+      const taskIdentity = adapter.getAuthenticatedUser?.();
+      if (taskIdentity) {
+        state.operatorIdentities.set(adapter.name, taskIdentity);
+      }
       log.info(`${adapter.displayName} adapter connected`);
     } catch (err) {
       log.error("Failed to connect task adapter", err);
@@ -1129,6 +1278,7 @@ async function main(): Promise<void> {
       state.linker,
       state.taskAdapter ?? undefined,
       state.config,
+      state.operatorIdentities,
     );
   } else {
     log.warn("No messaging adapter available — pipeline not started (configure via POST /api/setup)");

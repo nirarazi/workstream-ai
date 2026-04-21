@@ -44,10 +44,14 @@ function makeThread(overrides: Partial<Thread> = {}, messages?: Message[]): Thre
 function makeClassification(overrides: Partial<Classification> = {}): Classification {
   return {
     status: "completed",
+    entryType: "progress",
     confidence: 0.95,
     reason: "Agent reports task completion",
     workItemIds: [],
     title: "",
+    targetedAtOperator: true,
+    actionRequiredFrom: null,
+    nextAction: null,
     ...overrides,
   };
 }
@@ -149,6 +153,7 @@ function createMockGraph(): ContextGraph {
     getThreadById: vi.fn().mockReturnValue(null),
     getPollCursor: vi.fn().mockReturnValue(null),
     setPollCursor: vi.fn(),
+    getOpenWorkItemSummaries: vi.fn().mockReturnValue([]),
     upsertEnrichment: vi.fn(),
   } as unknown as ContextGraph;
 }
@@ -203,7 +208,12 @@ describe("Pipeline", () => {
       expect(result.processed).toBe(1);
       expect(result.classified).toBe(1);
       expect(result.errors).toBe(0);
-      expect(classifier.classify).toHaveBeenCalledWith(thread.messages[0].text);
+      expect(classifier.classify).toHaveBeenCalledWith(
+        thread.messages[0].text,
+        expect.any(Array),
+        null,
+        { senderName: "Byte", senderType: "unknown", channelName: "agent-orchestrator" },
+      );
     });
 
     it("upserts agent from message metadata", async () => {
@@ -560,7 +570,12 @@ describe("Pipeline", () => {
       const result = await pipeline.processMessage(msg, "t-1", "C-1");
 
       expect(result.status).toBe("blocked_on_human");
-      expect(classifier.classify).toHaveBeenCalledWith(msg.text);
+      expect(classifier.classify).toHaveBeenCalledWith(
+        msg.text,
+        expect.any(Array),
+        null,
+        { senderName: "Byte", senderType: "unknown", channelName: "agent-orchestrator" },
+      );
     });
 
     it("upserts thread before processing", async () => {
@@ -831,6 +846,223 @@ describe("Pipeline", () => {
       const itUpdate = upsertCalls.find((c) => c[0].id === "IT-100" && c[0].currentAtcStatus);
       expect(aiUpdate).toBeDefined();
       expect(itUpdate).toBeDefined();
+    });
+  });
+
+  describe("operator identity passthrough", () => {
+    it("passes operator identities map to classifier on classify call", async () => {
+      vi.mocked(adapter.readThreads).mockResolvedValue([makeThread()]);
+
+      const operatorIdentities = new Map([
+        ["slack", { userId: "U-operator", userName: "Nir" }],
+      ]);
+      const pipelineWithIdentity = new Pipeline(adapter, classifier, graph, linker, undefined, config, operatorIdentities);
+
+      await pipelineWithIdentity.processOnce();
+
+      expect(classifier.classify).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.any(Array),
+        operatorIdentities,
+        expect.objectContaining({ senderName: "Byte" }),
+      );
+    });
+
+    it("passes null identity when no operatorIdentities provided", async () => {
+      // Default pipeline has no operator identities
+      vi.mocked(adapter.readThreads).mockResolvedValue([makeThread()]);
+
+      await pipeline.processOnce();
+
+      expect(classifier.classify).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.any(Array),
+        null,
+        expect.objectContaining({ senderName: "Byte" }),
+      );
+    });
+
+    it("passes sender context from message metadata", async () => {
+      const msg = makeMessage({ userName: "Pixel", senderType: "agent", channelName: "#design" });
+      vi.mocked(adapter.readThreads).mockResolvedValue([makeThread({}, [msg])]);
+
+      await pipeline.processOnce();
+
+      expect(classifier.classify).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.any(Array),
+        null,
+        { senderName: "Pixel", senderType: "agent", channelName: "#design" },
+      );
+    });
+  });
+
+  describe("actionRequiredFrom and nextAction persistence", () => {
+    it("persists actionRequiredFrom and nextAction from classification", async () => {
+      const msg = makeMessage({ id: "msg-blocked", text: "PR #716 needs your review before we can proceed." });
+      const thread = makeThread({ id: "t-blocked" }, [msg]);
+      vi.mocked(adapter.readThreads).mockResolvedValue([thread]);
+
+      const classification = makeClassification({
+        status: "blocked_on_human",
+        confidence: 0.9,
+        reason: "Agent is waiting for operator review",
+        workItemIds: [],
+        actionRequiredFrom: ["U_GUY123"],
+        nextAction: "Review and approve PR #716",
+      });
+      vi.mocked(classifier.classify).mockResolvedValue(classification);
+
+      await pipeline.processOnce();
+
+      expect(graph.insertEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          threadId: "t-blocked",
+          messageId: "msg-blocked",
+          status: "blocked_on_human",
+          actionRequiredFrom: ["U_GUY123"],
+          nextAction: "Review and approve PR #716",
+        }),
+      );
+    });
+  });
+
+  describe("senderType to isBot passthrough", () => {
+    it("passes senderType as isBot to agent upsert", async () => {
+      const upsertSpy = vi.spyOn(graph, "upsertAgent");
+
+      const message: Message = {
+        id: "msg-bot-1",
+        threadId: "t1",
+        channelId: "C001",
+        channelName: "general",
+        userId: "U001",
+        userName: "Byte",
+        text: "Working on it",
+        timestamp: new Date().toISOString(),
+        platform: "slack",
+        senderType: "agent",
+      };
+
+      await pipeline.processMessage(message, "t1", "C001");
+
+      expect(upsertSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ isBot: true }),
+      );
+    });
+
+    it("passes isBot=false for human senderType", async () => {
+      const upsertSpy = vi.spyOn(graph, "upsertAgent");
+
+      const message: Message = {
+        id: "msg-human-1",
+        threadId: "t1",
+        channelId: "C001",
+        channelName: "general",
+        userId: "U002",
+        userName: "Nir",
+        text: "Looks good",
+        timestamp: new Date().toISOString(),
+        platform: "slack",
+        senderType: "human",
+      };
+
+      await pipeline.processMessage(message, "t1", "C001");
+
+      expect(upsertSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ isBot: false }),
+      );
+    });
+
+    it("passes isBot=null for unknown senderType", async () => {
+      const upsertSpy = vi.spyOn(graph, "upsertAgent");
+
+      const message: Message = {
+        id: "msg-unknown-1",
+        threadId: "t1",
+        channelId: "C001",
+        channelName: "general",
+        userId: "U003",
+        userName: "Unknown",
+        text: "Some message",
+        timestamp: new Date().toISOString(),
+        platform: "slack",
+      };
+
+      await pipeline.processMessage(message, "t1", "C001");
+
+      expect(upsertSpy).toHaveBeenCalledWith(
+        expect.objectContaining({ isBot: null }),
+      );
+    });
+  });
+
+  describe("work item deduplication via classifier context", () => {
+    it("passes open work item summaries to the classifier", async () => {
+      const msg = makeMessage({ text: "Missing API key for Anthropic again" });
+      const thread = makeThread({ id: "t-new" }, [msg]);
+      vi.mocked(adapter.readThreads).mockResolvedValue([thread]);
+
+      vi.mocked(classifier.classify).mockResolvedValue(
+        makeClassification({
+          status: "blocked_on_human",
+          workItemIds: ["thread:existing.123"],
+          title: "Missing API key for Anthropic",
+        }),
+      );
+
+      // Return existing open work items
+      (graph as any).getOpenWorkItemSummaries = vi.fn().mockReturnValue([
+        { id: "thread:existing.123", title: "Missing API key for Anthropic" },
+        { id: "AI-200", title: "Deploy to staging" },
+      ]);
+
+      await pipeline.processOnce();
+
+      // Classifier should have been called with the open work items as second argument
+      expect(classifier.classify).toHaveBeenCalledWith(
+        msg.text,
+        [
+          { id: "thread:existing.123", title: "Missing API key for Anthropic" },
+          { id: "AI-200", title: "Deploy to staging" },
+        ],
+        null,
+        expect.objectContaining({ senderName: "Byte" }),
+      );
+    });
+
+    it("links thread to existing work item when classifier returns existing ID", async () => {
+      const msg = makeMessage({
+        id: "msg-new",
+        text: "Missing API key for Anthropic again",
+        threadId: "t-new",
+      });
+      const thread = makeThread({ id: "t-new" }, [msg]);
+      vi.mocked(adapter.readThreads).mockResolvedValue([thread]);
+
+      vi.mocked(classifier.classify).mockResolvedValue(
+        makeClassification({
+          status: "blocked_on_human",
+          workItemIds: ["thread:existing.123"],
+          title: "Missing API key for Anthropic",
+        }),
+      );
+
+      (graph as any).getOpenWorkItemSummaries = vi.fn().mockReturnValue([
+        { id: "thread:existing.123", title: "Missing API key for Anthropic" },
+      ]);
+
+      await pipeline.processOnce();
+
+      // The thread should be linked to the existing work item, NOT creating a new thread:t-new
+      const upsertThreadCalls = vi.mocked(graph.upsertThread).mock.calls;
+      const lastThreadUpsert = upsertThreadCalls[upsertThreadCalls.length - 1][0];
+      expect(lastThreadUpsert.workItemId).toBe("thread:existing.123");
+
+      // Should NOT have created a synthetic work item for thread:t-new
+      const upsertWorkItemCalls = vi.mocked(graph.upsertWorkItem).mock.calls;
+      const syntheticIds = upsertWorkItemCalls.map((c: any[]) => c[0].id);
+      expect(syntheticIds).not.toContain("thread:t-new");
     });
   });
 });

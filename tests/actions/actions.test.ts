@@ -236,4 +236,36 @@ describe("ActionHandler", () => {
       expect(graph.getWorkItemById("AI-100")?.currentAtcStatus).toBe("blocked_on_human");
     });
   });
+
+  describe("operator event capture", () => {
+    it("inserts a decision event when operator approves", async () => {
+      seedWorkItem();
+      seedThread();
+      const adapter = createMockAdapter();
+      const handler = new ActionHandler(graph, adapter);
+
+      await handler.execute("AI-100", "approve", "Looks good");
+
+      const events = graph.getEventsForWorkItem("AI-100");
+      const decisionEvent = events.find((e) => e.entryType === "decision");
+      expect(decisionEvent).toBeDefined();
+      expect(decisionEvent!.status).toBe("completed");
+      expect(decisionEvent!.rawText).toContain("Looks good");
+      expect(decisionEvent!.agentId).toBeNull();
+    });
+
+    it("inserts a decision event when operator redirects with message", async () => {
+      seedWorkItem();
+      seedThread();
+      const adapter = createMockAdapter();
+      const handler = new ActionHandler(graph, adapter);
+
+      await handler.execute("AI-100", "redirect", "Please fix the tests first");
+
+      const events = graph.getEventsForWorkItem("AI-100");
+      const decisionEvent = events.find((e) => e.entryType === "decision");
+      expect(decisionEvent).toBeDefined();
+      expect(decisionEvent!.rawText).toContain("Please fix the tests first");
+    });
+  });
 });

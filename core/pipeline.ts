@@ -3,7 +3,7 @@
 import { createHash } from "node:crypto";
 import { createLogger } from "./logger.js";
 import type { Config } from "./config.js";
-import type { Classification, Message, Thread } from "./types.js";
+import type { Classification, Message, OperatorIdentityMap, Thread } from "./types.js";
 import type { MessagingAdapter } from "./adapters/messaging/interface.js";
 import type { TaskAdapter } from "./adapters/tasks/interface.js";
 import type { Classifier } from "./classifier/index.js";
@@ -33,6 +33,7 @@ export class Pipeline {
   private running = false;
   private recentContentHashes = new Map<string, Classification>();
   private readonly MAX_CONTENT_HASHES = 1000;
+  private operatorIdentities: OperatorIdentityMap | null = null;
 
   constructor(
     messagingAdapter: MessagingAdapter,
@@ -41,6 +42,7 @@ export class Pipeline {
     linker: WorkItemLinker,
     taskAdapter?: TaskAdapter,
     config?: Config,
+    operatorIdentities?: OperatorIdentityMap,
   ) {
     this.messagingAdapter = messagingAdapter;
     this.classifier = classifier;
@@ -48,6 +50,7 @@ export class Pipeline {
     this.linker = linker;
     this.taskAdapter = taskAdapter;
     this.config = config;
+    this.operatorIdentities = operatorIdentities ?? null;
   }
 
   async start(): Promise<void> {
@@ -213,10 +216,14 @@ export class Pipeline {
       const existing = this.graph.getEventByMessageId(message.id, thread.id)!;
       return {
         status: existing.status as Classification["status"],
+        entryType: existing.entryType,
         confidence: existing.confidence,
         reason: existing.reason,
         workItemIds: existing.workItemId ? [existing.workItemId] : [],
         title: "",
+        targetedAtOperator: existing.targetedAtOperator,
+        actionRequiredFrom: existing.actionRequiredFrom,
+        nextAction: existing.nextAction,
       };
     }
 
@@ -240,6 +247,7 @@ export class Pipeline {
           platform: message.platform,
           platformUserId: message.userId,
           avatarUrl: message.userAvatarUrl ?? null,
+          isBot: message.senderType === "agent" ? true : message.senderType === "human" ? false : null,
         });
         this.graph.insertEvent({
           threadId: thread.id,
@@ -251,13 +259,19 @@ export class Pipeline {
           reason: "Work item already completed — skipping classification",
           rawText: message.text,
           timestamp: message.timestamp,
+          actionRequiredFrom: null,
+          nextAction: null,
         });
         return {
           status: "noise",
+          entryType: "noise" as const,
           confidence: 0,
           reason: "Work item already completed — skipping classification",
           workItemIds: [inheritedWorkItemId],
           title: "",
+          targetedAtOperator: false,
+          actionRequiredFrom: null,
+          nextAction: null,
         };
       }
     }
@@ -273,6 +287,7 @@ export class Pipeline {
         platform: message.platform,
         platformUserId: message.userId,
         avatarUrl: message.userAvatarUrl ?? null,
+        isBot: message.senderType === "agent" ? true : message.senderType === "human" ? false : null,
       });
       this.graph.insertEvent({
         threadId: thread.id,
@@ -284,15 +299,25 @@ export class Pipeline {
         reason: cachedResult.reason + " (deduplicated)",
         rawText: message.text,
         timestamp: message.timestamp,
+        actionRequiredFrom: cachedResult.actionRequiredFrom,
+        nextAction: cachedResult.nextAction,
       });
       return cachedResult;
     }
 
+    // Step 0e: Get open work items for classifier context (dedup)
+    const openWorkItems = this.graph.getOpenWorkItemSummaries();
+
     // Step 1: Link work items from message text (regex — only known prefixes)
     const extractedIds = this.linker.linkMessage(message.text, thread.id);
 
-    // Step 2: Classify the message
-    const classification = await this.classifier.classify(message.text);
+    // Step 2: Classify the message with operator identities and sender context
+    const senderContext = {
+      senderName: message.userName,
+      senderType: message.senderType ?? "unknown",
+      channelName: message.channelName,
+    };
+    const classification = await this.classifier.classify(message.text, openWorkItems, this.operatorIdentities, senderContext);
 
     // Separate LLM-suggested IDs into verified (match an extracted ID) and unverified
     const extractedSet = new Set(extractedIds);
@@ -343,6 +368,7 @@ export class Pipeline {
       platform: message.platform,
       platformUserId: message.userId,
       avatarUrl: message.userAvatarUrl ?? null,
+      isBot: message.senderType === "agent" ? true : message.senderType === "human" ? false : null,
     });
 
     // Step 4: Upsert thread in graph — preserve manually linked work items
@@ -367,10 +393,14 @@ export class Pipeline {
       workItemId: primaryWorkItemId,
       agentId: agent.id,
       status: classification.status,
+      entryType: classification.entryType,
       confidence: classification.confidence,
       reason: classification.reason,
       rawText: message.text,
       timestamp: message.timestamp,
+      targetedAtOperator: classification.targetedAtOperator,
+      actionRequiredFrom: classification.actionRequiredFrom,
+      nextAction: classification.nextAction,
     });
 
     // Step 6: Update work item status if confidence is higher than existing
@@ -412,10 +442,14 @@ export class Pipeline {
             workItemId,
             agentId: agent.id,
             status: itemClassification.status,
+            entryType: itemClassification.entryType,
             confidence: itemClassification.confidence,
             reason: itemClassification.reason,
             rawText: message.text,
             timestamp: message.timestamp,
+            targetedAtOperator: itemClassification.targetedAtOperator,
+            actionRequiredFrom: itemClassification.actionRequiredFrom,
+            nextAction: itemClassification.nextAction,
           });
         }
       }

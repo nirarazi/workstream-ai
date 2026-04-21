@@ -183,4 +183,15 @@ messaging:
     expect(config.llmBudget.inputCostPerMillion).toBeNull();
     expect(config.llmBudget.outputCostPerMillion).toBeNull();
   });
+
+  it("accepts operator.role field", () => {
+    writeDefaultYaml(tempRoot, MINIMAL_YAML + `
+operator:
+  name: "Test Operator"
+  role: "CTO / Fleet operator"
+  context: "Runs the InsureTax agent fleet"
+`);
+    const cfg = loadConfig(tempRoot);
+    expect(cfg.operator.role).toBe("CTO / Fleet operator");
+  });
 });

@@ -42,10 +42,11 @@ interface SlackUser {
   };
 }
 
-/** Resolved user info: display name + avatar URL */
+/** Resolved user info: display name, avatar URL, and bot flag */
 interface UserInfo {
   name: string;
   avatar: string;
+  isBot: boolean;
 }
 
 /** Convert a Slack epoch timestamp (e.g. "1711234567.123456") to ISO 8601 */
@@ -140,6 +141,7 @@ export class SlackAdapter implements MessagingAdapter {
   private messageHandler: ((msg: Message) => void) | null = null;
   private limiter = new SlackRateLimiter();
   private workspaceUrl: string | null = null;
+  private authedUser: { userId: string; userName: string } | null = null;
 
   /** @deprecated The Slack adapter now manages its own per-method rate limiting internally. */
   setRateLimiter(_limiter: unknown): void {
@@ -169,6 +171,10 @@ export class SlackAdapter implements MessagingAdapter {
       const authResult = await this.client.auth.test();
       // Store workspace URL for constructing Slack links (e.g. channel URLs)
       this.workspaceUrl = (authResult.url as string | undefined)?.replace(/\/+$/, "") ?? null;
+      this.authedUser = {
+        userId: (authResult.user_id as string) ?? "",
+        userName: (authResult.user as string) ?? "",
+      };
       log.info(`Connected to Slack as ${authResult.user} (team: ${authResult.team})`);
 
       // Pre-fetch user and channel lists so names, avatars, and privacy flags
@@ -346,6 +352,7 @@ export class SlackAdapter implements MessagingAdapter {
         text: this.resolveSlackMentions(msg.text ?? ""),
         timestamp: msg.ts ? slackTsToISO(msg.ts) : "",
         platform: "slack",
+        senderType: userInfo ? (userInfo.isBot ? "agent" : "human") as const : "unknown" as const,
       };
     });
   }
@@ -368,6 +375,11 @@ export class SlackAdapter implements MessagingAdapter {
   /** Return platform metadata for the frontend (workspace URL, etc.) */
   getMetadata(): Record<string, unknown> {
     return { slackWorkspaceUrl: this.workspaceUrl };
+  }
+
+  /** Return the authenticated operator's identity */
+  getAuthenticatedUser(): { userId: string; userName: string } | null {
+    return this.authedUser;
   }
 
   /** Build a Slack thread URL from channel/thread IDs */
@@ -570,6 +582,7 @@ export class SlackAdapter implements MessagingAdapter {
           this.userInfoMap.set(member.id, {
             name: displayName,
             avatar: member.profile?.image_48 ?? "",
+            isBot: member.is_bot ?? false,
           });
         }
       }
@@ -597,6 +610,7 @@ export class SlackAdapter implements MessagingAdapter {
         text: this.resolveSlackMentions(msg.text ?? ""),
         timestamp: msg.ts ? slackTsToISO(msg.ts) : "",
         platform: "slack",
+        senderType: userInfo ? (userInfo.isBot ? "agent" : "human") as const : "unknown" as const,
       };
     });
 

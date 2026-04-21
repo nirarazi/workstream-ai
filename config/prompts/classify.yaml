@@ -3,10 +3,19 @@ system: |
 
   Return a JSON object with these fields:
   - status: one of "completed", "in_progress", "blocked_on_human", "needs_decision", "noise"
+  - entry_type: one of "block", "progress", "assignment", "escalation", "noise"
+    - "block": agent is waiting for the operator's input, approval, or action
+    - "progress": agent completed a step or is actively working
+    - "assignment": work was assigned, reassigned, or handed off to a different agent
+    - "escalation": agent flagged a problem, error, or exception
+    - "noise": informational status update, no action needed
   - confidence: number between 0 and 1
   - reason: brief explanation of why you chose this status
   - workItemIds: array of work item IDs mentioned (e.g. "AI-382", "IT-100", "PR #716")
   - title: a short descriptive title (5-8 words) summarizing the topic or task being discussed. This is used as the work item label when no ticket ID is found.
+  - action_required_from: array of platform user IDs (e.g. ["UA2V04ZU2"]) identifying who needs to take the next action. Extract user IDs from @mentions in the message (format: <@USERID> or <@USERID|name>). If the message uses "you"/"your", resolve to the user being addressed based on context. Return null (not an empty array) for pure FYI / informational messages where no one needs to act. Return an empty array [] only if action is needed but the actor cannot be determined.
+  - next_action: short free-text description of what the action taker needs to do (e.g. "Approve PR #716", "Provide S3 bucket credentials", "Choose REST vs GraphQL"). Return null when no action is needed (same cases where action_required_from is null). Keep it under 10 words — this is displayed as an action label in the inbox.
+  - targeted_at_operator: boolean — true if this item should appear in the operator's inbox. True when: the operator is mentioned or addressed, an agent is blocked and needs human intervention (the operator is the fleet's backstop), or the issue is within the operator's stated remit (infra, config, agent management). False when: the block is on an external party (client, vendor) with no operator action possible, another human is handling it without escalation, or it's a status report about someone else's situation.
 
   ## Status Definitions
 
@@ -35,12 +44,15 @@ system: |
   2. Morning summaries or shift reports have top-level status "noise" but MUST include a "breakdown" when they mention specific work items with distinct statuses.
   3. If the agent says "done" but mentions a follow-up task, classify as "completed" (the follow-up is a new work item).
   4. Error messages from agents that include a request for help are "blocked_on_human", not "noise".
+  5. **Blocked on infrastructure ≠ blocked on human.** If the agent is blocked by a system outage, timeout, or external service failure but says it will retry or recover on its own, classify as "in_progress" (with entry_type "escalation"). Only use "blocked_on_human" when the agent explicitly needs the operator to take an action. "Will retry", "waiting for recovery", "next heartbeat" are signs of self-healing — NOT blocked on human.
+  6. **Status reports about other agents or people are not blocks.** If an agent is reporting another agent's state ("Chess is blocked on Guy's review") or giving a status update about someone else's work, this is informational — classify as "in_progress" or "noise" unless the agent is explicitly asking the operator to intervene. Key signals: "All good", "just an update", "FYI", reporting what others are doing. The word "blocked" in a status report about someone else does NOT make it blocked_on_human.
+  7. **Link to existing work items when possible.** When an "Open Work Items" section is provided, check if the current message is about the same topic as an existing item. If so, return that item's ID in workItemIds. Signals: same error message, same agent reporting the same issue, follow-up on a previously reported problem. Do NOT link unrelated items just because they have similar words — the topic and intent must match.
 
   Respond ONLY with the JSON object, no markdown formatting.
 
 few_shot_examples:
   - role: user
-    content: "AI-382: PR has been merged and deployed to staging. All tests passing. Moving on to AI-383."
+    content: "[Sender: Byte (agent) | Channel: #agent-orchestrator]\nAI-382: PR has been merged and deployed to staging. All tests passing. Moving on to AI-383."
     expected:
       status: completed
       confidence: 0.95
@@ -49,7 +61,7 @@ few_shot_examples:
       title: "PR merge and staging deployment"
 
   - role: user
-    content: "Currently implementing the payment webhook handler for IT-205. About 60% done, should finish within the hour."
+    content: "[Sender: Byte (agent) | Channel: #agent-orchestrator]\nCurrently implementing the payment webhook handler for IT-205. About 60% done, should finish within the hour."
     expected:
       status: in_progress
       confidence: 0.9
@@ -58,16 +70,19 @@ few_shot_examples:
       title: "Payment webhook handler implementation"
 
   - role: user
-    content: "I've hit a permissions issue with the S3 bucket for AI-401. Need someone to update the IAM role with PutObject access for the reports bucket."
+    content: "[Sender: Byte (agent) | Channel: #agent-orchestrator]\nI've hit a permissions issue with the S3 bucket for AI-401. Need someone to update the IAM role with PutObject access for the reports bucket."
     expected:
       status: blocked_on_human
       confidence: 0.95
       reason: "Agent blocked on infrastructure access that requires human intervention"
       workItemIds: ["AI-401"]
       title: "S3 bucket IAM permissions issue"
+      action_required_from: []
+      next_action: "Update IAM role with PutObject access"
+      targeted_at_operator: true
 
   - role: user
-    content: "For MS-112, I see two approaches: (A) Add a new endpoint /api/v2/reports with the updated schema, or (B) version the existing endpoint with a query parameter. Which should I go with?"
+    content: "[Sender: Byte (agent) | Channel: #agent-orchestrator]\nFor MS-112, I see two approaches: (A) Add a new endpoint /api/v2/reports with the updated schema, or (B) version the existing endpoint with a query parameter. Which should I go with?"
     expected:
       status: needs_decision
       confidence: 0.95
@@ -76,7 +91,7 @@ few_shot_examples:
       title: "Reports API versioning approach decision"
 
   - role: user
-    content: "Good morning! Starting my shift. Will check overnight dispatch queue first."
+    content: "[Sender: Levy (agent) | Channel: #agent-orchestrator]\nGood morning! Starting my shift. Will check overnight dispatch queue first."
     expected:
       status: noise
       confidence: 0.9
@@ -85,7 +100,7 @@ few_shot_examples:
       title: "Morning shift start"
 
   - role: user
-    content: "Hey, the staging database is running low on disk space. We should probably increase the volume size before it becomes a problem."
+    content: "[Sender: Pixel (agent) | Channel: #agent-orchestrator]\nHey, the staging database is running low on disk space. We should probably increase the volume size before it becomes a problem."
     expected:
       status: blocked_on_human
       confidence: 0.85
@@ -94,7 +109,43 @@ few_shot_examples:
       title: "Staging database disk space low"
 
   - role: user
-    content: "Morning briefing: AI-382 PR merged and deployed to prod — done. IT-205 is blocked waiting for the client to provide API credentials. MS-112 is about 60% through implementation, on track. AI-401 needs your decision on whether to use REST or GraphQL for the new endpoint."
+    content: "[Sender: Levy (agent) | Channel: #agent-orchestrator]\nChess's thread session is running — just posted a status update. Full status: Phases 1-5 complete, stat sweep done, blocked on Guy's test email review. Guy said goodnight and it's morning in Israel now — Chess expects him to be waking up soon. All good."
+    expected:
+      status: in_progress
+      entry_type: progress
+      confidence: 0.85
+      reason: "Agent reporting another agent's status — blocked on a third party, not requesting operator action. 'All good' confirms no intervention needed."
+      workItemIds: []
+      title: "Chess status update — awaiting Guy's review"
+      action_required_from: null
+      next_action: null
+
+  - role: user
+    content: "[Sender: Levy (agent) | Channel: #agent-orchestrator]\nGateway is down (ws://127.0.0.1:18789 timing out). Cannot check Chess or agent sessions this cycle. No action possible until gateway recovers. Will retry at next heartbeat cycle."
+    expected:
+      status: in_progress
+      entry_type: escalation
+      confidence: 0.85
+      reason: "Agent blocked by infrastructure outage but will self-recover — no human action needed"
+      workItemIds: []
+      title: "Gateway outage — auto-retry pending"
+      action_required_from: null
+      next_action: null
+
+  - role: user
+    content: "[Sender: Norma (agent) | Channel: #leads]\nNew lead from dev site: John Smith, john@example.com, requesting demo for fleet management platform. Source: website contact form. CRM ticket #4521 created automatically."
+    expected:
+      status: blocked_on_human
+      confidence: 0.8
+      reason: "Automated CRM alert for sales team, not operator"
+      workItemIds: []
+      title: "New lead intake from website"
+      action_required_from: null
+      next_action: null
+      targeted_at_operator: false
+
+  - role: user
+    content: "[Sender: Levy (agent) | Channel: #agent-orchestrator]\nMorning briefing: AI-382 PR merged and deployed to prod — done. IT-205 is blocked waiting for the client to provide API credentials. MS-112 is about 60% through implementation, on track. AI-401 needs your decision on whether to use REST or GraphQL for the new endpoint."
     expected:
       status: noise
       confidence: 0.9
@@ -112,6 +163,9 @@ few_shot_examples:
           confidence: 0.9
           reason: "Waiting for client to provide API credentials"
           title: "Client API credentials needed"
+          action_required_from: null
+          next_action: null
+          targeted_at_operator: false
         - workItemId: "MS-112"
           status: in_progress
           confidence: 0.85
@@ -122,3 +176,32 @@ few_shot_examples:
           confidence: 0.9
           reason: "Decision needed on REST vs GraphQL"
           title: "REST vs GraphQL endpoint decision"
+          action_required_from: []
+          next_action: "Decide REST vs GraphQL for endpoint"
+          targeted_at_operator: true
+
+  - role: user
+    content: |
+      [Sender: Levy (agent) | Channel: #agent-orchestrator]
+      :warning: Missing API key for provider "anthropic". Configure the gateway auth for that provider, then try again.
+    expected:
+      status: blocked_on_human
+      confidence: 0.9
+      reason: "Same Anthropic API key error as existing work item thread:abc.123"
+      workItemIds: ["thread:abc.123"]
+      title: "Missing API key for Anthropic provider"
+      action_required_from: []
+      next_action: "Configure gateway auth for Anthropic provider"
+
+  - role: user
+    content: "[Sender: Levy (agent) | Channel: #agent-orchestrator]\nGuy is waiting for the client to send the updated contract. He mentioned he'll follow up with them tomorrow. No action needed from us."
+    expected:
+      status: in_progress
+      entry_type: progress
+      confidence: 0.85
+      reason: "Status report about a human's block — no operator action requested"
+      workItemIds: []
+      title: "Guy waiting on client contract"
+      action_required_from: null
+      next_action: null
+      targeted_at_operator: false

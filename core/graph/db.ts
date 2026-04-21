@@ -217,6 +217,42 @@ export class Database {
       this.db.exec("ALTER TABLE threads ADD COLUMN manually_linked INTEGER DEFAULT 0");
       log.info("Migration: added manually_linked column to threads");
     }
+
+    // Add entry_type column to events table
+    const eventCols = this.db.pragma("table_info(events)") as Array<{ name: string }>;
+    if (!eventCols.some((c) => c.name === "entry_type")) {
+      this.db.exec("ALTER TABLE events ADD COLUMN entry_type TEXT NOT NULL DEFAULT 'progress'");
+      this.db.exec(`
+        UPDATE events SET entry_type = CASE
+          WHEN status IN ('blocked_on_human', 'needs_decision') THEN 'block'
+          WHEN status = 'noise' THEN 'noise'
+          ELSE 'progress'
+        END
+      `);
+      log.info("Migration: added entry_type column to events and backfilled");
+    }
+
+    // Add targeted_at_operator column to events table
+    const eventColsForTarget = this.db.pragma("table_info(events)") as Array<{ name: string }>;
+    if (!eventColsForTarget.some((c) => c.name === "targeted_at_operator")) {
+      this.db.exec("ALTER TABLE events ADD COLUMN targeted_at_operator INTEGER NOT NULL DEFAULT 1");
+      log.info("Migration: added targeted_at_operator column to events");
+    }
+
+    // Add action_required_from and next_action columns to events table
+    const eventColsForAction = this.db.pragma("table_info(events)") as Array<{ name: string }>;
+    if (!eventColsForAction.some((c) => c.name === "action_required_from")) {
+      this.db.exec("ALTER TABLE events ADD COLUMN action_required_from TEXT DEFAULT NULL");
+      this.db.exec("ALTER TABLE events ADD COLUMN next_action TEXT DEFAULT NULL");
+      log.info("Migration: added action_required_from and next_action columns to events");
+    }
+
+    // Add is_bot column to agents table
+    const agentColsForBot = this.db.pragma("table_info(agents)") as Array<{ name: string }>;
+    if (!agentColsForBot.some((c) => c.name === "is_bot")) {
+      this.db.exec("ALTER TABLE agents ADD COLUMN is_bot INTEGER DEFAULT NULL");
+      log.info("Migration: added is_bot column to agents");
+    }
   }
 
   prepare<T>(sql: string): BetterSqlite3Type.Statement<T[]> {
