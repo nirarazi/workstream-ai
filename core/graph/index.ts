@@ -26,6 +26,35 @@ import type {
 
 const log = createLogger("graph");
 
+// --- Helpers for candidate scoring ---
+
+const STOP_WORDS = new Set([
+  "a", "an", "the", "is", "are", "was", "were", "be", "been", "being",
+  "have", "has", "had", "do", "does", "did", "will", "would", "could",
+  "should", "may", "might", "shall", "can", "need", "must",
+  "in", "on", "at", "to", "for", "of", "with", "by", "from", "as",
+  "and", "or", "but", "not", "no", "if", "then", "so", "than",
+  "this", "that", "it", "its", "i", "we", "you", "he", "she", "they",
+  "my", "our", "your", "his", "her", "their",
+  "new", "pending", "review", "update", "status",
+]);
+
+function extractSignificantWords(text: string): Set<string> {
+  const words = text
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, " ")
+    .split(/\s+/)
+    .filter(w => w.length > 2 && !STOP_WORDS.has(w));
+  return new Set(words);
+}
+
+function formatRecency(updatedAt: string): string {
+  const hours = (Date.now() - new Date(updatedAt).getTime()) / (1000 * 60 * 60);
+  if (hours < 1) return "minutes ago";
+  if (hours < 24) return `${Math.round(hours)}h ago`;
+  return `${Math.round(hours / 24)}d ago`;
+}
+
 // --- Row-to-type mappers ---
 
 function toWorkItem(row: WorkItemRow): WorkItem {
@@ -585,6 +614,119 @@ export class ContextGraph {
       `)
       .all() as Array<{ id: string; title: string }>;
     return rows;
+  }
+
+  // --- Graph-based candidate scoring for message → work item matching ---
+
+  /**
+   * Find candidate work items for an incoming message by scoring graph signals.
+   * Returns top N candidates ranked by weighted score, replacing the brute-force
+   * "dump 100 items at the LLM" approach.
+   */
+  findCandidateWorkItems(params: {
+    agentId: string;
+    channelId: string;
+    messageText: string;
+    limit?: number;
+    scoreThreshold?: number;
+  }): Array<{ id: string; title: string; score: number; reasons: string[] }> {
+    const { agentId, channelId, messageText, limit = 5, scoreThreshold = 1.5 } = params;
+
+    // Weights — tunable
+    const W_AGENT = 5.0;
+    const W_CHANNEL = 1.0;
+    const W_RECENCY = 2.0;
+    const W_KEYWORDS = 3.0;
+
+    // Step 1: SQL query for agent match, channel match, recency, and status
+    const rows = this.db.db
+      .prepare(`
+        SELECT
+          wi.id,
+          wi.title,
+          wi.current_atc_status,
+          wi.updated_at,
+          -- Agent match: has this agent posted events against this work item?
+          CASE WHEN e_agent.work_item_id IS NOT NULL THEN 1 ELSE 0 END AS agent_match,
+          -- Channel match: does this work item have threads in this channel?
+          CASE WHEN t_chan.work_item_id IS NOT NULL THEN 1 ELSE 0 END AS channel_match,
+          -- Recency: linear decay over 48 hours (0.0–1.0)
+          MAX(0, 1.0 - (julianday('now') - julianday(wi.updated_at)) / 2.0) AS recency,
+          -- Status multiplier
+          CASE
+            WHEN wi.current_atc_status IN ('in_progress','blocked_on_human','needs_decision') THEN 1.0
+            WHEN wi.current_atc_status = 'completed' THEN 0.1
+            ELSE 0.0
+          END AS status_mult
+        FROM work_items wi
+        LEFT JOIN (
+          SELECT DISTINCT work_item_id FROM events WHERE agent_id = ?
+        ) e_agent ON e_agent.work_item_id = wi.id
+        LEFT JOIN (
+          SELECT DISTINCT work_item_id FROM threads WHERE channel_id = ?
+        ) t_chan ON t_chan.work_item_id = wi.id
+        WHERE (wi.current_atc_status NOT IN ('completed', 'noise') OR wi.current_atc_status IS NULL)
+          AND wi.dismissed_at IS NULL
+          -- At least one signal must be present (don't score items with zero graph connection)
+          AND (e_agent.work_item_id IS NOT NULL OR t_chan.work_item_id IS NOT NULL)
+        ORDER BY
+          (CASE WHEN e_agent.work_item_id IS NOT NULL THEN ${W_AGENT} ELSE 0 END
+           + CASE WHEN t_chan.work_item_id IS NOT NULL THEN ${W_CHANNEL} ELSE 0 END
+           + ${W_RECENCY} * MAX(0, 1.0 - (julianday('now') - julianday(wi.updated_at)) / 2.0))
+          * CASE
+              WHEN wi.current_atc_status IN ('in_progress','blocked_on_human','needs_decision') THEN 1.0
+              WHEN wi.current_atc_status = 'completed' THEN 0.1
+              ELSE 0.5
+            END
+          DESC
+        LIMIT 20
+      `)
+      .all(agentId, channelId) as Array<{
+        id: string;
+        title: string;
+        current_atc_status: string | null;
+        updated_at: string;
+        agent_match: number;
+        channel_match: number;
+        recency: number;
+        status_mult: number;
+      }>;
+
+    // Step 2: Keyword overlap scoring in TypeScript (SQLite can't do this well)
+    const messageWords = extractSignificantWords(messageText);
+
+    const scored = rows.map(row => {
+      const titleWords = extractSignificantWords(row.title);
+      const titleWordsArr = [...titleWords];
+      const keywordScore = titleWordsArr.length > 0
+        ? titleWordsArr.filter(w => messageWords.has(w)).length / titleWordsArr.length
+        : 0;
+
+      const rawScore =
+        (row.agent_match * W_AGENT) +
+        (row.channel_match * W_CHANNEL) +
+        (row.recency * W_RECENCY) +
+        (keywordScore * W_KEYWORDS);
+
+      const score = rawScore * (row.status_mult || 0.5);
+
+      const reasons: string[] = [];
+      if (row.agent_match) reasons.push("same agent");
+      if (row.channel_match) reasons.push("same channel");
+      if (row.recency > 0.5) reasons.push(`active ${formatRecency(row.updated_at)}`);
+      if (keywordScore > 0) {
+        const matched = titleWordsArr.filter(w => messageWords.has(w));
+        reasons.push(`keyword overlap: ${matched.join(", ")}`);
+      }
+
+      return { id: row.id, title: row.title, score, reasons };
+    });
+
+    // Step 3: Filter by threshold, sort by score, limit
+    return scored
+      .filter(c => c.score >= scoreThreshold)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, limit);
   }
 
   // --- Sidekick query methods ---

@@ -712,4 +712,95 @@ describe("Database", () => {
       expect(event.nextAction).toBeNull();
     });
   });
+
+  describe("findCandidateWorkItems", () => {
+    function setupGraphData() {
+      // Create agents
+      graph.upsertAgent({ id: "byte", name: "Byte", platform: "slack", platformUserId: "byte" });
+      graph.upsertAgent({ id: "pixel", name: "Pixel", platform: "slack", platformUserId: "pixel" });
+
+      // Create work items
+      graph.upsertWorkItem({ id: "AI-100", source: "extracted", title: "Deploy payment service to staging", currentAtcStatus: "in_progress" });
+      graph.upsertWorkItem({ id: "AI-200", source: "extracted", title: "Refactor auth middleware", currentAtcStatus: "in_progress" });
+      graph.upsertWorkItem({ id: "AI-300", source: "extracted", title: "Fix login bug", currentAtcStatus: "completed" });
+
+      // Create threads in channel C-1
+      graph.upsertThread({ id: "t-1", channelId: "C-1", channelName: "#dev", platform: "slack", workItemId: "AI-100", lastActivity: new Date().toISOString(), messageCount: 1 });
+      graph.upsertThread({ id: "t-2", channelId: "C-1", channelName: "#dev", platform: "slack", workItemId: "AI-200", lastActivity: new Date().toISOString(), messageCount: 1 });
+      graph.upsertThread({ id: "t-3", channelId: "C-2", channelName: "#ops", platform: "slack", workItemId: "AI-300", lastActivity: new Date().toISOString(), messageCount: 1 });
+
+      // Create events — Byte worked on AI-100, Pixel worked on AI-200
+      graph.insertEvent({ threadId: "t-1", messageId: "m-1", workItemId: "AI-100", agentId: "byte", status: "in_progress", confidence: 0.9, reason: "Working", rawText: "Deploying payment service", timestamp: new Date().toISOString() });
+      graph.insertEvent({ threadId: "t-2", messageId: "m-2", workItemId: "AI-200", agentId: "pixel", status: "in_progress", confidence: 0.9, reason: "Working", rawText: "Refactoring auth", timestamp: new Date().toISOString() });
+    }
+
+    it("ranks same-agent work items highest", () => {
+      setupGraphData();
+
+      const candidates = graph.findCandidateWorkItems({
+        agentId: "byte",
+        channelId: "C-1",
+        messageText: "still working on the service",
+      });
+
+      // AI-100 should rank highest — same agent (Byte) + same channel
+      expect(candidates.length).toBeGreaterThan(0);
+      expect(candidates[0].id).toBe("AI-100");
+      expect(candidates[0].reasons).toContain("same agent");
+    });
+
+    it("excludes completed work items", () => {
+      setupGraphData();
+
+      const candidates = graph.findCandidateWorkItems({
+        agentId: "byte",
+        channelId: "C-2",
+        messageText: "the login bug",
+      });
+
+      const ids = candidates.map(c => c.id);
+      expect(ids).not.toContain("AI-300"); // completed
+    });
+
+    it("returns empty when no signals match", () => {
+      setupGraphData();
+
+      const candidates = graph.findCandidateWorkItems({
+        agentId: "unknown-agent",
+        channelId: "C-unknown",
+        messageText: "something completely unrelated",
+      });
+
+      expect(candidates).toEqual([]);
+    });
+
+    it("includes keyword overlap in reasons", () => {
+      setupGraphData();
+
+      const candidates = graph.findCandidateWorkItems({
+        agentId: "pixel",
+        channelId: "C-1",
+        messageText: "the auth middleware refactoring is going well",
+      });
+
+      // AI-200 should match on agent + keywords
+      const ai200 = candidates.find(c => c.id === "AI-200");
+      expect(ai200).toBeDefined();
+      expect(ai200!.reasons.some(r => r.includes("keyword overlap"))).toBe(true);
+    });
+
+    it("respects score threshold", () => {
+      setupGraphData();
+
+      // With a very high threshold, nothing should match
+      const candidates = graph.findCandidateWorkItems({
+        agentId: "byte",
+        channelId: "C-1",
+        messageText: "hello",
+        scoreThreshold: 100,
+      });
+
+      expect(candidates).toEqual([]);
+    });
+  });
 });

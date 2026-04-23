@@ -154,6 +154,7 @@ function createMockGraph(): ContextGraph {
     getPollCursor: vi.fn().mockReturnValue(null),
     setPollCursor: vi.fn(),
     getOpenWorkItemSummaries: vi.fn().mockReturnValue([]),
+    findCandidateWorkItems: vi.fn().mockReturnValue([]),
     upsertEnrichment: vi.fn(),
     getActiveThreads: vi.fn().mockReturnValue([]),
   } as unknown as ContextGraph;
@@ -1004,7 +1005,7 @@ describe("Pipeline", () => {
   });
 
   describe("work item deduplication via classifier context", () => {
-    it("passes open work item summaries to the classifier", async () => {
+    it("passes graph-scored candidates to the classifier", async () => {
       const msg = makeMessage({ text: "Missing API key for Anthropic again" });
       const thread = makeThread({ id: "t-new" }, [msg]);
       vi.mocked(adapter.readThreads).mockResolvedValue([thread]);
@@ -1017,20 +1018,20 @@ describe("Pipeline", () => {
         }),
       );
 
-      // Return existing open work items
-      (graph as any).getOpenWorkItemSummaries = vi.fn().mockReturnValue([
-        { id: "thread:existing.123", title: "Missing API key for Anthropic" },
-        { id: "AI-200", title: "Deploy to staging" },
+      // Return scored candidates from graph
+      (graph as any).findCandidateWorkItems = vi.fn().mockReturnValue([
+        { id: "thread:existing.123", title: "Missing API key for Anthropic", score: 7.5, reasons: ["same agent", "keyword overlap: api, key"] },
+        { id: "AI-200", title: "Deploy to staging", score: 3.0, reasons: ["same channel"] },
       ]);
 
       await pipeline.processOnce();
 
-      // Classifier should have been called with the open work items as second argument
+      // Classifier should receive candidates with reasons (not raw 100-item dump)
       expect(classifier.classify).toHaveBeenCalledWith(
         msg.text,
         [
-          { id: "thread:existing.123", title: "Missing API key for Anthropic" },
-          { id: "AI-200", title: "Deploy to staging" },
+          { id: "thread:existing.123", title: "Missing API key for Anthropic", reasons: ["same agent", "keyword overlap: api, key"] },
+          { id: "AI-200", title: "Deploy to staging", reasons: ["same channel"] },
         ],
         null,
         expect.objectContaining({ senderName: "Byte" }),
@@ -1112,8 +1113,8 @@ describe("Pipeline", () => {
         }),
       );
 
-      (graph as any).getOpenWorkItemSummaries = vi.fn().mockReturnValue([
-        { id: "thread:existing.123", title: "Missing API key for Anthropic" },
+      (graph as any).findCandidateWorkItems = vi.fn().mockReturnValue([
+        { id: "thread:existing.123", title: "Missing API key for Anthropic", score: 7.0, reasons: ["same agent"] },
       ]);
 
       await pipeline.processOnce();
