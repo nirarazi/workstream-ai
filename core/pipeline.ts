@@ -400,8 +400,18 @@ export class Pipeline {
       return cachedResult;
     }
 
-    // Step 0e: Get open work items for classifier context (dedup)
-    const openWorkItems = this.graph.getOpenWorkItemSummaries();
+    // Step 0e: Find candidate work items via graph scoring (replaces brute-force 100-item dump)
+    const candidates = this.graph.findCandidateWorkItems({
+      agentId: message.userId,
+      channelId: thread.channelId,
+      messageText: message.text,
+    });
+    // Format candidates for the classifier: ranked list with reasons
+    const candidateContext = candidates.map(c => ({
+      id: c.id,
+      title: c.title,
+      reasons: c.reasons,
+    }));
 
     // Step 1: Link work items from message text (regex — only known prefixes)
     const extractedIds = this.linker.linkMessage(message.text, thread.id);
@@ -412,7 +422,7 @@ export class Pipeline {
       senderType: message.senderType ?? "unknown",
       channelName: message.channelName,
     };
-    const classification = await this.classifier.classify(message.text, openWorkItems, this.operatorIdentities, senderContext, this.getValidPrefixes());
+    const classification = await this.classifier.classify(message.text, candidateContext, this.operatorIdentities, senderContext, this.getValidPrefixes());
 
     // Separate LLM-suggested IDs into verified (match an extracted ID) and unverified
     const extractedSet = new Set(extractedIds);

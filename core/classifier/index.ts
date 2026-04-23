@@ -128,7 +128,7 @@ export class Classifier {
 
   async classify(
     message: string,
-    openWorkItems?: Array<{ id: string; title: string }>,
+    candidateWorkItems?: Array<{ id: string; title: string; reasons?: string[] }>,
     operatorIdentities?: OperatorIdentityMap | null,
     senderContext?: { senderName: string; senderType: string; channelName: string },
     validIdPrefixes?: string[],
@@ -176,9 +176,12 @@ Return false if:
         effectiveSystemPrompt += `\n\n## Valid Work Item ID Prefixes\n\nThe following prefixes are the ONLY valid work item ID patterns: ${validIdPrefixes.join(", ")}. Only return IDs in workItemIds that match one of these prefixes. IDs like "Q-123" or "CRM-456" that don't match a known prefix should NOT be included in workItemIds — they are external reference numbers, not tracked work items.`;
       }
 
-      if (openWorkItems && openWorkItems.length > 0) {
-        const itemLines = openWorkItems.map(wi => `- ${wi.id}: ${wi.title}`).join("\n");
-        effectiveSystemPrompt += `\n\n## Open Work Items\n\nBelow are currently open work items. If the message is about the same topic as an existing item, return that item's ID in workItemIds instead of leaving it empty. This prevents duplicate work items.\n\n${itemLines}`;
+      if (candidateWorkItems && candidateWorkItems.length > 0) {
+        const itemLines = candidateWorkItems.map((wi, i) => {
+          const reasons = wi.reasons?.length ? ` — ${wi.reasons.join(", ")}` : "";
+          return `${i + 1}. ${wi.id}: "${wi.title}"${reasons}`;
+        }).join("\n");
+        effectiveSystemPrompt += `\n\n## Candidate Work Items (ranked by relevance)\n\nThe following work items are the most likely matches for this message, based on graph signals (same agent, same channel, recency, keyword overlap). If the message is about one of these items, return its ID in workItemIds. If none match, return an empty workItemIds array — do NOT force a match.\n\n${itemLines}`;
       }
 
       // Prepend sender context to message if provided
