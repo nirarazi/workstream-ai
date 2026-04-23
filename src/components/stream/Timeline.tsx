@@ -1,10 +1,14 @@
 import { useRef, useEffect } from "react";
 import { timeAgo } from "../../lib/time";
+import { openExternalUrl } from "../../lib/api";
+import { PlatformMessage } from "../../messaging/registry";
+import { buildSlackThreadUrl } from "../../messaging/slack/urls";
 import type { TimelineEntry as TimelineEntryType } from "../../lib/api";
 
 interface TimelineProps {
   entries: TimelineEntryType[];
   hasOlder: boolean;
+  platformMeta?: Record<string, unknown>;
   onLoadOlder: () => void;
 }
 
@@ -28,7 +32,7 @@ function avatarColor(name: string): string {
   return colors[Math.abs(hash) % colors.length];
 }
 
-export default function Timeline({ entries, hasOlder, onLoadOlder }: TimelineProps) {
+export default function Timeline({ entries, hasOlder, platformMeta, onLoadOlder }: TimelineProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const prevCountRef = useRef(entries.length);
@@ -54,6 +58,8 @@ export default function Timeline({ entries, hasOlder, onLoadOlder }: TimelinePro
     );
   }
 
+  const workspaceUrl = platformMeta?.slackWorkspaceUrl as string | undefined;
+
   return (
     <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-3">
       {hasOlder && (
@@ -75,16 +81,29 @@ export default function Timeline({ entries, hasOlder, onLoadOlder }: TimelinePro
             ? "border-green-500"
             : (STATUS_BORDER[entry.status] ?? "border-gray-700");
 
+          // Build thread URL for the channel link
+          const threadUrl = workspaceUrl && entry.threadId && entry.platform === "slack" && entry.channelId
+            ? buildSlackThreadUrl(workspaceUrl, entry.channelId, entry.threadId)
+            : null;
+
           return (
             <div key={entry.id} className={`flex gap-2.5 border-l-2 pl-3 ${borderColor}`}>
               {/* Avatar */}
-              <div
-                className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-semibold text-white flex-shrink-0 ${
-                  isOperator ? "bg-green-700" : avatarColor(name)
-                }`}
-              >
-                {name.charAt(0).toUpperCase()}
-              </div>
+              {entry.agentAvatarUrl && !isOperator ? (
+                <img
+                  src={entry.agentAvatarUrl}
+                  alt={name}
+                  className="w-7 h-7 rounded-full flex-shrink-0 object-cover"
+                />
+              ) : (
+                <div
+                  className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-semibold text-white flex-shrink-0 ${
+                    isOperator ? "bg-green-700" : avatarColor(name)
+                  }`}
+                >
+                  {name.charAt(0).toUpperCase()}
+                </div>
+              )}
 
               {/* Content */}
               <div className="flex-1 min-w-0">
@@ -93,7 +112,20 @@ export default function Timeline({ entries, hasOlder, onLoadOlder }: TimelinePro
                     {name}
                   </span>
                   <span className="text-[11px] text-gray-600">
-                    {entry.channelName && `#${entry.channelName} · `}{timeAgo(entry.timestamp)}
+                    {entry.channelName && (
+                      threadUrl ? (
+                        <button
+                          onClick={() => openExternalUrl(threadUrl)}
+                          className="hover:text-cyan-400 hover:underline cursor-pointer"
+                        >
+                          #{entry.channelName}
+                        </button>
+                      ) : (
+                        <>#{entry.channelName}</>
+                      )
+                    )}
+                    {entry.channelName && " · "}
+                    {timeAgo(entry.timestamp)}
                   </span>
                 </div>
 
@@ -102,10 +134,14 @@ export default function Timeline({ entries, hasOlder, onLoadOlder }: TimelinePro
                   {entry.summary}
                 </div>
 
-                {/* Raw text (if different from summary) */}
+                {/* Raw text with platform-specific formatting */}
                 {entry.rawText && entry.rawText !== entry.summary && (
                   <div className="mt-1 text-xs text-gray-500 leading-relaxed whitespace-pre-wrap">
-                    {entry.rawText}
+                    {entry.platform ? (
+                      <PlatformMessage platform={entry.platform} text={entry.rawText} />
+                    ) : (
+                      entry.rawText
+                    )}
                   </div>
                 )}
               </div>

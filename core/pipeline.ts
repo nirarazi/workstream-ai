@@ -15,6 +15,7 @@ const log = createLogger("pipeline");
 const DEFAULT_POLL_INTERVAL = 30;
 const DEFAULT_LOOKBACK_DAYS = 1;
 const DEFAULT_MAX_THREADS_PER_POLL = 50;
+const DEFAULT_MAX_ACTIVE_THREAD_REPOLLS = 20;
 
 export interface ProcessResult {
   processed: number;
@@ -34,6 +35,7 @@ export class Pipeline {
   private recentContentHashes = new Map<string, Classification>();
   private readonly MAX_CONTENT_HASHES = 1000;
   private operatorIdentities: OperatorIdentityMap | null = null;
+  private validPrefixes: string[] | null = null;
 
   constructor(
     messagingAdapter: MessagingAdapter,
@@ -117,23 +119,37 @@ export class Pipeline {
       log.info(`Capped threads from ${threads.length} to ${cappedThreads.length} (maxThreadsPerPoll=${maxThreads})`);
     }
 
+    // Track thread IDs covered by this channel history poll
+    const polledThreadIds = new Set<string>();
+
     for (const thread of cappedThreads) {
       if (!thread.messages || thread.messages.length === 0) {
         continue;
       }
 
-      const latestMessage = thread.messages[thread.messages.length - 1];
-      processed++;
+      polledThreadIds.add(thread.id);
 
-      try {
-        await this.processMessageInternal(latestMessage, thread);
-        classified++;
-      } catch (err) {
-        log.error("Failed to process message", latestMessage.id, err);
-        errors++;
+      // Process ALL unprocessed messages in order (oldest → newest), not just
+      // the latest.  The hasEvent() check inside processMessageInternal is a
+      // cheap DB lookup and will skip already-processed messages without an
+      // LLM call.  Processing every message ensures intermediate work-item
+      // references and status transitions are captured.
+      for (const message of thread.messages) {
+        if (this.graph.hasEvent(message.id, thread.id)) {
+          continue; // already classified — skip cheaply
+        }
+        processed++;
+        try {
+          await this.processMessageInternal(message, thread);
+          classified++;
+        } catch (err) {
+          log.error("Failed to process message", message.id, err);
+          errors++;
+        }
       }
 
       // Track the latest timestamp for poll cursor updates
+      const latestMessage = thread.messages[thread.messages.length - 1];
       const channelId = thread.channelId;
       const existing = latestTimestamps.get(channelId);
       if (!existing || latestMessage.timestamp > existing) {
@@ -147,6 +163,64 @@ export class Pipeline {
         this.graph.setPollCursor(channelId, timestamp);
       } catch (err) {
         log.error("Failed to update poll cursor", channelId, err);
+      }
+    }
+
+    // --- Re-poll active threads for new replies ---
+    // Threads whose parent message is older than the poll cursor won't appear
+    // in conversations.history, but they can still receive new replies.
+    // Re-fetch replies for known active threads that weren't already covered.
+    const maxRepolls = this.config?.lookback?.maxActiveThreadRepolls ?? DEFAULT_MAX_ACTIVE_THREAD_REPOLLS;
+    if (maxRepolls > 0) {
+      const activeThreads = this.graph.getActiveThreads(maxRepolls);
+      let repolled = 0;
+
+      for (const activeThread of activeThreads) {
+        if (polledThreadIds.has(activeThread.id)) continue; // already covered
+
+        try {
+          const messages = await this.messagingAdapter.getThreadMessages(
+            activeThread.id,
+            activeThread.channelId,
+          );
+          if (messages.length === 0) continue;
+
+          // Build a Thread object for processing
+          const threadObj: Thread = {
+            id: activeThread.id,
+            channelId: activeThread.channelId,
+            channelName: activeThread.channelName,
+            platform: activeThread.platform,
+            workItemId: activeThread.workItemId,
+            lastActivity: messages[messages.length - 1].timestamp,
+            messageCount: messages.length,
+            messages,
+          };
+
+          // Process only unprocessed messages
+          let hadNew = false;
+          for (const msg of messages) {
+            if (this.graph.hasEvent(msg.id, activeThread.id)) continue;
+            hadNew = true;
+            processed++;
+            try {
+              await this.processMessageInternal(msg, threadObj);
+              classified++;
+            } catch (err) {
+              log.error("Failed to process re-polled message", msg.id, err);
+              errors++;
+            }
+          }
+
+          if (hadNew) repolled++;
+        } catch (err) {
+          log.error("Failed to re-poll active thread", activeThread.id, err);
+          errors++;
+        }
+      }
+
+      if (repolled > 0) {
+        log.info(`Re-polled ${repolled} active threads with new messages`);
       }
     }
 
@@ -179,6 +253,27 @@ export class Pipeline {
   }
 
   // --- Private helpers ---
+
+  private getValidPrefixes(): string[] {
+    if (this.validPrefixes !== null) return this.validPrefixes;
+
+    // Prefer task adapter's runtime prefixes (e.g. from Jira project list)
+    if (this.taskAdapter?.getValidIdPrefixes) {
+      this.validPrefixes = this.taskAdapter.getValidIdPrefixes().map(p => p.toUpperCase());
+    } else {
+      // Fall back to static config
+      this.validPrefixes = (this.config?.taskAdapter?.ticketPrefixes ?? []).map(p => p.toUpperCase());
+    }
+    return this.validPrefixes;
+  }
+
+  private isValidWorkItemId(id: string): boolean {
+    const prefixes = this.getValidPrefixes();
+    if (prefixes.length === 0) return true; // no prefixes configured → accept all
+    // Also allow synthetic IDs (thread:xxx) and known patterns like "PR #123"
+    if (id.startsWith("thread:")) return true;
+    return prefixes.some(prefix => id.toUpperCase().startsWith(prefix));
+  }
 
   private getContentHash(text: string, threadId: string): string {
     return createHash("sha256").update(`${threadId}:${text}`).digest("hex");
@@ -317,7 +412,7 @@ export class Pipeline {
       senderType: message.senderType ?? "unknown",
       channelName: message.channelName,
     };
-    const classification = await this.classifier.classify(message.text, openWorkItems, this.operatorIdentities, senderContext);
+    const classification = await this.classifier.classify(message.text, openWorkItems, this.operatorIdentities, senderContext, this.getValidPrefixes());
 
     // Separate LLM-suggested IDs into verified (match an extracted ID) and unverified
     const extractedSet = new Set(extractedIds);
@@ -328,7 +423,11 @@ export class Pipeline {
 
     for (const llmId of classification.workItemIds) {
       if (!extractedSet.has(llmId)) {
-        // LLM suggested an ID that the regex didn't find — treat as inferred
+        // LLM suggested an ID that the regex didn't find — validate before creating
+        if (!this.isValidWorkItemId(llmId)) {
+          log.debug("Discarding LLM-suggested ID that doesn't match known prefixes:", llmId);
+          continue;
+        }
         this.graph.upsertWorkItem({
           id: llmId,
           source: "inferred",
@@ -433,9 +532,9 @@ export class Pipeline {
           });
         }
 
-        // Insert a dedicated event for breakdown items with actionable status
-        // so they surface in the inbox individually
-        if (itemClassification && itemClassification.status !== "noise" && itemClassification.status !== "in_progress") {
+        // Insert a dedicated event for breakdown items with non-noise status
+        // so they surface in the inbox/all-active views individually
+        if (itemClassification && itemClassification.status !== "noise") {
           this.graph.insertEvent({
             threadId: thread.id,
             messageId: `${message.id}:${workItemId}`,

@@ -14,6 +14,7 @@ interface StreamDetailProps {
   workItemId: string;
   mentionables: Mentionable[];
   serializeMention: (userId: string) => string;
+  platformMeta?: Record<string, unknown>;
   onActioned?: () => void;
   onActionStateChange?: (workItemId: string, state: ActionState) => void;
 }
@@ -22,6 +23,7 @@ export default function StreamDetail({
   workItemId,
   mentionables,
   serializeMention,
+  platformMeta,
   onActioned,
   onActionStateChange,
 }: StreamDetailProps): JSX.Element {
@@ -29,6 +31,7 @@ export default function StreamDetail({
   const [error, setError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const [confirmation, setConfirmation] = useState<{ action: string; channelName: string } | null>(null);
+  const [inputFlash, setInputFlash] = useState(false);
   const replyInputRef = useRef<MentionInputHandle>(null);
 
   // Fetch stream data on mount / workItemId change
@@ -75,6 +78,8 @@ export default function StreamDetail({
 
   function handleActionComplete(action: string) {
     replyInputRef.current?.clear();
+    setInputFlash(true);
+    setTimeout(() => setInputFlash(false), 800);
     // Map action types to ActionState for the list
     let state: ActionState = null;
     switch (action) {
@@ -189,6 +194,7 @@ export default function StreamDetail({
       <StatusSnapshot
         data={data}
         pinned={data.workItem.pinned}
+        platformMeta={platformMeta}
         onTogglePin={handleTogglePin}
       />
 
@@ -196,8 +202,18 @@ export default function StreamDetail({
       <Timeline
         entries={data.timeline}
         hasOlder={data.hasOlder}
+        platformMeta={platformMeta}
         onLoadOlder={handleLoadOlder}
       />
+
+      {/* Confirmation overlay (above actions) */}
+      {confirmation && (
+        <SendConfirmation
+          channelName={confirmation.channelName}
+          action={confirmation.action}
+          onComplete={() => setConfirmation(null)}
+        />
+      )}
 
       {/* Actions + Reply (sticky bottom) */}
       <div className="border-t border-gray-800">
@@ -209,7 +225,7 @@ export default function StreamDetail({
           pinned={data.workItem.pinned}
           onTogglePin={handleTogglePin}
         />
-        <div className="px-5 pb-3">
+        <div className={`px-5 pb-3 ${inputFlash ? "animate-input-success rounded" : ""}`}>
           <MentionInput
             ref={replyInputRef}
             placeholder="Reply to thread..."
@@ -224,13 +240,6 @@ export default function StreamDetail({
             </div>
           )}
         </div>
-        {confirmation && (
-          <SendConfirmation
-            channelName={confirmation.channelName}
-            action={confirmation.action}
-            onComplete={() => setConfirmation(null)}
-          />
-        )}
       </div>
     </div>
   );

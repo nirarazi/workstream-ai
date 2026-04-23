@@ -155,6 +155,7 @@ function createMockGraph(): ContextGraph {
     setPollCursor: vi.fn(),
     getOpenWorkItemSummaries: vi.fn().mockReturnValue([]),
     upsertEnrichment: vi.fn(),
+    getActiveThreads: vi.fn().mockReturnValue([]),
   } as unknown as ContextGraph;
 }
 
@@ -213,6 +214,7 @@ describe("Pipeline", () => {
         expect.any(Array),
         null,
         { senderName: "Byte", senderType: "unknown", channelName: "agent-orchestrator" },
+        [],
       );
     });
 
@@ -575,6 +577,7 @@ describe("Pipeline", () => {
         expect.any(Array),
         null,
         { senderName: "Byte", senderType: "unknown", channelName: "agent-orchestrator" },
+        [],
       );
     });
 
@@ -865,6 +868,7 @@ describe("Pipeline", () => {
         expect.any(Array),
         operatorIdentities,
         expect.objectContaining({ senderName: "Byte" }),
+        [],
       );
     });
 
@@ -879,6 +883,7 @@ describe("Pipeline", () => {
         expect.any(Array),
         null,
         expect.objectContaining({ senderName: "Byte" }),
+        [],
       );
     });
 
@@ -893,6 +898,7 @@ describe("Pipeline", () => {
         expect.any(Array),
         null,
         { senderName: "Pixel", senderType: "agent", channelName: "#design" },
+        [],
       );
     });
   });
@@ -1028,7 +1034,65 @@ describe("Pipeline", () => {
         ],
         null,
         expect.objectContaining({ senderName: "Byte" }),
+        [],
       );
+    });
+
+    it("discards LLM-suggested IDs that don't match configured ticket prefixes", async () => {
+      // Create a pipeline with ticket prefixes configured
+      const configWithPrefixes = makeConfig({
+        taskAdapter: { enabled: true, ticketPrefixes: ["AI-", "IT-", "MS-"] },
+      });
+      const pipelineWithPrefixes = new Pipeline(adapter, classifier, graph, linker, undefined, configWithPrefixes);
+
+      const msg = makeMessage({ text: "CRM ticket Q-456 created for lead" });
+      const thread = makeThread({}, [msg]);
+      vi.mocked(adapter.readThreads).mockResolvedValue([thread]);
+
+      // LLM returns Q-456 as a work item ID — but Q- is not a valid prefix
+      vi.mocked(classifier.classify).mockResolvedValue(
+        makeClassification({
+          status: "blocked_on_human",
+          workItemIds: ["Q-456"],
+          title: "New lead pending review",
+        }),
+      );
+
+      await pipelineWithPrefixes.processOnce();
+
+      // Q-456 should NOT have been created as a work item
+      const upsertWorkItemCalls = vi.mocked(graph.upsertWorkItem).mock.calls;
+      const createdIds = upsertWorkItemCalls.map((c: any[]) => c[0].id);
+      expect(createdIds).not.toContain("Q-456");
+      // Instead, a synthetic thread-based work item should have been created
+      expect(createdIds).toContain(`thread:${thread.id}`);
+    });
+
+    it("accepts LLM-suggested IDs that match configured ticket prefixes", async () => {
+      const configWithPrefixes = makeConfig({
+        taskAdapter: { enabled: true, ticketPrefixes: ["AI-", "IT-", "MS-"] },
+      });
+      const pipelineWithPrefixes = new Pipeline(adapter, classifier, graph, linker, undefined, configWithPrefixes);
+
+      const msg = makeMessage({ text: "Working on the deployment" });
+      const thread = makeThread({}, [msg]);
+      vi.mocked(adapter.readThreads).mockResolvedValue([thread]);
+
+      // LLM returns AI-500 — valid prefix
+      vi.mocked(classifier.classify).mockResolvedValue(
+        makeClassification({
+          status: "in_progress",
+          workItemIds: ["AI-500"],
+          title: "Deployment in progress",
+        }),
+      );
+
+      await pipelineWithPrefixes.processOnce();
+
+      // AI-500 should have been created as an inferred work item
+      const upsertWorkItemCalls = vi.mocked(graph.upsertWorkItem).mock.calls;
+      const createdIds = upsertWorkItemCalls.map((c: any[]) => c[0].id);
+      expect(createdIds).toContain("AI-500");
     });
 
     it("links thread to existing work item when classifier returns existing ID", async () => {

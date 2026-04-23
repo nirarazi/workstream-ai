@@ -327,6 +327,21 @@ export class ContextGraph {
     log.debug("Unlinked thread", threadId);
   }
 
+  /** Return threads linked to active (non-completed, non-noise) work items, ordered by most recent activity */
+  getActiveThreads(limit = 20): Thread[] {
+    const rows = this.db.db
+      .prepare(`
+        SELECT DISTINCT t.* FROM threads t
+        JOIN work_items wi ON t.work_item_id = wi.id
+        WHERE wi.current_atc_status IS NOT NULL
+          AND wi.current_atc_status NOT IN ('completed', 'noise')
+        ORDER BY t.last_activity DESC
+        LIMIT ?
+      `)
+      .all(limit) as ThreadRow[];
+    return rows.map(toThread);
+  }
+
   getUnlinkedThreads(limit: number, query?: string): Thread[] {
     let sql = `
       SELECT * FROM threads

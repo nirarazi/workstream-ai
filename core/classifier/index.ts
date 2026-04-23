@@ -131,6 +131,7 @@ export class Classifier {
     openWorkItems?: Array<{ id: string; title: string }>,
     operatorIdentities?: OperatorIdentityMap | null,
     senderContext?: { senderName: string; senderType: string; channelName: string },
+    validIdPrefixes?: string[],
   ): Promise<Classification> {
     try {
       // Rate-limit LLM calls
@@ -171,6 +172,10 @@ Return false if:
         effectiveSystemPrompt += `\n\n## Operator Context\n\n${this.operatorContext}`;
       }
 
+      if (validIdPrefixes && validIdPrefixes.length > 0) {
+        effectiveSystemPrompt += `\n\n## Valid Work Item ID Prefixes\n\nThe following prefixes are the ONLY valid work item ID patterns: ${validIdPrefixes.join(", ")}. Only return IDs in workItemIds that match one of these prefixes. IDs like "Q-123" or "CRM-456" that don't match a known prefix should NOT be included in workItemIds — they are external reference numbers, not tracked work items.`;
+      }
+
       if (openWorkItems && openWorkItems.length > 0) {
         const itemLines = openWorkItems.map(wi => `- ${wi.id}: ${wi.title}`).join("\n");
         effectiveSystemPrompt += `\n\n## Open Work Items\n\nBelow are currently open work items. If the message is about the same topic as an existing item, return that item's ID in workItemIds instead of leaving it empty. This prevents duplicate work items.\n\n${itemLines}`;
@@ -201,7 +206,7 @@ Return false if:
         reason: result.reason,
         workItemIds: result.workItemIds,
         title: result.title,
-        targetedAtOperator: this.computeTargetedAtOperator(result, effectiveIdentities),
+        targetedAtOperator: this.computeTargetedAtOperator({ ...result, status }, effectiveIdentities),
         actionRequiredFrom: result.action_required_from ?? null,
         nextAction: result.next_action ?? null,
         breakdown: result.breakdown?.map((b) => {
@@ -213,7 +218,7 @@ Return false if:
             confidence: Math.max(0, Math.min(1, b.confidence)),
             reason: b.reason,
             title: b.title,
-            targetedAtOperator: this.computeTargetedAtOperator(b, effectiveIdentities),
+            targetedAtOperator: this.computeTargetedAtOperator({ ...b, status: bStatus }, effectiveIdentities),
             actionRequiredFrom: b.action_required_from ?? null,
             nextAction: b.next_action ?? null,
           };
@@ -236,29 +241,39 @@ Return false if:
   }
 
   private computeTargetedAtOperator(
-    result: { action_required_from?: string[] | null; targeted_at_operator?: boolean },
+    result: { status?: string; action_required_from?: string[] | null; targeted_at_operator?: boolean },
     operatorIdentities?: OperatorIdentityMap | null,
   ): boolean {
+    const isActionable = result.status === "blocked_on_human" || result.status === "needs_decision";
+
     if (result.action_required_from !== undefined) {
-      // null = FYI, no action needed
+      // null = classifier says "no action needed".  But if the status IS
+      // blocked_on_human or needs_decision, that's a contradiction — action IS
+      // needed, the classifier just couldn't identify who.  Treat as unknown
+      // actor → operator is backstop.
       if (result.action_required_from === null) {
-        return false;
+        return isActionable; // true for blocks, false for FYI
       }
-      // Empty array = action needed but actor unknown → fall back to LLM's judgment,
-      // defaulting to true (operator is the backstop for unattributed blocks)
+      // Empty array = action needed but actor unknown → operator is backstop
       if (result.action_required_from.length === 0) {
-        return result.targeted_at_operator !== false;
+        return true;
       }
       // Has specific IDs — check against all operator platform identities
       if (operatorIdentities && operatorIdentities.size > 0) {
         const operatorIds = new Set([...operatorIdentities.values()].map((id) => id.userId));
-        return result.action_required_from.some((id) => operatorIds.has(id));
+        if (result.action_required_from.some((id) => operatorIds.has(id))) {
+          return true; // operator is explicitly in the list
+        }
+        // Other people are named, operator is not — not targeted at operator
+        return false;
       }
       // Has IDs but no operator identities available — default to true (safer)
       log.warn("action_required_from populated but no operator identities available — defaulting targetedAtOperator=true");
       return true;
     }
-    // Field absent entirely — fall back to LLM's boolean, default true
+    // Field absent entirely — for actionable statuses, operator is backstop
+    if (isActionable) return true;
+    // For non-actionable, fall back to LLM's boolean, default true
     return result.targeted_at_operator !== false;
   }
 }

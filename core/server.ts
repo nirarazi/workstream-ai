@@ -180,13 +180,17 @@ export function createApp(state: EngineState): Hono {
     const enrichments = state.graph.getEnrichmentsForWorkItem(id);
 
     const agentMap = new Map<string, string>();
+    const agentAvatarMap = new Map<string, string | null>();
     for (const a of agents) {
       agentMap.set(a.id, a.name);
+      agentAvatarMap.set(a.id, a.avatarUrl);
     }
 
-    const threadChannelMap = new Map<string, string>();
+    const threadChannelMap = new Map<string, { channelId: string; channelName: string }>();
+    const threadPlatformMap = new Map<string, string>();
     for (const t of threads) {
-      threadChannelMap.set(t.id, t.channelName || t.channelId);
+      threadChannelMap.set(t.id, { channelId: t.channelId, channelName: t.channelName || t.channelId });
+      threadPlatformMap.set(t.id, t.platform);
     }
 
     // For latestBlockEvent, use all events (not paginated) to get accurate status
@@ -196,7 +200,7 @@ export function createApp(state: EngineState): Hono {
       .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())[0] ?? null;
 
     const unifiedStatus = buildUnifiedStatus(workItem, latestBlockEvent, state.operatorIdentities, agentMap);
-    const timeline = buildTimeline(events, agentMap, threadChannelMap);
+    const timeline = buildTimeline(events, agentMap, agentAvatarMap, threadChannelMap, threadPlatformMap);
 
     let statusSummary: string | null = null;
     const cached = state.graph.getSummary(id);

@@ -20,10 +20,17 @@ interface StreamListItemProps {
 
 export default function StreamListItem({ item, selected, actionState, resolving, onSelect }: StreamListItemProps) {
   const { workItem, latestEvent, agent } = item;
+  const isThreadItem = workItem.id.startsWith("thread:");
   const status = workItem.currentAtcStatus ?? "noise";
   const borderColor = BORDER_COLORS[status] ?? "border-l-gray-600";
   const isSnoozed = Boolean(workItem.snoozedUntil);
   const isPinned = workItem.pinned;
+
+  // For thread-based items, derive a display title: use the work item title if
+  // present, otherwise build a contextual label from the channel name.
+  const threadDisplayTitle = isThreadItem
+    ? workItem.title || (item.thread?.channelName ? `Thread in #${item.thread.channelName}` : "Untitled conversation")
+    : null;
   // Track whether this item has just mounted so we can apply the enter animation once
   const [entered, setEntered] = useState(false);
 
@@ -52,7 +59,11 @@ export default function StreamListItem({ item, selected, actionState, resolving,
       <div className="flex justify-between items-center">
         <div className="flex items-center gap-2 min-w-0">
           {isPinned && <span className="text-[10px] text-gray-600">📌</span>}
-          <span className="text-xs font-semibold text-gray-200 truncate">{workItem.id}</span>
+          {isThreadItem ? (
+            <span className="text-xs font-semibold text-gray-200 truncate animate-shimmer">{threadDisplayTitle}</span>
+          ) : (
+            <span className="text-xs font-semibold text-gray-200 truncate">{workItem.id}</span>
+          )}
         </div>
         <div className="flex items-center gap-2 shrink-0">
           <StatusBadge
@@ -63,7 +74,11 @@ export default function StreamListItem({ item, selected, actionState, resolving,
           <span className="text-[10px] text-gray-600">{timeAgo}</span>
         </div>
       </div>
-      <div className="text-xs text-gray-400 mt-1 truncate">{workItem.title}</div>
+      {!isThreadItem && (
+        <div className="text-xs mt-1 truncate text-gray-400">
+          {workItem.title || "Untitled conversation"}
+        </div>
+      )}
       <div className="text-[10px] text-gray-600 mt-0.5">
         {agent?.name ?? "Unknown"}
         {latestEvent?.reason && (

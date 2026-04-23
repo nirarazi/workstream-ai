@@ -29,4 +29,12 @@ export interface TaskAdapter {
   getComments(id: string): Promise<WorkItemComment[]>;
   /** Create a new work item/ticket. Optional — not all adapters support creation. */
   createWorkItem?(params: CreateWorkItemParams): Promise<WorkItemDetail>;
+
+  /**
+   * Return valid work item ID prefixes for this adapter (e.g. ["AI-", "IT-", "MS-"]).
+   * Used to validate LLM-extracted IDs — if an ID doesn't match any known prefix,
+   * it's discarded rather than creating a phantom work item.
+   * Falls back to config.taskAdapter.ticketPrefixes if not implemented.
+   */
+  getValidIdPrefixes?(): string[];
 }

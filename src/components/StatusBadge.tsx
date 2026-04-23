@@ -42,7 +42,7 @@ function formatSnoozedLabel(snoozedUntil: string | null | undefined): string {
 export default function StatusBadge({ status, actionState, snoozedUntil }: StatusBadgeProps): JSX.Element {
   if (actionState === "replied") {
     return (
-      <span className="inline-block rounded-full border px-2 py-0.5 text-xs font-medium leading-tight bg-green-900/60 text-green-300 border-green-700/50">
+      <span className="inline-block rounded-full border px-2 py-0.5 text-xs font-medium leading-tight bg-green-900/60 text-green-300 border-green-700/50 animate-badge-pop">
         Replied
       </span>
     );
@@ -50,7 +50,7 @@ export default function StatusBadge({ status, actionState, snoozedUntil }: Statu
 
   if (actionState === "unblocked") {
     return (
-      <span className="inline-block rounded-full border px-2 py-0.5 text-xs font-medium leading-tight bg-green-900/60 text-green-300 border-green-700/50">
+      <span className="inline-block rounded-full border px-2 py-0.5 text-xs font-medium leading-tight bg-green-900/60 text-green-300 border-green-700/50 animate-badge-pop">
         ✓ Unblocked
       </span>
     );
@@ -58,7 +58,7 @@ export default function StatusBadge({ status, actionState, snoozedUntil }: Statu
 
   if (actionState === "done") {
     return (
-      <span className="inline-block rounded-full border px-2 py-0.5 text-xs font-medium leading-tight bg-green-900/60 text-green-300 border-green-700/50">
+      <span className="inline-block rounded-full border px-2 py-0.5 text-xs font-medium leading-tight bg-green-900/60 text-green-300 border-green-700/50 animate-badge-pop">
         ✓ Done
       </span>
     );
@@ -66,7 +66,7 @@ export default function StatusBadge({ status, actionState, snoozedUntil }: Statu
 
   if (actionState === "snoozed") {
     return (
-      <span className="inline-block rounded-full border px-2 py-0.5 text-xs font-medium leading-tight bg-amber-900/60 text-amber-300 border-amber-700/50">
+      <span className="inline-block rounded-full border px-2 py-0.5 text-xs font-medium leading-tight bg-amber-900/60 text-amber-300 border-amber-700/50 animate-badge-pop">
         {formatSnoozedLabel(snoozedUntil)}
       </span>
     );

@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback, type JSX } from "react";
 import {
-  fetchInbox, fetchAllActive,
+  fetchInbox, fetchAllActive, setBadgeCount,
   type ActionableItem, type StreamFilter, type Mentionable,
 } from "../lib/api";
 import FilterTabs from "./stream/FilterTabs";
@@ -13,12 +13,14 @@ const POLL_INTERVAL = 5000;
 interface StreamViewProps {
   mentionables: Mentionable[];
   serializeMention: (userId: string) => string;
+  platformMeta?: Record<string, unknown>;
   onSyncStateChange?: (state: { lastSyncAt: Date | null; error: boolean }) => void;
 }
 
 export default function StreamView({
   mentionables,
   serializeMention,
+  platformMeta,
   onSyncStateChange,
 }: StreamViewProps): JSX.Element {
   const [filter, setFilter] = useState<StreamFilter>("needs-me");
@@ -48,11 +50,7 @@ export default function StreamView({
       setLastSyncAt(new Date());
       setSyncError(false);
 
-      // Update dock badge count (macOS)
-      try {
-        const { invoke } = await import("@tauri-apps/api/core");
-        await invoke("plugin:badger|set_count", { count: inbox.items.length });
-      } catch { /* not in Tauri */ }
+      setBadgeCount(inbox.items.length);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to fetch");
       setSyncError(true);
@@ -135,6 +133,7 @@ export default function StreamView({
             workItemId={selectedWorkItemId}
             mentionables={mentionables}
             serializeMention={serializeMention}
+            platformMeta={platformMeta}
             onActioned={poll}
             onActionStateChange={(id, state) => {
               setActionStates(prev => new Map(prev).set(id, state));

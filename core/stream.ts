@@ -7,8 +7,13 @@ export interface TimelineEntry {
   entryType: EntryType;
   status: StatusCategory;
   timestamp: string;
+  agentId: string | null;
   agentName: string | null;
+  agentAvatarUrl: string | null;
+  channelId: string;
   channelName: string;
+  threadId: string;
+  platform: string;
   summary: string;
   rawText: string;
   isOperator: boolean;
@@ -99,21 +104,31 @@ export function buildUnifiedStatus(
 export function buildTimeline(
   events: Event[],
   agentMap: Map<string, string>,
-  threadChannelMap: Map<string, string>,
+  agentAvatarMap: Map<string, string | null>,
+  threadChannelMap: Map<string, { channelId: string; channelName: string }>,
+  threadPlatformMap: Map<string, string>,
 ): TimelineEntry[] {
   // Events are expected to arrive in oldest-first order (chat style).
   // Preserve input order — do not re-sort.
   return events
     .filter((e) => e.entryType !== "noise")
-    .map((e) => ({
-      id: e.id,
-      entryType: e.entryType,
-      status: e.status,
-      timestamp: e.timestamp,
-      agentName: e.agentId ? (agentMap.get(e.agentId) ?? null) : null,
-      channelName: threadChannelMap.get(e.threadId) ?? "",
-      summary: e.reason,
-      rawText: e.rawText,
-      isOperator: e.agentId === null,
-    }));
+    .map((e) => {
+      const channel = threadChannelMap.get(e.threadId);
+      return {
+        id: e.id,
+        entryType: e.entryType,
+        status: e.status,
+        timestamp: e.timestamp,
+        agentId: e.agentId,
+        agentName: e.agentId ? (agentMap.get(e.agentId) ?? null) : null,
+        agentAvatarUrl: e.agentId ? (agentAvatarMap.get(e.agentId) ?? null) : null,
+        channelId: channel?.channelId ?? "",
+        channelName: channel?.channelName ?? "",
+        threadId: e.threadId,
+        platform: threadPlatformMap.get(e.threadId) ?? "",
+        summary: e.reason,
+        rawText: e.rawText,
+        isOperator: e.agentId === null,
+      };
+    });
 }

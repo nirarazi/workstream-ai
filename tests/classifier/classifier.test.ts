@@ -276,6 +276,23 @@ describe("action_required_from → targetedAtOperator (with OperatorIdentityMap)
     expect(result.targetedAtOperator).toBe(false);
   });
 
+  it("action_required_from null + blocked_on_human → targetedAtOperator=true (status implies action needed)", async () => {
+    const provider = mockProvider({
+      status: "blocked_on_human",
+      confidence: 0.9,
+      reason: "Quote pending review",
+      workItemIds: ["Q-123"],
+      title: "Quote review",
+      action_required_from: null,
+      next_action: null,
+    });
+    const classifier = new Classifier(provider, SYSTEM_PROMPT, FEW_SHOT, undefined, undefined, OPERATOR_MAP);
+
+    const result = await classifier.classify("Quote Q-123 pending review");
+    // blocked_on_human + null action_required_from = contradiction → operator is backstop
+    expect(result.targetedAtOperator).toBe(true);
+  });
+
   it("action_required_from is empty array + LLM says targeted=true → targetedAtOperator=true", async () => {
     const provider = mockProvider({
       status: "blocked_on_human",
@@ -293,7 +310,7 @@ describe("action_required_from → targetedAtOperator (with OperatorIdentityMap)
     expect(result.targetedAtOperator).toBe(true);
   });
 
-  it("action_required_from is empty array + LLM says targeted=false → targetedAtOperator=false", async () => {
+  it("action_required_from is empty array → targetedAtOperator=true (operator is backstop for unattributed blocks)", async () => {
     const provider = mockProvider({
       status: "blocked_on_human",
       confidence: 0.9,
@@ -307,7 +324,8 @@ describe("action_required_from → targetedAtOperator (with OperatorIdentityMap)
     const classifier = new Classifier(provider, SYSTEM_PROMPT, FEW_SHOT, undefined, undefined, OPERATOR_MAP);
 
     const result = await classifier.classify("Waiting for client API key");
-    expect(result.targetedAtOperator).toBe(false);
+    // Empty array = action needed but actor unknown → operator is backstop
+    expect(result.targetedAtOperator).toBe(true);
   });
 
   it("action_required_from is empty array + LLM omits targeted → defaults to true (backstop)", async () => {
@@ -326,7 +344,7 @@ describe("action_required_from → targetedAtOperator (with OperatorIdentityMap)
     expect(result.targetedAtOperator).toBe(true);
   });
 
-  it("no action_required_from field at all → falls back to LLM targeted_at_operator", async () => {
+  it("no action_required_from field + blocked_on_human → targetedAtOperator=true (operator is backstop)", async () => {
     const provider = mockProvider({
       status: "blocked_on_human",
       confidence: 0.9,
@@ -338,7 +356,8 @@ describe("action_required_from → targetedAtOperator (with OperatorIdentityMap)
     const classifier = new Classifier(provider, SYSTEM_PROMPT, FEW_SHOT, undefined, undefined, OPERATOR_MAP);
 
     const result = await classifier.classify("Guy please review");
-    expect(result.targetedAtOperator).toBe(false);
+    // blocked_on_human with no named actor → operator is backstop, even if LLM says false
+    expect(result.targetedAtOperator).toBe(true);
   });
 
   it("operator is among multiple action takers → targetedAtOperator=true", async () => {
@@ -375,7 +394,7 @@ describe("action_required_from → targetedAtOperator (with OperatorIdentityMap)
     expect(result.targetedAtOperator).toBe(true);
   });
 
-  it("targeted_at_operator=false with no action_required_from → targetedAtOperator=false", async () => {
+  it("targeted_at_operator=false with no action_required_from but blocked → targetedAtOperator=true (backstop)", async () => {
     const provider = mockProvider({
       status: "blocked_on_human",
       confidence: 0.9,
@@ -387,8 +406,8 @@ describe("action_required_from → targetedAtOperator (with OperatorIdentityMap)
     const classifier = new Classifier(provider, SYSTEM_PROMPT, FEW_SHOT);
 
     const result = await classifier.classify("Guy please review this");
-
-    expect(result.targetedAtOperator).toBe(false);
+    // blocked_on_human without specific actor IDs → operator is backstop
+    expect(result.targetedAtOperator).toBe(true);
   });
 });
 

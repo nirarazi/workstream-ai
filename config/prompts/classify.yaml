@@ -13,9 +13,9 @@ system: |
   - reason: brief explanation of why you chose this status
   - workItemIds: array of work item IDs mentioned (e.g. "AI-382", "IT-100", "PR #716")
   - title: a short descriptive title (5-8 words) summarizing the topic or task being discussed. This is used as the work item label when no ticket ID is found.
-  - action_required_from: array of platform user IDs (e.g. ["UA2V04ZU2"]) identifying who needs to take the next action. Extract user IDs from @mentions in the message (format: <@USERID> or <@USERID|name>). If the message uses "you"/"your", resolve to the user being addressed based on context. Return null (not an empty array) for pure FYI / informational messages where no one needs to act. Return an empty array [] only if action is needed but the actor cannot be determined.
+  - action_required_from: array of platform user IDs (e.g. ["UA2V04ZU2"]) identifying who needs to take the next action. Extract user IDs from @mentions in the message (format: <@USERID> or <@USERID|name>). If the message uses "you"/"your", resolve to the user being addressed based on context. Return null ONLY for pure informational messages (status "in_progress" or "noise") where genuinely no one needs to act. For "blocked_on_human" or "needs_decision" items: return the specific user IDs if @-mentioned, otherwise return an empty array [] (action IS needed — we just don't know who). NEVER return null when status is "blocked_on_human" or "needs_decision" — by definition, those statuses mean someone needs to act.
   - next_action: short free-text description of what the action taker needs to do (e.g. "Approve PR #716", "Provide S3 bucket credentials", "Choose REST vs GraphQL"). Return null when no action is needed (same cases where action_required_from is null). Keep it under 10 words — this is displayed as an action label in the inbox.
-  - targeted_at_operator: boolean — true if this item should appear in the operator's inbox. True when: the operator is mentioned or addressed, an agent is blocked and needs human intervention (the operator is the fleet's backstop), or the issue is within the operator's stated remit (infra, config, agent management). False when: the block is on an external party (client, vendor) with no operator action possible, another human is handling it without escalation, or it's a status report about someone else's situation.
+  - targeted_at_operator: boolean — true if this item should appear in the operator's inbox. **Default to true for any blocked_on_human or needs_decision item** — the operator is the fleet's backstop and needs visibility into all blocks. True when: the operator is mentioned or addressed, an agent is blocked and needs human intervention, automated alerts surface work requiring review, or the issue is within the operator's stated remit (infra, config, agent management). False ONLY when: the message is purely informational (in_progress or noise), OR the block is explicitly being handled by another named person with no escalation to the operator.
 
   ## Status Definitions
 
@@ -137,12 +137,12 @@ few_shot_examples:
     expected:
       status: blocked_on_human
       confidence: 0.8
-      reason: "Automated CRM alert for sales team, not operator"
+      reason: "Automated CRM alert requiring human review — operator is the fleet backstop"
       workItemIds: []
       title: "New lead intake from website"
-      action_required_from: null
-      next_action: null
-      targeted_at_operator: false
+      action_required_from: []
+      next_action: "Review new lead and assign"
+      targeted_at_operator: true
 
   - role: user
     content: "[Sender: Levy (agent) | Channel: #agent-orchestrator]\nMorning briefing: AI-382 PR merged and deployed to prod — done. IT-205 is blocked waiting for the client to provide API credentials. MS-112 is about 60% through implementation, on track. AI-401 needs your decision on whether to use REST or GraphQL for the new endpoint."
@@ -161,11 +161,11 @@ few_shot_examples:
         - workItemId: "IT-205"
           status: blocked_on_human
           confidence: 0.9
-          reason: "Waiting for client to provide API credentials"
+          reason: "Waiting for client to provide API credentials — operator needs visibility"
           title: "Client API credentials needed"
-          action_required_from: null
-          next_action: null
-          targeted_at_operator: false
+          action_required_from: []
+          next_action: "Follow up with client for API credentials"
+          targeted_at_operator: true
         - workItemId: "MS-112"
           status: in_progress
           confidence: 0.85

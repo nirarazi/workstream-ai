@@ -96,8 +96,13 @@ describe("Stream", () => {
         { id: "e3", threadId: "t2", messageId: "m3", workItemId: "AI-100", agentId: null, status: "completed", confidence: 1.0, reason: "Operator approved", rawText: "Looks good", timestamp: "2026-04-15T12:00:00Z", createdAt: "2026-04-15T12:00:00Z", entryType: "decision", targetedAtOperator: true, actionRequiredFrom: null, nextAction: null },
       ];
       const agentMap = new Map([["a1", "Byte"]]);
-      const threadChannelMap = new Map([["t1", "#agent-orchestrator"], ["t2", "#strategy"]]);
-      const timeline = buildTimeline(events, agentMap, threadChannelMap);
+      const agentAvatarMap = new Map<string, string | null>([["a1", null]]);
+      const threadChannelMap = new Map([
+        ["t1", { channelId: "C1", channelName: "#agent-orchestrator" }],
+        ["t2", { channelId: "C2", channelName: "#strategy" }],
+      ]);
+      const threadPlatformMap = new Map([["t1", "slack"], ["t2", "slack"]]);
+      const timeline = buildTimeline(events, agentMap, agentAvatarMap, threadChannelMap, threadPlatformMap);
       expect(timeline).toHaveLength(2);
       // Oldest-first: progress (10:00) comes before decision (12:00)
       expect(timeline[0].entryType).toBe("progress");
