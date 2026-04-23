@@ -42,6 +42,7 @@ const ConfigSchema = z.object({
   lookback: z.object({
     initialDays: z.number(),
     maxThreadsPerPoll: z.number(),
+    maxActiveThreadRepolls: z.number().optional(),
   }).optional(),
   mcp: z.object({
     transport: z.string(),

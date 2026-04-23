@@ -1,5 +1,6 @@
 import type { StreamData } from "../../lib/api";
 import { openExternalUrl } from "../../lib/api";
+import { buildSlackThreadUrl } from "../../messaging/slack/urls";
 import CopyableId from "../CopyableId";
 
 const STREAM_STATUS_STYLE: Record<string, { bg: string; text: string; border: string; dot?: string }> = {
@@ -21,10 +22,11 @@ const STATUS_LABELS: Record<string, string> = {
 interface StatusSnapshotProps {
   data: StreamData;
   pinned?: boolean;
+  platformMeta?: Record<string, unknown>;
   onTogglePin?: () => void;
 }
 
-export default function StatusSnapshot({ data, pinned, onTogglePin }: StatusSnapshotProps) {
+export default function StatusSnapshot({ data, pinned, platformMeta, onTogglePin }: StatusSnapshotProps) {
   const { workItem, unifiedStatus, statusSummary, agents, channels, threadCount, enrichment } = data;
   const status = workItem.currentAtcStatus ?? "noise";
   const style = STREAM_STATUS_STYLE[status] ?? STREAM_STATUS_STYLE.noise;
@@ -69,9 +71,25 @@ export default function StatusSnapshot({ data, pinned, onTogglePin }: StatusSnap
           </span>
         )}
         {channels.length > 0 && (
-          <span>
-            {channels.map((c) => `#${c.name}`).join(", ")}
-            {threadCount > 1 && ` · ${threadCount} threads`}
+          <span className="flex items-center gap-1">
+            {channels.map((c) => {
+              const workspaceUrl = platformMeta?.slackWorkspaceUrl as string | undefined;
+              const threadUrl = workspaceUrl && data.latestThreadId
+                ? buildSlackThreadUrl(workspaceUrl, c.id, data.latestThreadId)
+                : null;
+              return threadUrl ? (
+                <button
+                  key={c.id}
+                  onClick={() => openExternalUrl(threadUrl)}
+                  className="text-gray-500 hover:text-cyan-400 hover:underline cursor-pointer"
+                >
+                  #{c.name}
+                </button>
+              ) : (
+                <span key={c.id}>#{c.name}</span>
+              );
+            })}
+            {threadCount > 1 && <span>· {threadCount} threads</span>}
           </span>
         )}
         {enrichment && workItem.url && (

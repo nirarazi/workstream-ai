@@ -210,9 +210,12 @@ function App(): JSX.Element {
           className="border-b border-gray-800 flex items-center justify-between"
           style={{ paddingLeft: 78, paddingRight: 16, paddingTop: 8, paddingBottom: 7 }}
         >
-          <h1 data-tauri-drag-region className="text-sm font-semibold tracking-tight text-gray-300">
-            workstream.ai
-          </h1>
+          <div data-tauri-drag-region className="flex items-center gap-3">
+            <h1 data-tauri-drag-region className="text-sm font-semibold tracking-tight text-gray-300">
+              workstream.ai
+            </h1>
+            {view === "stream" && <SyncIndicator lastSyncAt={syncState.lastSyncAt} error={syncState.error} />}
+          </div>
           <div className="flex items-center gap-3">
             {/* Theme toggle */}
             {view !== "loading" && view !== "setup" && (
@@ -236,11 +239,6 @@ function App(): JSX.Element {
                   <path fillRule="evenodd" d="M8.34 1.804A1 1 0 0 1 9.32 1h1.36a1 1 0 0 1 .98.804l.295 1.473c.497.144.971.342 1.416.587l1.25-.834a1 1 0 0 1 1.262.125l.962.962a1 1 0 0 1 .125 1.262l-.834 1.25c.245.445.443.919.587 1.416l1.473.294a1 1 0 0 1 .804.98v1.361a1 1 0 0 1-.804.98l-1.473.295a6.95 6.95 0 0 1-.587 1.416l.834 1.25a1 1 0 0 1-.125 1.262l-.962.962a1 1 0 0 1-1.262.125l-1.25-.834a6.953 6.953 0 0 1-1.416.587l-.294 1.473a1 1 0 0 1-.98.804H9.32a1 1 0 0 1-.98-.804l-.295-1.473a6.957 6.957 0 0 1-1.416-.587l-1.25.834a1 1 0 0 1-1.262-.125l-.962-.962a1 1 0 0 1-.125-1.262l.834-1.25a6.957 6.957 0 0 1-.587-1.416l-1.473-.294A1 1 0 0 1 1 11.06V9.7a1 1 0 0 1 .804-.98l1.473-.295c.144-.497.342-.971.587-1.416l-.834-1.25a1 1 0 0 1 .125-1.262l.962-.962A1 1 0 0 1 5.38 3.41l1.25.834a6.957 6.957 0 0 1 1.416-.587l.294-1.473ZM13 10a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" clipRule="evenodd" />
                 </svg>
               </button>
-            )}
-
-            {/* Sync indicator */}
-            {view === "stream" && (
-              <SyncIndicator lastSyncAt={syncState.lastSyncAt} error={syncState.error} />
             )}
 
             {/* Service indicators */}
@@ -304,7 +302,7 @@ function App(): JSX.Element {
         )}
         {view === "setup" && <Setup onComplete={handleSetupComplete} />}
         {view === "stream" && (
-          <StreamView mentionables={mentionables} serializeMention={serializeMention} onSyncStateChange={setSyncState} />
+          <StreamView mentionables={mentionables} serializeMention={serializeMention} platformMeta={platformMeta} onSyncStateChange={setSyncState} />
         )}
         {view === "fleet" && <FleetBoard platformMeta={platformMeta} />}
         {view === "settings" && (

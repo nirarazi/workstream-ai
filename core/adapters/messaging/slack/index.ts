@@ -21,6 +21,11 @@ interface SlackMessage {
   reply_count?: number;
   text?: string;
   user?: string;
+  bot_id?: string;
+  bot_profile?: {
+    name?: string;
+    icons?: { image_48?: string };
+  };
   subtype?: string;
 }
 
@@ -340,19 +345,26 @@ export class SlackAdapter implements MessagingAdapter {
     const slackMessages = await this.fetchThreadReplies(channelId, threadId);
 
     return slackMessages.map((msg) => {
-      const userInfo = this.userInfoMap.get(msg.user ?? "");
+      const userInfo = this.userInfoMap.get(msg.user ?? "")
+        ?? (msg.bot_id ? this.userInfoMap.get(msg.bot_id) : undefined);
+
+      // For bot messages, use bot_profile as additional fallback
+      const botName = msg.bot_profile?.name;
+      const botAvatar = msg.bot_profile?.icons?.image_48;
+
       return {
         id: msg.ts ?? "",
         threadId,
         channelId,
         channelName,
-        userId: msg.user ?? "",
-        userName: userInfo?.name ?? msg.user ?? "unknown",
-        userAvatarUrl: userInfo?.avatar || undefined,
+        userId: msg.user ?? msg.bot_id ?? "",
+        userName: userInfo?.name ?? botName ?? msg.user ?? "unknown",
+        userAvatarUrl: userInfo?.avatar || botAvatar || undefined,
         text: this.resolveSlackMentions(msg.text ?? ""),
         timestamp: msg.ts ? slackTsToISO(msg.ts) : "",
         platform: "slack",
-        senderType: userInfo ? (userInfo.isBot ? "agent" : "human") as const : "unknown" as const,
+        senderType: userInfo ? (userInfo.isBot ? "agent" : "human") as const
+          : (msg.bot_id ? "agent" as const : "unknown" as const),
       };
     });
   }
@@ -598,19 +610,26 @@ export class SlackAdapter implements MessagingAdapter {
     slackMessages: SlackMessage[],
   ): Thread {
     const messages: Message[] = slackMessages.map((msg) => {
-      const userInfo = this.userInfoMap.get(msg.user ?? "");
+      const userInfo = this.userInfoMap.get(msg.user ?? "")
+        ?? (msg.bot_id ? this.userInfoMap.get(msg.bot_id) : undefined);
+
+      // For bot messages, use bot_profile as additional fallback
+      const botName = msg.bot_profile?.name;
+      const botAvatar = msg.bot_profile?.icons?.image_48;
+
       return {
         id: msg.ts ?? "",
         threadId: threadTs,
         channelId,
         channelName,
-        userId: msg.user ?? "",
-        userName: userInfo?.name ?? msg.user ?? "unknown",
-        userAvatarUrl: userInfo?.avatar || undefined,
+        userId: msg.user ?? msg.bot_id ?? "",
+        userName: userInfo?.name ?? botName ?? msg.user ?? "unknown",
+        userAvatarUrl: userInfo?.avatar || botAvatar || undefined,
         text: this.resolveSlackMentions(msg.text ?? ""),
         timestamp: msg.ts ? slackTsToISO(msg.ts) : "",
         platform: "slack",
-        senderType: userInfo ? (userInfo.isBot ? "agent" : "human") as const : "unknown" as const,
+        senderType: userInfo ? (userInfo.isBot ? "agent" : "human") as const
+          : (msg.bot_id ? "agent" as const : "unknown" as const),
       };
     });
 

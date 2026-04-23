@@ -366,8 +366,13 @@ export interface TimelineEntry {
   entryType: EntryType;
   status: string;
   timestamp: string;
+  agentId: string | null;
   agentName: string | null;
+  agentAvatarUrl: string | null;
+  channelId: string;
   channelName: string;
+  threadId: string;
+  platform: string;
   summary: string;
   rawText: string;
   isOperator: boolean;
