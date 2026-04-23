@@ -155,6 +155,8 @@ function createMockGraph(): ContextGraph {
     setPollCursor: vi.fn(),
     getOpenWorkItemSummaries: vi.fn().mockReturnValue([]),
     findCandidateWorkItems: vi.fn().mockReturnValue([]),
+    computeBotTypes: vi.fn(),
+    getBotType: vi.fn().mockReturnValue(null),
     upsertEnrichment: vi.fn(),
     getActiveThreads: vi.fn().mockReturnValue([]),
   } as unknown as ContextGraph;

@@ -128,6 +128,7 @@ function toAgent(row: AgentRow): Agent {
     role: row.role,
     avatarUrl: row.avatar_url,
     isBot: row.is_bot != null ? row.is_bot === 1 : null,
+    botType: row.bot_type as Agent["botType"] ?? null,
     firstSeen: row.first_seen,
     lastSeen: row.last_seen,
   };
@@ -212,6 +213,86 @@ export class ContextGraph {
       .prepare("SELECT * FROM agents ORDER BY last_seen DESC")
       .all() as AgentRow[];
     return rows.map(toAgent);
+  }
+
+  /**
+   * Compute bot_type for all bots based on behavioral heuristics.
+   * Notification bots: always start threads, post templated messages, never converse.
+   * AI agents: varied messages, participate in conversations, respond to others.
+   *
+   * Call this periodically (e.g. after each poll cycle) to reclassify as data accumulates.
+   */
+  computeBotTypes(): void {
+    const rows = this.db.db.prepare(`
+      SELECT
+        a.id,
+        a.is_bot,
+        COUNT(DISTINCT e.thread_id) AS threads_posted_in,
+        COUNT(DISTINCT e.id) AS total_events,
+        -- How many distinct message openings (proxy for template variety)
+        COUNT(DISTINCT SUBSTR(e.raw_text, 1, 50)) AS distinct_openings,
+        -- How many threads did this agent start (posted the first event)
+        SUM(CASE WHEN e.message_id = (
+          SELECT MIN(e2.message_id) FROM events e2 WHERE e2.thread_id = e.thread_id
+        ) THEN 1 ELSE 0 END) AS times_started_thread,
+        -- How many threads include other participants
+        (SELECT COUNT(DISTINCT e3.thread_id) FROM events e3
+         WHERE e3.agent_id = a.id
+         AND EXISTS (SELECT 1 FROM events e4 WHERE e4.thread_id = e3.thread_id AND e4.agent_id != a.id)
+        ) AS threads_with_others
+      FROM agents a
+      JOIN events e ON a.id = e.agent_id
+      WHERE a.is_bot = 1
+      GROUP BY a.id
+      HAVING total_events >= 2
+    `).all() as Array<{
+      id: string;
+      is_bot: number;
+      threads_posted_in: number;
+      total_events: number;
+      distinct_openings: number;
+      times_started_thread: number;
+      threads_with_others: number;
+    }>;
+
+    const updateStmt = this.db.db.prepare("UPDATE agents SET bot_type = ? WHERE id = ?");
+
+    for (const row of rows) {
+      let score = 0;
+
+      // Always starts threads (never responds mid-conversation)
+      if (row.threads_posted_in > 0 && row.times_started_thread === row.threads_posted_in) {
+        score += 0.3;
+      }
+
+      // High template repetition (few distinct openings across many messages)
+      const repetitionRatio = row.total_events / Math.max(1, row.distinct_openings);
+      if (repetitionRatio > 5) {
+        score += 0.4;
+      }
+
+      // Never appears in threads with other participants
+      if (row.threads_with_others === 0) {
+        score += 0.2;
+      }
+
+      // Slack bot IDs start with "B" vs user IDs starting with "U"
+      if (row.id.startsWith("B")) {
+        score += 0.1;
+      }
+
+      const botType = score >= 0.5 ? "notification" : "agent";
+      updateStmt.run(botType, row.id);
+    }
+
+    log.info(`Computed bot_type for ${rows.length} bots`);
+  }
+
+  getBotType(agentId: string): "agent" | "notification" | null {
+    const row = this.db.db.prepare("SELECT bot_type FROM agents WHERE id = ?").get(agentId) as
+      | { bot_type: string | null }
+      | undefined;
+    return (row?.bot_type as "agent" | "notification") ?? null;
   }
 
   // --- Work Items ---

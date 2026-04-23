@@ -10,6 +10,7 @@ export interface AgentRow {
   role: string | null;
   avatar_url: string | null;
   is_bot: number | null;
+  bot_type: string | null;
   first_seen: string;
   last_seen: string;
 }

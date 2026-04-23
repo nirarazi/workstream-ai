@@ -224,6 +224,11 @@ export class Pipeline {
       }
     }
 
+    // Recompute bot types after processing — more data may refine classifications
+    if (processed > 0) {
+      this.graph.computeBotTypes();
+    }
+
     return { processed, classified, errors };
   }
 
@@ -417,9 +422,17 @@ export class Pipeline {
     const extractedIds = this.linker.linkMessage(message.text, thread.id);
 
     // Step 2: Classify the message with operator identities and sender context
+    // Override senderType if the graph has classified this bot as a notification source
+    let effectiveSenderType = message.senderType ?? "unknown";
+    if (effectiveSenderType === "agent") {
+      const botType = this.graph.getBotType(message.userId);
+      if (botType === "notification") {
+        effectiveSenderType = "notification";
+      }
+    }
     const senderContext = {
       senderName: message.userName,
-      senderType: message.senderType ?? "unknown",
+      senderType: effectiveSenderType,
       channelName: message.channelName,
     };
     const classification = await this.classifier.classify(message.text, candidateContext, this.operatorIdentities, senderContext, this.getValidPrefixes());
