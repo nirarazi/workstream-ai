@@ -60,7 +60,7 @@ export interface Message {
   text: string;
   timestamp: string;
   platform: string;
-  senderType?: "agent" | "human" | "unknown";
+  senderType?: "agent" | "human" | "notification" | "unknown";
 }
 
 export interface Thread {
@@ -100,6 +100,7 @@ export interface Agent {
   role: string | null;
   avatarUrl: string | null;
   isBot: boolean | null;
+  botType: "agent" | "notification" | null;
   firstSeen: string;
   lastSeen: string;
 }

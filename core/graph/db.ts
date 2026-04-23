@@ -254,6 +254,12 @@ export class Database {
       log.info("Migration: added is_bot column to agents");
     }
 
+    // Add bot_type column to agents table (null = unclassified, "agent" = AI agent, "notification" = notification bot)
+    if (!agentColsForBot.some((c) => c.name === "bot_type")) {
+      this.db.exec("ALTER TABLE agents ADD COLUMN bot_type TEXT DEFAULT NULL");
+      log.info("Migration: added bot_type column to agents");
+    }
+
     // Add pinned and dismissed_at columns to work_items table
     const workItemCols = this.db.pragma("table_info(work_items)") as Array<{ name: string }>;
     if (!workItemCols.some((c) => c.name === "pinned")) {

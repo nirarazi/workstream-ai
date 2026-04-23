@@ -803,4 +803,54 @@ describe("Database", () => {
       expect(candidates).toEqual([]);
     });
   });
+
+  describe("computeBotTypes", () => {
+    it("classifies templated one-way bots as notification", () => {
+      // Create a notification bot: posts the same template, always starts threads, no conversations
+      graph.upsertAgent({ id: "B-crm", name: "CRM Bot", platform: "slack", platformUserId: "B-crm", isBot: true });
+      graph.upsertWorkItem({ id: "thread:t1", source: "inferred", title: "Lead 1" });
+      graph.upsertWorkItem({ id: "thread:t2", source: "inferred", title: "Lead 2" });
+      graph.upsertWorkItem({ id: "thread:t3", source: "inferred", title: "Lead 3" });
+
+      for (let i = 1; i <= 3; i++) {
+        graph.upsertThread({ id: `t${i}`, channelId: "C-leads", channelName: "#leads", platform: "slack", workItemId: `thread:t${i}`, lastActivity: new Date().toISOString(), messageCount: 1 });
+        graph.insertEvent({ threadId: `t${i}`, messageId: `m-crm-${i}`, workItemId: `thread:t${i}`, agentId: "B-crm", status: "blocked_on_human", confidence: 0.8, reason: "Lead alert", rawText: "*Alert: New lead determination*\n*QUOTE:* Q12345", timestamp: new Date().toISOString() });
+      }
+
+      graph.computeBotTypes();
+
+      expect(graph.getBotType("B-crm")).toBe("notification");
+    });
+
+    it("classifies conversational bots as agent", () => {
+      // Create an AI agent bot: varied messages, participates in threads with others
+      graph.upsertAgent({ id: "U-levy", name: "Levy", platform: "slack", platformUserId: "U-levy", isBot: true });
+      graph.upsertAgent({ id: "U-human", name: "Nir", platform: "slack", platformUserId: "U-human", isBot: false });
+      graph.upsertWorkItem({ id: "AI-100", source: "extracted", title: "Deployment task" });
+
+      graph.upsertThread({ id: "t-conv1", channelId: "C-ops", channelName: "#ops", platform: "slack", workItemId: "AI-100", lastActivity: new Date().toISOString(), messageCount: 3 });
+      // Levy starts a thread
+      graph.insertEvent({ threadId: "t-conv1", messageId: "m-levy-1", workItemId: "AI-100", agentId: "U-levy", status: "in_progress", confidence: 0.9, reason: "Working", rawText: "Starting deployment of AI-100", timestamp: new Date().toISOString() });
+      // Human replies
+      graph.insertEvent({ threadId: "t-conv1", messageId: "m-human-1", workItemId: "AI-100", agentId: "U-human", status: "noise", confidence: 0.9, reason: "Ack", rawText: "Sounds good, proceed", timestamp: new Date().toISOString() });
+      // Levy responds
+      graph.insertEvent({ threadId: "t-conv1", messageId: "m-levy-2", workItemId: "AI-100", agentId: "U-levy", status: "in_progress", confidence: 0.9, reason: "Continuing", rawText: "Deployment 60% complete, running migrations", timestamp: new Date().toISOString() });
+
+      graph.computeBotTypes();
+
+      expect(graph.getBotType("U-levy")).toBe("agent");
+    });
+
+    it("requires minimum 2 events before classifying", () => {
+      graph.upsertAgent({ id: "B-new", name: "New Bot", platform: "slack", platformUserId: "B-new", isBot: true });
+      graph.upsertWorkItem({ id: "thread:t-single", source: "inferred", title: "Single post" });
+      graph.upsertThread({ id: "t-single", channelId: "C-1", channelName: "#test", platform: "slack", workItemId: "thread:t-single", lastActivity: new Date().toISOString(), messageCount: 1 });
+      graph.insertEvent({ threadId: "t-single", messageId: "m-single", workItemId: "thread:t-single", agentId: "B-new", status: "noise", confidence: 0.5, reason: "First post", rawText: "Hello world", timestamp: new Date().toISOString() });
+
+      graph.computeBotTypes();
+
+      // Not enough data — should remain unclassified
+      expect(graph.getBotType("B-new")).toBeNull();
+    });
+  });
 });
