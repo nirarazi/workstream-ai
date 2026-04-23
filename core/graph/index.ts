@@ -256,6 +256,7 @@ export class ContextGraph {
     }>;
 
     const updateStmt = this.db.db.prepare("UPDATE agents SET bot_type = ? WHERE id = ?");
+    const newlyNotification: string[] = [];
 
     for (const row of rows) {
       let score = 0;
@@ -282,7 +283,39 @@ export class ContextGraph {
       }
 
       const botType = score >= 0.5 ? "notification" : "agent";
+
+      // Track bots newly classified as notification (for retroactive cleanup)
+      const existing = this.db.db.prepare("SELECT bot_type FROM agents WHERE id = ?").get(row.id) as { bot_type: string | null } | undefined;
+      if (botType === "notification" && existing?.bot_type !== "notification") {
+        newlyNotification.push(row.id);
+      }
+
       updateStmt.run(botType, row.id);
+    }
+
+    // Retroactively mark work items from newly-classified notification bots as noise.
+    // Only affects work items where the bot is the sole contributor — if a human
+    // participated in the thread, leave the work item status alone.
+    if (newlyNotification.length > 0) {
+      const placeholders = newlyNotification.map(() => "?").join(",");
+      const result = this.db.db.prepare(`
+        UPDATE work_items SET current_atc_status = 'noise', current_confidence = 0.9
+        WHERE id IN (
+          SELECT DISTINCT e.work_item_id FROM events e
+          WHERE e.agent_id IN (${placeholders})
+            AND e.work_item_id IS NOT NULL
+            AND NOT EXISTS (
+              SELECT 1 FROM events e2
+              JOIN agents a2 ON e2.agent_id = a2.id
+              WHERE e2.work_item_id = e.work_item_id
+                AND (a2.is_bot = 0 OR a2.is_bot IS NULL)
+            )
+        )
+        AND current_atc_status != 'noise'
+      `).run(...newlyNotification);
+      if (result.changes > 0) {
+        log.info(`Retroactively marked ${result.changes} work items as noise from newly-classified notification bots`);
+      }
     }
 
     log.info(`Computed bot_type for ${rows.length} bots`);

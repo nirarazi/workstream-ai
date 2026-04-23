@@ -852,5 +852,53 @@ describe("Database", () => {
       // Not enough data — should remain unclassified
       expect(graph.getBotType("B-new")).toBeNull();
     });
+
+    it("retroactively marks bot-only work items as noise on first classification", () => {
+      // Create a notification bot with blocked_on_human work items (cold start scenario)
+      graph.upsertAgent({ id: "B-sync", name: "Sync Bot", platform: "slack", platformUserId: "B-sync", isBot: true });
+
+      for (let i = 1; i <= 3; i++) {
+        graph.upsertWorkItem({ id: `thread:lead-${i}`, source: "inferred", title: "New lead pending", currentAtcStatus: "blocked_on_human" });
+        graph.upsertThread({ id: `lead-${i}`, channelId: "C-leads", channelName: "#leads", platform: "slack", workItemId: `thread:lead-${i}`, lastActivity: new Date().toISOString(), messageCount: 1 });
+        graph.insertEvent({ threadId: `lead-${i}`, messageId: `m-sync-${i}`, workItemId: `thread:lead-${i}`, agentId: "B-sync", status: "blocked_on_human", confidence: 0.8, reason: "Lead alert", rawText: "*Alert: New lead determination*", timestamp: new Date().toISOString() });
+      }
+
+      // Before classification, all are blocked
+      expect(graph.getWorkItemById("thread:lead-1")!.currentAtcStatus).toBe("blocked_on_human");
+
+      graph.computeBotTypes();
+
+      // After classification, bot-only work items should be noise
+      expect(graph.getWorkItemById("thread:lead-1")!.currentAtcStatus).toBe("noise");
+      expect(graph.getWorkItemById("thread:lead-2")!.currentAtcStatus).toBe("noise");
+      expect(graph.getWorkItemById("thread:lead-3")!.currentAtcStatus).toBe("noise");
+    });
+
+    it("preserves work item status when a human participated in the thread", () => {
+      // A notification bot that is already classified, plus a work item where a human replied
+      graph.upsertAgent({ id: "B-alert", name: "Alert Bot", platform: "slack", platformUserId: "B-alert", isBot: true });
+      graph.upsertAgent({ id: "U-kris", name: "Kris", platform: "slack", platformUserId: "U-kris", isBot: false });
+
+      // Create many bot-only threads (enough for notification classification despite 1 mixed thread)
+      for (let i = 1; i <= 10; i++) {
+        graph.upsertWorkItem({ id: `thread:alert-${i}`, source: "inferred", title: "Pure bot alert", currentAtcStatus: "blocked_on_human" });
+        graph.upsertThread({ id: `alert-${i}`, channelId: "C-leads", channelName: "#leads", platform: "slack", workItemId: `thread:alert-${i}`, lastActivity: new Date().toISOString(), messageCount: 1 });
+        graph.insertEvent({ threadId: `alert-${i}`, messageId: `m-alert-${i}`, workItemId: `thread:alert-${i}`, agentId: "B-alert", status: "blocked_on_human", confidence: 0.8, reason: "Alert", rawText: "*Alert: New lead determination*", timestamp: new Date().toISOString() });
+      }
+
+      // Create a thread where the bot posted AND a human replied
+      graph.upsertWorkItem({ id: "thread:mixed", source: "inferred", title: "Lead with human reply", currentAtcStatus: "blocked_on_human" });
+      graph.upsertThread({ id: "mixed", channelId: "C-leads", channelName: "#leads", platform: "slack", workItemId: "thread:mixed", lastActivity: new Date().toISOString(), messageCount: 2 });
+      graph.insertEvent({ threadId: "mixed", messageId: "m-alert-mixed", workItemId: "thread:mixed", agentId: "B-alert", status: "blocked_on_human", confidence: 0.8, reason: "Alert", rawText: "*Alert: New lead determination*", timestamp: new Date().toISOString() });
+      graph.insertEvent({ threadId: "mixed", messageId: "m-kris-1", workItemId: "thread:mixed", agentId: "U-kris", status: "blocked_on_human", confidence: 0.8, reason: "Human action", rawText: "Kris, take care of this please", timestamp: new Date().toISOString() });
+
+      graph.computeBotTypes();
+
+      // Bot-only threads get marked noise
+      expect(graph.getWorkItemById("thread:alert-1")!.currentAtcStatus).toBe("noise");
+      expect(graph.getWorkItemById("thread:alert-2")!.currentAtcStatus).toBe("noise");
+      // Human-participated thread stays blocked
+      expect(graph.getWorkItemById("thread:mixed")!.currentAtcStatus).toBe("blocked_on_human");
+    });
   });
 });
