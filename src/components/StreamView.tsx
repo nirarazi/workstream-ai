@@ -157,17 +157,41 @@ export default function StreamView({
     setDragOverId(null);
   }, [draggingId, handleMerge]);
 
-  // ⌘Z keyboard shortcut for undo
+  // Keyboard shortcuts: ⌘Z (undo), M (open merge dropdown), ⇧M (quick merge)
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
+      // Don't capture when typing in inputs
+      const tag = (e.target as HTMLElement)?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA") return;
+
+      // ⌘Z — undo merge
       if ((e.metaKey || e.ctrlKey) && e.key === "z" && undoState) {
         e.preventDefault();
         handleUndo();
+        return;
+      }
+
+      // M — open "Merge into..." dropdown (dispatched to detail panel)
+      if (e.key === "m" && !e.metaKey && !e.ctrlKey && !e.shiftKey && selectedWorkItemId) {
+        e.preventDefault();
+        window.dispatchEvent(new CustomEvent("workstream:open-merge-dropdown"));
+        return;
+      }
+
+      // ⇧M — instant merge with previously viewed item
+      if (e.key === "M" && e.shiftKey && !e.metaKey && !e.ctrlKey && selectedWorkItemId) {
+        e.preventDefault();
+        const target = recentlyViewed.find((v) => v.id !== selectedWorkItemId);
+        if (target) {
+          handleMerge(selectedWorkItemId, target.id);
+        }
+        return;
       }
     };
+
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [undoState, handleUndo]);
+  }, [undoState, handleUndo, selectedWorkItemId, recentlyViewed, handleMerge]);
 
   const sortedItems = [...currentItems].sort((a, b) => {
     // Pinned items first
