@@ -27,6 +27,7 @@ export interface WorkItemRow {
   snoozed_until: string | null;
   pinned: number;         // 0 or 1
   dismissed_at: string | null;
+  merged_into: string | null;
   created_at: string;
   updated_at: string;
 }

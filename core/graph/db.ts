@@ -270,6 +270,13 @@ export class Database {
       this.db.exec("ALTER TABLE work_items ADD COLUMN dismissed_at TEXT DEFAULT NULL");
       log.info("Migration: added dismissed_at column to work_items");
     }
+
+    // Add merged_into column to work_items table (for work item merge support)
+    const wiColsMerge = this.db.pragma("table_info(work_items)") as Array<{ name: string }>;
+    if (!wiColsMerge.some((c) => c.name === "merged_into")) {
+      this.db.exec("ALTER TABLE work_items ADD COLUMN merged_into TEXT DEFAULT NULL");
+      log.info("Migration: added merged_into column to work_items");
+    }
   }
 
   prepare<T>(sql: string): BetterSqlite3Type.Statement<T[]> {

@@ -70,6 +70,7 @@ function toWorkItem(row: WorkItemRow): WorkItem {
     snoozedUntil: row.snoozed_until,
     pinned: Boolean(row.pinned),
     dismissedAt: row.dismissed_at,
+    mergedInto: row.merged_into ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
