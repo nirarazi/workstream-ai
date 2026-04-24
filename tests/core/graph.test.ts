@@ -175,6 +175,49 @@ describe("mergeWorkItems and unmergeWorkItem", () => {
   });
 });
 
+describe("merged items excluded from queries", () => {
+  let db: Database;
+  let graph: ContextGraph;
+
+  beforeEach(() => {
+    db = new Database(":memory:");
+    graph = new ContextGraph(db);
+  });
+
+  afterEach(() => {
+    db.close();
+  });
+
+  it("getActionableItems excludes merged work items", () => {
+    // Create two work items, both actionable (needs_decision)
+    graph.upsertWorkItem({ id: "WI-merged", source: "test", title: "Merged", currentAtcStatus: "needs_decision" });
+    graph.upsertWorkItem({ id: "WI-visible", source: "test", title: "Visible", currentAtcStatus: "needs_decision" });
+    graph.upsertAgent({ id: "U1", name: "Agent", platform: "slack", platformUserId: "U1", avatarUrl: null, isBot: true });
+
+    for (const wiId of ["WI-merged", "WI-visible"]) {
+      graph.upsertThread({
+        id: `t-${wiId}`, channelId: "C1", channelName: "#test",
+        platform: "slack", workItemId: wiId,
+        lastActivity: new Date().toISOString(), messageCount: 1,
+      });
+      graph.insertEvent({
+        threadId: `t-${wiId}`, messageId: `msg-${wiId}`, workItemId: wiId,
+        agentId: "U1", status: "needs_decision", confidence: 0.9,
+        reason: "test", rawText: "Help", timestamp: new Date().toISOString(),
+        targetedAtOperator: true,
+      });
+    }
+
+    // Merge one
+    graph.mergeWorkItems("WI-merged", "WI-visible");
+
+    const items = graph.getActionableItems();
+    const ids = items.map((i: any) => i.workItem.id);
+    expect(ids).not.toContain("WI-merged");
+    expect(ids).toContain("WI-visible");
+  });
+});
+
 describe("getRecentChannelContext", () => {
   let db: Database;
   let graph: ContextGraph;
