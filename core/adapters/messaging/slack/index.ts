@@ -198,7 +198,7 @@ export class SlackAdapter implements MessagingAdapter {
     }
   }
 
-  async readThreads(since: Date, channels?: string[]): Promise<Thread[]> {
+  async readThreads(since: Date, channels?: string[], perChannelSince?: Map<string, Date>): Promise<Thread[]> {
     this.ensureConnected();
 
     const channelIds = channels?.length
@@ -206,11 +206,17 @@ export class SlackAdapter implements MessagingAdapter {
       : await this.getAllChannelIds();
 
     const threads: Thread[] = [];
-    const oldest = String(since.getTime() / 1000);
+    const globalOldest = String(since.getTime() / 1000);
 
     for (const channelId of channelIds) {
       const channelInfo = this.channelMap.get(channelId);
       const channelName = channelInfo?.name ?? channelId;
+
+      // Use per-channel cursor if available, otherwise fall back to global
+      const channelSince = perChannelSince?.get(channelId);
+      const oldest = channelSince
+        ? String(channelSince.getTime() / 1000)
+        : globalOldest;
 
       const messages = await this.fetchChannelHistory(channelId, oldest);
 

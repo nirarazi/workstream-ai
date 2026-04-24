@@ -152,6 +152,7 @@ function createMockGraph(): ContextGraph {
     getWorkItemById: vi.fn().mockImplementation((id: string) => workItems.get(id) ?? null),
     getThreadById: vi.fn().mockReturnValue(null),
     getPollCursor: vi.fn().mockReturnValue(null),
+    getAllPollCursors: vi.fn().mockReturnValue([]),
     setPollCursor: vi.fn(),
     getOpenWorkItemSummaries: vi.fn().mockReturnValue([]),
     findCandidateWorkItems: vi.fn().mockReturnValue([]),
@@ -373,32 +374,31 @@ describe("Pipeline", () => {
       );
     });
 
-    it("uses poll cursor as since date when available", async () => {
-      vi.mocked(graph.getPollCursor).mockReturnValue({
-        channelId: "C-1",
-        lastTimestamp: "2026-03-29T08:00:00.000Z",
-        updatedAt: "2026-03-29T08:00:00.000Z",
-      });
+    it("passes per-channel cursors when available", async () => {
+      vi.mocked(graph.getAllPollCursors).mockReturnValue([
+        { channelId: "C-1", lastTimestamp: "2026-03-29T08:00:00.000Z", updatedAt: "2026-03-29T08:00:00.000Z" },
+      ]);
 
       vi.mocked(adapter.readThreads).mockResolvedValue([]);
 
       await pipeline.processOnce();
 
-      const sinceArg = vi.mocked(adapter.readThreads).mock.calls[0][0];
-      expect(sinceArg.toISOString()).toBe("2026-03-29T08:00:00.000Z");
+      const perChannelSince = vi.mocked(adapter.readThreads).mock.calls[0][2];
+      expect(perChannelSince).toBeDefined();
+      expect(perChannelSince!.get("C-1")!.toISOString()).toBe("2026-03-29T08:00:00.000Z");
     });
 
-    it("falls back to 7 days ago when no poll cursor exists", async () => {
-      vi.mocked(graph.getPollCursor).mockReturnValue(null);
+    it("falls back to initialDays lookback when no poll cursors exist", async () => {
+      vi.mocked(graph.getAllPollCursors).mockReturnValue([]);
       vi.mocked(adapter.readThreads).mockResolvedValue([]);
 
       const before = new Date();
-      before.setDate(before.getDate() - 7);
+      before.setDate(before.getDate() - 1); // default initialDays = 1
 
       await pipeline.processOnce();
 
       const sinceArg = vi.mocked(adapter.readThreads).mock.calls[0][0];
-      // Should be roughly 7 days ago (within a few seconds)
+      // Should be roughly 1 day ago (within a few seconds)
       expect(sinceArg.getTime()).toBeGreaterThanOrEqual(before.getTime() - 5000);
       expect(sinceArg.getTime()).toBeLessThanOrEqual(Date.now());
     });

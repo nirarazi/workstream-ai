@@ -674,6 +674,13 @@ export class ContextGraph {
     return row ? toPollCursor(row) : null;
   }
 
+  getAllPollCursors(): PollCursor[] {
+    const rows = this.db.db
+      .prepare("SELECT * FROM poll_cursors")
+      .all() as PollCursorRow[];
+    return rows.map(toPollCursor);
+  }
+
   setPollCursor(channelId: string, lastTimestamp: string): PollCursor {
     const now = new Date().toISOString();
 
