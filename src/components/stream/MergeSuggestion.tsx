@@ -45,8 +45,8 @@ export default function MergeSuggestion({
       <span className="text-lg">🔗</span>
       <div className="flex-1 min-w-0">
         <div className="text-xs font-medium text-purple-300">Same conversation?</div>
-        <div className="text-[11px] text-gray-400 mt-0.5 truncate">
-          You were just viewing "<span className="text-gray-300">{suggestion.title || suggestion.id}</span>" in the same channel
+        <div className="text-[11px] text-gray-300 mt-0.5 truncate">
+          You were just viewing "<span className="text-gray-100">{suggestion.title || suggestion.id}</span>" in the same channel
         </div>
       </div>
       <div className="flex items-center gap-1.5 flex-shrink-0">
