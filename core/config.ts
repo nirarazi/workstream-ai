@@ -44,6 +44,11 @@ const ConfigSchema = z.object({
     maxThreadsPerPoll: z.number(),
     maxActiveThreadRepolls: z.number().optional(),
   }).optional(),
+  continuation: z.object({
+    strategy: z.string(),
+    channelContextWindow: z.number(),
+    maxContextMessages: z.number(),
+  }).optional(),
   mcp: z.object({
     transport: z.string(),
   }),

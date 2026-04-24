@@ -160,6 +160,7 @@ function createMockGraph(): ContextGraph {
     getBotType: vi.fn().mockReturnValue(null),
     upsertEnrichment: vi.fn(),
     getActiveThreads: vi.fn().mockReturnValue([]),
+    getRecentChannelContext: vi.fn().mockReturnValue([]),
   } as unknown as ContextGraph;
 }
 
@@ -218,6 +219,7 @@ describe("Pipeline", () => {
         expect.any(Array),
         null,
         { senderName: "Byte", senderType: "unknown", channelName: "agent-orchestrator" },
+        [],
         [],
       );
     });
@@ -581,6 +583,7 @@ describe("Pipeline", () => {
         null,
         { senderName: "Byte", senderType: "unknown", channelName: "agent-orchestrator" },
         [],
+        [],
       );
     });
 
@@ -872,6 +875,7 @@ describe("Pipeline", () => {
         operatorIdentities,
         expect.objectContaining({ senderName: "Byte" }),
         [],
+        [],
       );
     });
 
@@ -887,6 +891,7 @@ describe("Pipeline", () => {
         null,
         expect.objectContaining({ senderName: "Byte" }),
         [],
+        [],
       );
     });
 
@@ -901,6 +906,7 @@ describe("Pipeline", () => {
         expect.any(Array),
         null,
         { senderName: "Pixel", senderType: "agent", channelName: "#design" },
+        [],
         [],
       );
     });
@@ -1038,6 +1044,7 @@ describe("Pipeline", () => {
         null,
         expect.objectContaining({ senderName: "Byte" }),
         [],
+        [],
       );
     });
 
@@ -1130,6 +1137,50 @@ describe("Pipeline", () => {
       const upsertWorkItemCalls = vi.mocked(graph.upsertWorkItem).mock.calls;
       const syntheticIds = upsertWorkItemCalls.map((c: any[]) => c[0].id);
       expect(syntheticIds).not.toContain("thread:t-new");
+    });
+  });
+
+  describe("continuation detection", () => {
+    it("passes channel context to classifier for standalone messages", async () => {
+      const channelContext = [
+        {
+          workItemId: "thread:ts1",
+          workItemTitle: "Partner approval",
+          senderName: "Guy",
+          text: "I'm OK with it. But would a partner?",
+          timestamp: new Date(Date.now() - 120000).toISOString(),
+        },
+      ];
+      vi.mocked(graph.getRecentChannelContext).mockReturnValue(channelContext);
+      // Set up a single standalone message (1-message thread)
+      vi.mocked(adapter.readThreads).mockResolvedValue([
+        makeThread({ id: "ts2", channelId: "C1" }, [makeMessage({ id: "msg2", threadId: "ts2" })]),
+      ]);
+
+      await pipeline.processOnce();
+
+      // Verify channelContext was passed as the 6th argument to classify
+      const classifyCall = vi.mocked(classifier.classify).mock.calls[0];
+      expect(classifyCall[5]).toEqual(channelContext);
+    });
+
+    it("passes empty channel context for threaded messages", async () => {
+      vi.mocked(graph.getRecentChannelContext).mockReturnValue([]);
+      // Thread with multiple messages = explicitly threaded
+      vi.mocked(adapter.readThreads).mockResolvedValue([
+        makeThread({ id: "ts3", channelId: "C1" }, [
+          makeMessage({ id: "msg3a", threadId: "ts3" }),
+          makeMessage({ id: "msg3b", threadId: "ts3", timestamp: "2026-03-30T11:00:00.000Z" }),
+        ]),
+      ]);
+
+      await pipeline.processOnce();
+
+      // channelContext should be empty for threaded messages
+      const classifyCalls = vi.mocked(classifier.classify).mock.calls;
+      if (classifyCalls.length > 0) {
+        expect(classifyCalls[0][5]).toEqual([]);
+      }
     });
   });
 });

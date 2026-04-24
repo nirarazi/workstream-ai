@@ -43,6 +43,12 @@ lookback:
   # Max threads to classify per poll cycle (0 = unlimited)
   maxThreadsPerPoll: 50
 
+continuation:
+  # Strategy for grouping non-threaded messages into conversations
+  strategy: "classifier-inline"   # enriches classifier prompt with channel context
+  channelContextWindow: 30        # minutes to look back for recent messages
+  maxContextMessages: 5           # max messages to include as channel context
+
 mcp:
   # Transport: "stdio" for local agents
   transport: stdio

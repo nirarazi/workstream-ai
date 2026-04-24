@@ -419,6 +419,20 @@ export class Pipeline {
       reasons: c.reasons,
     }));
 
+    // Step 0f: Gather recent channel context for continuation detection.
+    // Only for standalone (non-threaded) messages — threaded messages are already
+    // grouped by Slack's native threading.
+    const isStandaloneMessage = thread.messages.length <= 1;
+    const continuationConfig = this.config?.continuation;
+    const channelContext = isStandaloneMessage
+      ? this.graph.getRecentChannelContext({
+          channelId: thread.channelId,
+          windowMinutes: continuationConfig?.channelContextWindow ?? 30,
+          limit: continuationConfig?.maxContextMessages ?? 5,
+          excludeThreadId: thread.id,
+        })
+      : [];
+
     // Step 1: Link work items from message text (regex — only known prefixes)
     const extractedIds = this.linker.linkMessage(message.text, thread.id);
 
@@ -436,7 +450,7 @@ export class Pipeline {
       senderType: effectiveSenderType,
       channelName: message.channelName,
     };
-    const classification = await this.classifier.classify(message.text, candidateContext, this.operatorIdentities, senderContext, this.getValidPrefixes());
+    const classification = await this.classifier.classify(message.text, candidateContext, this.operatorIdentities, senderContext, this.getValidPrefixes(), channelContext);
 
     // Separate LLM-suggested IDs into verified (match an extracted ID) and unverified
     const extractedSet = new Set(extractedIds);
