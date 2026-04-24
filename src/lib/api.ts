@@ -551,3 +551,36 @@ export async function openExternalUrl(url: string): Promise<void> {
     window.open(url, "_blank", "noreferrer");
   }
 }
+
+// ---------------------------------------------------------------------------
+// Work item merge operations
+// ---------------------------------------------------------------------------
+
+export interface MergeRecord {
+  sourceId: string;
+  targetId: string;
+  sourceTitle: string;
+  movedThreadIds: string[];
+}
+
+export function mergeWorkItems(
+  targetId: string,
+  sourceId: string,
+): Promise<{ ok: boolean; record: MergeRecord }> {
+  return apiFetch(`/api/work-item/${encodeURIComponent(targetId)}/merge`, {
+    method: "POST",
+    body: JSON.stringify({ sourceId }),
+  });
+}
+
+export function unmergeWorkItem(sourceId: string): Promise<{ ok: boolean }> {
+  return apiFetch(`/api/work-item/${encodeURIComponent(sourceId)}/unmerge`, {
+    method: "POST",
+  });
+}
+
+export function searchWorkItems(
+  query: string,
+): Promise<{ items: Array<{ id: string; title: string; currentAtcStatus: string | null }> }> {
+  return apiFetch(`/api/work-items/search?q=${encodeURIComponent(query)}`);
+}
