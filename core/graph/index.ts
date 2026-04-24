@@ -1159,6 +1159,75 @@ export class ContextGraph {
     }));
   }
 
+  // --- Merge / Unmerge ---
+
+  mergeWorkItems(sourceId: string, targetId: string): {
+    sourceId: string;
+    targetId: string;
+    sourceTitle: string;
+    movedThreadIds: string[];
+  } {
+    const source = this.getWorkItemById(sourceId);
+    if (!source) throw new Error(`Source work item not found: ${sourceId}`);
+    if (!this.getWorkItemById(targetId)) throw new Error(`Target work item not found: ${targetId}`);
+
+    // Collect thread IDs being moved (for undo record)
+    const movedThreads = this.db.db
+      .prepare("SELECT id FROM threads WHERE work_item_id = ?")
+      .all(sourceId) as Array<{ id: string }>;
+    const movedThreadIds = movedThreads.map(t => t.id);
+
+    // Re-link threads
+    this.db.db
+      .prepare("UPDATE threads SET work_item_id = ? WHERE work_item_id = ?")
+      .run(targetId, sourceId);
+
+    // Re-link events
+    this.db.db
+      .prepare("UPDATE events SET work_item_id = ? WHERE work_item_id = ?")
+      .run(targetId, sourceId);
+
+    // Soft-delete source
+    this.db.db
+      .prepare("UPDATE work_items SET merged_into = ?, updated_at = ? WHERE id = ?")
+      .run(targetId, new Date().toISOString(), sourceId);
+
+    // Touch target updated_at
+    this.db.db
+      .prepare("UPDATE work_items SET updated_at = ? WHERE id = ?")
+      .run(new Date().toISOString(), targetId);
+
+    log.info("Merged work item", sourceId, "into", targetId, `(${movedThreadIds.length} threads moved)`);
+
+    return { sourceId, targetId, sourceTitle: source.title, movedThreadIds };
+  }
+
+  unmergeWorkItem(sourceId: string): void {
+    const source = this.getWorkItemById(sourceId);
+    if (!source) throw new Error(`Source work item not found: ${sourceId}`);
+    if (!source.mergedInto) throw new Error(`Work item ${sourceId} is not merged`);
+
+    const targetId = source.mergedInto;
+
+    // For synthetic work items (thread:xxx), re-link their specific thread back
+    const syntheticThreadId = sourceId.startsWith("thread:") ? sourceId.slice(7) : null;
+    if (syntheticThreadId) {
+      this.db.db
+        .prepare("UPDATE threads SET work_item_id = ? WHERE id = ? AND work_item_id = ?")
+        .run(sourceId, syntheticThreadId, targetId);
+      this.db.db
+        .prepare("UPDATE events SET work_item_id = ? WHERE thread_id = ? AND work_item_id = ?")
+        .run(sourceId, syntheticThreadId, targetId);
+    }
+
+    // Clear merged_into
+    this.db.db
+      .prepare("UPDATE work_items SET merged_into = NULL, updated_at = ? WHERE id = ?")
+      .run(new Date().toISOString(), sourceId);
+
+    log.info("Unmerged work item", sourceId, "from", targetId);
+  }
+
   getRecentItems(limit: number): ActionableItem[] {
     const rows = this.db.db
       .prepare(

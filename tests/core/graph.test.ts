@@ -41,6 +41,140 @@ describe("merged_into column", () => {
   });
 });
 
+describe("mergeWorkItems and unmergeWorkItem", () => {
+  let db: Database;
+  let graph: ContextGraph;
+
+  beforeEach(() => {
+    db = new Database(":memory:");
+    graph = new ContextGraph(db);
+  });
+
+  afterEach(() => {
+    db.close();
+  });
+
+  it("mergeWorkItems re-links threads and events from source to target", () => {
+    graph.upsertWorkItem({ id: "AI-1", source: "jira", title: "Source item" });
+    graph.upsertWorkItem({ id: "AI-2", source: "jira", title: "Target item" });
+
+    graph.upsertThread({
+      id: "thread-src",
+      channelId: "C-general",
+      channelName: "general",
+      platform: "slack",
+      workItemId: "AI-1",
+      messageCount: 1,
+    });
+
+    graph.insertEvent({
+      threadId: "thread-src",
+      messageId: "msg-src-1",
+      workItemId: "AI-1",
+      status: "in_progress",
+      confidence: 0.9,
+      rawText: "Working on source item",
+      timestamp: new Date().toISOString(),
+    });
+
+    graph.mergeWorkItems("AI-1", "AI-2");
+
+    // Thread should now be linked to target
+    const thread = graph.getThreadById("thread-src");
+    expect(thread).not.toBeNull();
+    expect(thread!.workItemId).toBe("AI-2");
+
+    // Source should have merged_into set
+    const source = graph.getWorkItemById("AI-1");
+    expect(source).not.toBeNull();
+    expect(source!.mergedInto).toBe("AI-2");
+
+    // Events should now be linked to target
+    const events = graph.getEventsForWorkItem("AI-2");
+    expect(events.length).toBeGreaterThan(0);
+    expect(events.some(e => e.rawText === "Working on source item")).toBe(true);
+  });
+
+  it("mergeWorkItems returns merge record for undo", () => {
+    graph.upsertWorkItem({ id: "AI-10", source: "jira", title: "Source to merge" });
+    graph.upsertWorkItem({ id: "AI-11", source: "jira", title: "Merge target" });
+
+    graph.upsertThread({
+      id: "thread-merge-1",
+      channelId: "C-general",
+      channelName: "general",
+      platform: "slack",
+      workItemId: "AI-10",
+      messageCount: 1,
+    });
+
+    const record = graph.mergeWorkItems("AI-10", "AI-11");
+
+    expect(record.sourceId).toBe("AI-10");
+    expect(record.targetId).toBe("AI-11");
+    expect(record.sourceTitle).toBe("Source to merge");
+    expect(record.movedThreadIds).toEqual(["thread-merge-1"]);
+  });
+
+  it("unmergeWorkItem reverses a merge", () => {
+    graph.upsertWorkItem({ id: "thread:t-abc", source: "synthetic", title: "Synthetic item" });
+    graph.upsertWorkItem({ id: "AI-20", source: "jira", title: "Real item" });
+
+    graph.upsertThread({
+      id: "t-abc",
+      channelId: "C-general",
+      channelName: "general",
+      platform: "slack",
+      workItemId: "thread:t-abc",
+      messageCount: 1,
+    });
+
+    graph.insertEvent({
+      threadId: "t-abc",
+      messageId: "msg-abc-1",
+      workItemId: "thread:t-abc",
+      status: "in_progress",
+      confidence: 0.8,
+      rawText: "Doing something",
+      timestamp: new Date().toISOString(),
+    });
+
+    // Merge the synthetic item into the real one
+    graph.mergeWorkItems("thread:t-abc", "AI-20");
+
+    // Verify merged state
+    const merged = graph.getWorkItemById("thread:t-abc");
+    expect(merged!.mergedInto).toBe("AI-20");
+
+    // Now unmerge
+    graph.unmergeWorkItem("thread:t-abc");
+
+    // merged_into should be cleared
+    const unmerged = graph.getWorkItemById("thread:t-abc");
+    expect(unmerged!.mergedInto).toBeNull();
+
+    // Thread should be back on source
+    const thread = graph.getThreadById("t-abc");
+    expect(thread!.workItemId).toBe("thread:t-abc");
+  });
+
+  it("mergeWorkItems throws for non-existent source", () => {
+    graph.upsertWorkItem({ id: "AI-30", source: "jira", title: "Real target" });
+
+    expect(() => graph.mergeWorkItems("AI-nonexistent", "AI-30")).toThrow(
+      "Source work item not found: AI-nonexistent"
+    );
+  });
+
+  it("unmergeWorkItem throws for non-merged item", () => {
+    graph.upsertWorkItem({ id: "AI-40", source: "jira", title: "Not merged" });
+
+    expect(() => graph.unmergeWorkItem("AI-40")).toThrow(
+      "Work item AI-40 is not merged"
+    );
+  });
+});
+
 describe("getRecentChannelContext", () => {
   let db: Database;
   let graph: ContextGraph;
