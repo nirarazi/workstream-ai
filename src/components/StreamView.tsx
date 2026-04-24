@@ -160,9 +160,9 @@ export default function StreamView({
   // Keyboard shortcuts: ⌘Z (undo), M (open merge dropdown), ⇧M (quick merge)
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      // Don't capture when typing in inputs
-      const tag = (e.target as HTMLElement)?.tagName;
-      if (tag === "INPUT" || tag === "TEXTAREA") return;
+      // Don't capture when typing in inputs (includes contentEditable for MentionInput)
+      const el = e.target as HTMLElement;
+      if (el?.tagName === "INPUT" || el?.tagName === "TEXTAREA" || el?.isContentEditable) return;
 
       // ⌘Z — undo merge
       if ((e.metaKey || e.ctrlKey) && e.key === "z" && undoState) {
