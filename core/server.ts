@@ -23,6 +23,9 @@ import type { OperatorIdentityMap } from "./types.js";
 
 const log = createLogger("server");
 
+// Adapters that manage their own rate limiting internally (not configurable via UI)
+const SELF_RATE_LIMITED = new Set(["slack"]);
+
 // --- Engine state (mutable, shared across routes) ---
 
 export interface EngineState {
@@ -998,7 +1001,6 @@ export function createApp(state: EngineState): Hono {
       // Recreate rate limiters
       const rlDefaults: Record<string, { maxPerMinute: number; displayName: string }> = {
         llm: { maxPerMinute: 4, displayName: "LLM" },
-        slack: { maxPerMinute: 25, displayName: "Slack" },
         jira: { maxPerMinute: 30, displayName: "Jira" },
       };
       for (const [name, limiter] of Object.entries(state.rateLimiters)) {
@@ -1008,7 +1010,7 @@ export function createApp(state: EngineState): Hono {
       }
       if (state.config.rateLimits) {
         for (const [name, cfg] of Object.entries(state.config.rateLimits)) {
-          if (cfg?.maxPerMinute) {
+          if (cfg?.maxPerMinute && !SELF_RATE_LIMITED.has(name)) {
             rlDefaults[name] = { ...rlDefaults[name], maxPerMinute: cfg.maxPerMinute };
           }
         }
@@ -1234,14 +1236,13 @@ async function main(): Promise<void> {
   // 3. Create rate limiters from config (dynamic — not hardcoded per adapter)
   const defaultRateLimits: Record<string, { maxPerMinute: number; displayName: string }> = {
     llm: { maxPerMinute: 4, displayName: "LLM" },
-    slack: { maxPerMinute: 25, displayName: "Slack" },
     jira: { maxPerMinute: 30, displayName: "Jira" },
   };
   const rateLimiters: Record<string, RateLimiter> = {};
-  // Merge config overrides into defaults
+  // Merge config overrides into defaults (skip adapters with internal rate limiting)
   if (config.rateLimits) {
     for (const [name, cfg] of Object.entries(config.rateLimits)) {
-      if (cfg?.maxPerMinute) {
+      if (cfg?.maxPerMinute && !SELF_RATE_LIMITED.has(name)) {
         defaultRateLimits[name] = {
           ...defaultRateLimits[name],
           maxPerMinute: cfg.maxPerMinute,
