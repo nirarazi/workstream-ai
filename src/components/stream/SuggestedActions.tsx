@@ -1,7 +1,8 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import type { StreamData } from "../../lib/api";
 import { postAction, createTicket, openExternalUrl } from "../../lib/api";
 import SnoozeDropdown from "./SnoozeDropdown";
+import MergeDropdown from "./MergeDropdown";
 
 type ActionKind = "unblock" | "done" | "dismiss" | "snooze" | "noise";
 
@@ -51,13 +52,17 @@ interface SuggestedActionsProps {
   onActionComplete?: (actionKind: string) => void;
   pinned?: boolean;
   onTogglePin?: () => void;
+  onMerge?: (targetId: string) => void;
+  recentlyViewed?: Array<{ id: string; title: string; channelName?: string; timeAgo?: string }>;
+  workItemId?: string;
 }
 
-export default function SuggestedActions({ data, onActioned, getReplyText, onActionComplete, pinned, onTogglePin }: SuggestedActionsProps) {
+export default function SuggestedActions({ data, onActioned, getReplyText, onActionComplete, pinned, onTogglePin, onMerge, recentlyViewed, workItemId }: SuggestedActionsProps) {
   const { workItem } = data;
   const [acting, setActing] = useState<ActionKind | null>(null);
   const [creatingTicket, setCreatingTicket] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showMerge, setShowMerge] = useState(false);
 
   const isInferred = workItem.source === "inferred" || workItem.id.startsWith("thread:");
   const busy = acting !== null || creatingTicket;
@@ -76,6 +81,12 @@ export default function SuggestedActions({ data, onActioned, getReplyText, onAct
       setActing(null);
     }
   }
+
+  useEffect(() => {
+    const handler = () => setShowMerge(true);
+    window.addEventListener("workstream:open-merge-dropdown", handler);
+    return () => window.removeEventListener("workstream:open-merge-dropdown", handler);
+  }, []);
 
   async function handleCreateTicket() {
     setCreatingTicket(true);
@@ -128,6 +139,27 @@ export default function SuggestedActions({ data, onActioned, getReplyText, onAct
           >
             {creatingTicket ? "..." : "Create Ticket"}
           </button>
+        )}
+        {onMerge && (
+          <div className="relative">
+            <button
+              onClick={() => setShowMerge(!showMerge)}
+              className="cursor-pointer rounded px-3 py-1.5 text-xs font-medium bg-purple-800/50 text-purple-300 border border-purple-700/50 hover:bg-purple-700/50 transition-colors"
+            >
+              ⤵ Merge into…
+            </button>
+            {showMerge && (
+              <MergeDropdown
+                recentlyViewed={recentlyViewed ?? []}
+                currentItemId={workItemId ?? ""}
+                onSelect={(targetId) => {
+                  onMerge(targetId);
+                  setShowMerge(false);
+                }}
+                onClose={() => setShowMerge(false)}
+              />
+            )}
+          </div>
         )}
       </div>
       {error && <p className="text-xs text-red-400 mt-2">{error}</p>}
