@@ -15,10 +15,11 @@ interface StreamListItemProps {
   selected: boolean;
   actionState: ActionState;
   resolving?: boolean;
+  mergingAway?: boolean;
   onSelect: () => void;
 }
 
-export default function StreamListItem({ item, selected, actionState, resolving, onSelect }: StreamListItemProps) {
+export default function StreamListItem({ item, selected, actionState, resolving, mergingAway, onSelect }: StreamListItemProps) {
   const { workItem, latestEvent, agent } = item;
   const isThreadItem = workItem.id.startsWith("thread:");
   const status = workItem.currentAtcStatus ?? "noise";
@@ -53,7 +54,7 @@ export default function StreamListItem({ item, selected, actionState, resolving,
         ${borderColor}
         ${selected ? "bg-gray-900/80" : "hover:bg-gray-900/40"}
         ${isSnoozed ? "opacity-50" : ""}
-        ${resolving ? "animate-list-exit pointer-events-none" : !entered ? "animate-list-enter" : ""}
+        ${mergingAway ? "animate-merge-absorb pointer-events-none" : resolving ? "animate-list-exit pointer-events-none" : !entered ? "animate-list-enter" : ""}
       `}
     >
       <div className="flex justify-between items-center">

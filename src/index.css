@@ -155,3 +155,23 @@ html.light .animate-shimmer {
 .animate-input-success { animation: input-success 0.8s ease forwards; }
 .animate-input-error { animation: input-error 0.4s ease; }
 .animate-badge-pop { animation: badge-pop 0.3s ease; }
+
+@keyframes merge-absorb {
+  0% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(0.8); opacity: 0.5; }
+  100% { transform: scale(0.6) translateY(-20px); opacity: 0; }
+}
+
+@keyframes merge-glow {
+  0% { box-shadow: 0 0 0 0 rgba(124, 92, 191, 0); }
+  50% { box-shadow: 0 0 16px 4px rgba(124, 92, 191, 0.4); }
+  100% { box-shadow: 0 0 0 0 rgba(124, 92, 191, 0); }
+}
+
+.animate-merge-absorb {
+  animation: merge-absorb 0.3s ease-in forwards;
+}
+
+.animate-merge-glow {
+  animation: merge-glow 0.6s ease-out;
+}

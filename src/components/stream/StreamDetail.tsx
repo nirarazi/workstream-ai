@@ -9,6 +9,7 @@ import Timeline from "./Timeline";
 import SuggestedActions from "./SuggestedActions";
 import MentionInput, { type MentionInputHandle } from "../MentionInput";
 import SendConfirmation from "./SendConfirmation";
+import MergeSuggestion from "./MergeSuggestion";
 
 interface StreamDetailProps {
   workItemId: string;
@@ -17,6 +18,8 @@ interface StreamDetailProps {
   platformMeta?: Record<string, unknown>;
   onActioned?: () => void;
   onActionStateChange?: (workItemId: string, state: ActionState) => void;
+  onMerge?: (targetId: string) => void;
+  recentlyViewed?: Array<{ id: string; title: string; channelName?: string; timeAgo?: string }>;
 }
 
 export default function StreamDetail({
@@ -26,6 +29,8 @@ export default function StreamDetail({
   platformMeta,
   onActioned,
   onActionStateChange,
+  onMerge,
+  recentlyViewed,
 }: StreamDetailProps): JSX.Element {
   const [data, setData] = useState<StreamData | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -198,6 +203,18 @@ export default function StreamDetail({
         onTogglePin={handleTogglePin}
       />
 
+      {/* Merge suggestion */}
+      {onMerge && recentlyViewed && data && (
+        <div className="px-5 pt-2">
+          <MergeSuggestion
+            currentItemId={workItemId}
+            currentChannelName={data.channels?.[0]?.name ?? ""}
+            recentlyViewed={recentlyViewed}
+            onMerge={onMerge}
+          />
+        </div>
+      )}
+
       {/* Timeline (flex-1 to fill available space) */}
       <Timeline
         entries={data.timeline}
@@ -224,6 +241,9 @@ export default function StreamDetail({
           onActionComplete={handleActionComplete}
           pinned={data.workItem.pinned}
           onTogglePin={handleTogglePin}
+          onMerge={onMerge}
+          recentlyViewed={recentlyViewed}
+          workItemId={workItemId}
         />
         <div className={`px-5 pb-3 ${inputFlash ? "animate-input-success rounded" : ""}`}>
           <MentionInput
