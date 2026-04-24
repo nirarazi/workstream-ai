@@ -220,6 +220,15 @@ Return false if:
         this.fewShotMessages,
       );
 
+      if (!result) {
+        log.warn("Provider returned empty result — defaulting to noise");
+        return {
+          status: "noise", entryType: "noise", confidence: 0.1,
+          reason: "Provider returned empty result", workItemIds: [], title: "",
+          targetedAtOperator: true, actionRequiredFrom: null, nextAction: null,
+        };
+      }
+
       const status: StatusCategory = VALID_STATUSES.has(result.status)
         ? (result.status as StatusCategory)
         : "noise";

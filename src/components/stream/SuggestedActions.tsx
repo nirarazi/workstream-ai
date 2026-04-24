@@ -144,7 +144,7 @@ export default function SuggestedActions({ data, onActioned, getReplyText, onAct
           <div className="relative">
             <button
               onClick={() => setShowMerge(!showMerge)}
-              className="cursor-pointer rounded px-3 py-1.5 text-xs font-medium bg-purple-800/50 text-purple-300 border border-purple-700/50 hover:bg-purple-700/50 transition-colors"
+              className="cursor-pointer rounded px-3 py-1.5 text-xs font-medium bg-purple-800/70 hover:bg-purple-700 text-purple-200 transition-colors"
             >
               ⤵ Merge into…
             </button>
