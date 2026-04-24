@@ -33,8 +33,7 @@ extractors:
 rateLimits:
   llm:
     maxPerMinute: 4          # Conservative for Anthropic (free tier = 5/min)
-  slack:
-    maxPerMinute: 25         # Slack tier 3 ≈ 50/min, stay well under
+  # Slack rate limiting is handled internally by the adapter (per-method tiers)
   jira:
     maxPerMinute: 30         # Jira Cloud is generous
 
