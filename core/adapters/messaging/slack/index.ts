@@ -33,6 +33,9 @@ interface SlackChannel {
   id?: string;
   name?: string;
   is_private?: boolean;
+  is_im?: boolean;
+  is_mpim?: boolean;
+  user?: string;  // For DMs: the other user's ID
 }
 
 interface SlackUser {
@@ -133,7 +136,7 @@ export class SlackAdapter implements MessagingAdapter {
           type: "password",
           required: true,
           placeholder: "xoxp-...",
-          helpText: "Needs scopes: channels:history, channels:read, chat:write, users:read",
+          helpText: "Needs scopes: channels:history, channels:read, groups:history, groups:read, im:history, im:read, mpim:history, mpim:read, chat:write, users:read",
           envVar: "WORKSTREAM_SLACK_TOKEN",
         },
       ],
@@ -494,7 +497,7 @@ export class SlackAdapter implements MessagingAdapter {
       const result = await withRateLimitRetry(
         () =>
           this.client!.conversations.list({
-            types: "public_channel,private_channel",
+            types: "public_channel,private_channel,im,mpim",
             exclude_archived: true,
             limit: DEFAULT_PAGE_LIMIT,
             cursor: cursor || undefined,
@@ -505,9 +508,20 @@ export class SlackAdapter implements MessagingAdapter {
 
       const channels = (result.channels ?? []) as SlackChannel[];
       for (const ch of channels) {
-        if (ch.id && ch.name) {
-          this.channelMap.set(ch.id, { name: ch.name, isPrivate: ch.is_private ?? false });
+        if (!ch.id) continue;
+
+        // DMs have no name — synthesize from the other user's display name
+        let name = ch.name;
+        if (!name && (ch.is_im || ch.is_mpim) && ch.user) {
+          const userInfo = this.userInfoMap.get(ch.user);
+          name = userInfo ? `DM: ${userInfo.name}` : `DM: ${ch.user}`;
         }
+        if (!name) name = ch.id; // last resort
+
+        this.channelMap.set(ch.id, {
+          name,
+          isPrivate: ch.is_private ?? ch.is_im ?? ch.is_mpim ?? false,
+        });
       }
 
       cursor = result.response_metadata?.next_cursor;
