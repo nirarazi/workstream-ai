@@ -88,6 +88,7 @@ export interface WorkItem {
   snoozedUntil: string | null;
   pinned: boolean;
   dismissedAt: string | null;
+  mergedInto: string | null;
   createdAt: string;
   updatedAt: string;
 }
