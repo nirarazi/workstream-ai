@@ -15,7 +15,7 @@ export interface MessagingAdapter {
   /** Transform raw form values before connect(). If not implemented, fields are passed as-is. */
   prepareCredentials?(fields: Record<string, string>): Record<string, string>;
   connect(credentials: Credentials): Promise<void>;
-  readThreads(since: Date, channels?: string[]): Promise<Thread[]>;
+  readThreads(since: Date, channels?: string[], perChannelSince?: Map<string, Date>): Promise<Thread[]>;
   replyToThread(threadId: string, channelId: string, message: string): Promise<void>;
   /** Post a new top-level message in a channel (not a reply) */
   postMessage(channelId: string, message: string): Promise<{ threadId: string }>;

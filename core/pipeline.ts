@@ -97,12 +97,16 @@ export class Pipeline {
     let classified = 0;
     let errors = 0;
 
-    // Determine the since date per channel, using poll cursors or fallback
-    const since = this.getSinceDate(channels);
+    // Build per-channel cursors from the database
+    const { globalSince, perChannelSince } = this.getPerChannelSince();
 
     let threads: Thread[];
     try {
-      threads = await this.messagingAdapter.readThreads(since, channels.length > 0 ? channels : undefined);
+      threads = await this.messagingAdapter.readThreads(
+        globalSince,
+        channels.length > 0 ? channels : undefined,
+        perChannelSince.size > 0 ? perChannelSince : undefined,
+      );
     } catch (err) {
       log.error("Failed to read threads from messaging adapter", err);
       return { processed: 0, classified: 0, errors: 1 };
@@ -284,29 +288,22 @@ export class Pipeline {
     return createHash("sha256").update(`${threadId}:${text}`).digest("hex");
   }
 
-  private getSinceDate(channels: string[]): Date {
-    // Find the earliest poll cursor across all channels, or fall back to 7 days ago
-    let earliest: Date | null = null;
-
-    for (const channelId of channels) {
-      const cursor = this.graph.getPollCursor(channelId);
-      if (cursor) {
-        const cursorDate = new Date(cursor.lastTimestamp);
-        if (!earliest || cursorDate < earliest) {
-          earliest = cursorDate;
-        }
-      }
-    }
-
-    if (earliest) {
-      return earliest;
-    }
-
-    // Use configured lookback or default
+  private getPerChannelSince(): { globalSince: Date; perChannelSince: Map<string, Date> } {
+    // Build a per-channel cursor map from the database.
+    // Channels with a stored cursor use their own timestamp.
+    // Channels without a cursor use the global fallback (initialDays lookback).
     const lookbackDays = this.config?.lookback?.initialDays ?? DEFAULT_LOOKBACK_DAYS;
-    const fallback = new Date();
-    fallback.setDate(fallback.getDate() - lookbackDays);
-    return fallback;
+    const globalSince = new Date();
+    globalSince.setDate(globalSince.getDate() - lookbackDays);
+
+    const allCursors = this.graph.getAllPollCursors();
+    const perChannelSince = new Map<string, Date>();
+
+    for (const cursor of allCursors) {
+      perChannelSince.set(cursor.channelId, new Date(cursor.lastTimestamp));
+    }
+
+    return { globalSince, perChannelSince };
   }
 
   private async processMessageInternal(message: Message, thread: Thread): Promise<Classification> {
