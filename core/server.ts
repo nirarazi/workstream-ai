@@ -481,6 +481,45 @@ export function createApp(state: EngineState): Hono {
     return c.json({ ok: true });
   });
 
+  // --- POST /api/work-item/:id/merge ---
+  app.post("/api/work-item/:id/merge", async (c) => {
+    const targetId = c.req.param("id");
+    const body = await c.req.json<{ sourceId: string }>();
+    if (!body.sourceId) {
+      return c.json({ error: "Missing sourceId" }, 400);
+    }
+    if (!state.graph.getWorkItemById(targetId)) {
+      return c.json({ error: "Target work item not found" }, 404);
+    }
+    if (!state.graph.getWorkItemById(body.sourceId)) {
+      return c.json({ error: "Source work item not found" }, 404);
+    }
+    try {
+      const record = state.graph.mergeWorkItems(body.sourceId, targetId);
+      return c.json({ ok: true, record });
+    } catch (err) {
+      return c.json({ error: (err as Error).message }, 400);
+    }
+  });
+
+  // --- POST /api/work-item/:id/unmerge ---
+  app.post("/api/work-item/:id/unmerge", async (c) => {
+    const sourceId = c.req.param("id");
+    const source = state.graph.getWorkItemById(sourceId);
+    if (!source) {
+      return c.json({ error: "Work item not found" }, 404);
+    }
+    if (!source.mergedInto) {
+      return c.json({ error: "Work item is not merged" }, 400);
+    }
+    try {
+      state.graph.unmergeWorkItem(sourceId);
+      return c.json({ ok: true });
+    } catch (err) {
+      return c.json({ error: (err as Error).message }, 400);
+    }
+  });
+
   // --- GET /api/threads/unlinked ---
   app.get("/api/threads/unlinked", (c) => {
     const limit = parseInt(c.req.query("limit") ?? "20", 10);
