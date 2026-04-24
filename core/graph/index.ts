@@ -1084,6 +1084,81 @@ export class ContextGraph {
     return rows.map(mapActionableRow);
   }
 
+  // --- Channel Context Query (for continuation detection) ---
+
+  /**
+   * Fetch recent messages from standalone (non-threaded) threads in a given channel.
+   * Used to provide conversation context to the classifier for continuation detection.
+   */
+  getRecentChannelContext(params: {
+    channelId: string;
+    windowMinutes?: number;  // default 30
+    limit?: number;          // default 5
+    excludeThreadId?: string; // exclude the current message's thread
+  }): Array<{
+    workItemId: string;
+    workItemTitle: string;
+    senderName: string;
+    text: string;
+    timestamp: string;
+  }> {
+    const windowMinutes = params.windowMinutes ?? 30;
+    const limit = params.limit ?? 5;
+    const windowStart = new Date(Date.now() - windowMinutes * 60 * 1000).toISOString();
+
+    const baseSQL = `
+      SELECT
+        e.work_item_id AS work_item_id,
+        wi.title AS work_item_title,
+        COALESCE(a.name, 'Unknown') AS sender_name,
+        e.raw_text AS text,
+        e.timestamp AS timestamp
+      FROM events e
+      JOIN threads t ON e.thread_id = t.id
+      JOIN work_items wi ON e.work_item_id = wi.id
+      LEFT JOIN agents a ON e.agent_id = a.id
+      WHERE t.channel_id = ?
+        AND t.message_count <= 1
+        AND e.timestamp > ?
+        AND e.work_item_id IS NOT NULL
+        AND wi.merged_into IS NULL
+    `;
+
+    let sql: string;
+    let args: unknown[];
+
+    if (params.excludeThreadId) {
+      sql = baseSQL + `
+        AND t.id != ?
+        ORDER BY e.timestamp DESC
+        LIMIT ?
+      `;
+      args = [params.channelId, windowStart, params.excludeThreadId, limit];
+    } else {
+      sql = baseSQL + `
+        ORDER BY e.timestamp DESC
+        LIMIT ?
+      `;
+      args = [params.channelId, windowStart, limit];
+    }
+
+    const rows = this.db.db.prepare(sql).all(...args) as Array<{
+      work_item_id: string;
+      work_item_title: string;
+      sender_name: string;
+      text: string;
+      timestamp: string;
+    }>;
+
+    return rows.map(row => ({
+      workItemId: row.work_item_id,
+      workItemTitle: row.work_item_title,
+      senderName: row.sender_name,
+      text: row.text.length > 200 ? row.text.slice(0, 200) + "…" : row.text,
+      timestamp: row.timestamp,
+    }));
+  }
+
   getRecentItems(limit: number): ActionableItem[] {
     const rows = this.db.db
       .prepare(
