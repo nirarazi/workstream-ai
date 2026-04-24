@@ -43,6 +43,8 @@ export default function StreamView({
     sourceId: string;
   } | null>(null);
   const [mergingId, setMergingId] = useState<string | null>(null);
+  const [draggingId, setDraggingId] = useState<string | null>(null);
+  const [dragOverId, setDragOverId] = useState<string | null>(null);
 
   useEffect(() => {
     onSyncStateChange?.({ lastSyncAt, error: syncError });
@@ -146,6 +148,15 @@ export default function StreamView({
     }
   }, [undoState, poll]);
 
+  // Handle drop for drag-to-merge
+  const handleDrop = useCallback((targetId: string) => {
+    if (draggingId && draggingId !== targetId) {
+      handleMerge(draggingId, targetId);
+    }
+    setDraggingId(null);
+    setDragOverId(null);
+  }, [draggingId, handleMerge]);
+
   // ⌘Z keyboard shortcut for undo
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -195,6 +206,11 @@ export default function StreamView({
               resolving={resolvingIds.has(item.workItem.id)}
               mergingAway={mergingId === item.workItem.id}
               onSelect={() => handleSelect(item.workItem.id)}
+              onDragStart={setDraggingId}
+              onDragEnd={() => { setDraggingId(null); setDragOverId(null); }}
+              onDrop={handleDrop}
+              onDragEnter={(id) => { if (id !== draggingId) setDragOverId(id); }}
+              dragOverId={dragOverId}
             />
           ))}
         </div>
