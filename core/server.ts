@@ -520,6 +520,22 @@ export function createApp(state: EngineState): Hono {
     }
   });
 
+  // --- GET /api/work-items/search ---
+  app.get("/api/work-items/search", (c) => {
+    const query = c.req.query("q") ?? "";
+    if (!query.trim()) {
+      return c.json({ items: [] });
+    }
+    const items = state.graph.searchWorkItems(query)
+      .filter((wi) => !wi.mergedInto)
+      .map((wi) => ({
+        id: wi.id,
+        title: wi.title,
+        currentAtcStatus: wi.currentAtcStatus,
+      }));
+    return c.json({ items });
+  });
+
   // --- GET /api/threads/unlinked ---
   app.get("/api/threads/unlinked", (c) => {
     const limit = parseInt(c.req.query("limit") ?? "20", 10);
