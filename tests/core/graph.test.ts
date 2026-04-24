@@ -41,6 +41,140 @@ describe("merged_into column", () => {
   });
 });
 
+describe("mergeWorkItems and unmergeWorkItem", () => {
+  let db: Database;
+  let graph: ContextGraph;
+
+  beforeEach(() => {
+    db = new Database(":memory:");
+    graph = new ContextGraph(db);
+  });
+
+  afterEach(() => {
+    db.close();
+  });
+
+  it("mergeWorkItems re-links threads and events from source to target", () => {
+    graph.upsertWorkItem({ id: "OPS-1", source: "jira", title: "Source item" });
+    graph.upsertWorkItem({ id: "OPS-2", source: "jira", title: "Target item" });
+
+    graph.upsertThread({
+      id: "thread-src",
+      channelId: "C-general",
+      channelName: "general",
+      platform: "slack",
+      workItemId: "OPS-1",
+      messageCount: 1,
+    });
+
+    graph.insertEvent({
+      threadId: "thread-src",
+      messageId: "msg-src-1",
+      workItemId: "OPS-1",
+      status: "in_progress",
+      confidence: 0.9,
+      rawText: "Working on source item",
+      timestamp: new Date().toISOString(),
+    });
+
+    graph.mergeWorkItems("OPS-1", "OPS-2");
+
+    // Thread should now be linked to target
+    const thread = graph.getThreadById("thread-src");
+    expect(thread).not.toBeNull();
+    expect(thread!.workItemId).toBe("OPS-2");
+
+    // Source should have merged_into set
+    const source = graph.getWorkItemById("OPS-1");
+    expect(source).not.toBeNull();
+    expect(source!.mergedInto).toBe("OPS-2");
+
+    // Events should now be linked to target
+    const events = graph.getEventsForWorkItem("OPS-2");
+    expect(events.length).toBeGreaterThan(0);
+    expect(events.some(e => e.rawText === "Working on source item")).toBe(true);
+  });
+
+  it("mergeWorkItems returns merge record for undo", () => {
+    graph.upsertWorkItem({ id: "OPS-10", source: "jira", title: "Source to merge" });
+    graph.upsertWorkItem({ id: "OPS-11", source: "jira", title: "Merge target" });
+
+    graph.upsertThread({
+      id: "thread-merge-1",
+      channelId: "C-general",
+      channelName: "general",
+      platform: "slack",
+      workItemId: "OPS-10",
+      messageCount: 1,
+    });
+
+    const record = graph.mergeWorkItems("OPS-10", "OPS-11");
+
+    expect(record.sourceId).toBe("OPS-10");
+    expect(record.targetId).toBe("OPS-11");
+    expect(record.sourceTitle).toBe("Source to merge");
+    expect(record.movedThreadIds).toEqual(["thread-merge-1"]);
+  });
+
+  it("unmergeWorkItem reverses a merge", () => {
+    graph.upsertWorkItem({ id: "thread:t-abc", source: "synthetic", title: "Synthetic item" });
+    graph.upsertWorkItem({ id: "OPS-20", source: "jira", title: "Real item" });
+
+    graph.upsertThread({
+      id: "t-abc",
+      channelId: "C-general",
+      channelName: "general",
+      platform: "slack",
+      workItemId: "thread:t-abc",
+      messageCount: 1,
+    });
+
+    graph.insertEvent({
+      threadId: "t-abc",
+      messageId: "msg-abc-1",
+      workItemId: "thread:t-abc",
+      status: "in_progress",
+      confidence: 0.8,
+      rawText: "Doing something",
+      timestamp: new Date().toISOString(),
+    });
+
+    // Merge the synthetic item into the real one
+    graph.mergeWorkItems("thread:t-abc", "OPS-20");
+
+    // Verify merged state
+    const merged = graph.getWorkItemById("thread:t-abc");
+    expect(merged!.mergedInto).toBe("OPS-20");
+
+    // Now unmerge
+    graph.unmergeWorkItem("thread:t-abc");
+
+    // merged_into should be cleared
+    const unmerged = graph.getWorkItemById("thread:t-abc");
+    expect(unmerged!.mergedInto).toBeNull();
+
+    // Thread should be back on source
+    const thread = graph.getThreadById("t-abc");
+    expect(thread!.workItemId).toBe("thread:t-abc");
+  });
+
+  it("mergeWorkItems throws for non-existent source", () => {
+    graph.upsertWorkItem({ id: "OPS-30", source: "jira", title: "Real target" });
+
+    expect(() => graph.mergeWorkItems("OPS-nonexistent", "OPS-30")).toThrow(
+      "Source work item not found: OPS-nonexistent"
+    );
+  });
+
+  it("unmergeWorkItem throws for non-merged item", () => {
+    graph.upsertWorkItem({ id: "OPS-40", source: "jira", title: "Not merged" });
+
+    expect(() => graph.unmergeWorkItem("OPS-40")).toThrow(
+      "Work item OPS-40 is not merged"
+    );
+  });
+});
+
 describe("getRecentChannelContext", () => {
   let db: Database;
   let graph: ContextGraph;
