@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { timeAgo } from "../../lib/time";
+import { PlatformMessage } from "../../messaging/registry";
 import type { TimelineEntry as TimelineEntryType } from "../../lib/api";
 
 const ENTRY_ICONS: Record<string, string> = {
@@ -52,7 +53,9 @@ export default function TimelineEntryComponent({ entry }: TimelineEntryProps) {
             <span className="text-gray-600 ml-2 text-[11px]">
               {entry.channelName} · {timeAgo(entry.timestamp)}
             </span>
-            <div className="mt-1 text-gray-400">{entry.rawText}</div>
+            <div className="mt-1 text-gray-400">
+              <PlatformMessage platform={entry.platform || "slack"} text={entry.rawText} />
+            </div>
           </div>
         </div>
       )}

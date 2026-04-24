@@ -196,6 +196,18 @@ export function createApp(state: EngineState): Hono {
       threadPlatformMap.set(t.id, t.platform);
     }
 
+    // Ensure thread metadata is available for ALL events, not just threads
+    // explicitly linked to the work item via threads.work_item_id
+    for (const evt of events) {
+      if (evt.threadId && !threadPlatformMap.has(evt.threadId)) {
+        const t = state.graph.getThreadById(evt.threadId);
+        if (t) {
+          threadChannelMap.set(t.id, { channelId: t.channelId, channelName: t.channelName || t.channelId });
+          threadPlatformMap.set(t.id, t.platform);
+        }
+      }
+    }
+
     // For latestBlockEvent, use all events (not paginated) to get accurate status
     const allEvents = state.graph.getEventsForWorkItem(id);
     const latestBlockEvent = allEvents
