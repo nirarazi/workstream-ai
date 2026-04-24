@@ -1,11 +1,13 @@
 import { useState, useEffect, useRef, useCallback, type JSX } from "react";
 import {
   fetchInbox, fetchAllActive, setBadgeCount,
+  mergeWorkItems, unmergeWorkItem,
   type ActionableItem, type StreamFilter, type Mentionable,
 } from "../lib/api";
 import FilterTabs from "./stream/FilterTabs";
 import StreamListItem from "./stream/StreamListItem";
 import StreamDetail from "./stream/StreamDetail";
+import UndoToast from "./stream/UndoToast";
 import { type ActionState } from "./StatusBadge";
 
 const POLL_INTERVAL = 5000;
@@ -33,6 +35,14 @@ export default function StreamView({
   const [lastSyncAt, setLastSyncAt] = useState<Date | null>(null);
   const [syncError, setSyncError] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [recentlyViewed, setRecentlyViewed] = useState<
+    Array<{ id: string; title: string; channelName?: string; timeAgo?: string }>
+  >([]);
+  const [undoState, setUndoState] = useState<{
+    message: string;
+    sourceId: string;
+  } | null>(null);
+  const [mergingId, setMergingId] = useState<string | null>(null);
 
   useEffect(() => {
     onSyncStateChange?.({ lastSyncAt, error: syncError });
@@ -65,6 +75,23 @@ export default function StreamView({
     };
   }, [poll]);
 
+  // Track recently viewed items (max 5)
+  useEffect(() => {
+    if (!selectedWorkItemId) return;
+    setRecentlyViewed((prev) => {
+      const allItems = [...needsMeItems, ...allActiveItems];
+      const item = allItems.find((i) => i.workItem.id === selectedWorkItemId);
+      if (!item) return prev;
+      const entry = {
+        id: item.workItem.id,
+        title: item.workItem.title,
+        channelName: item.thread?.channelName,
+      };
+      const filtered = prev.filter((v) => v.id !== selectedWorkItemId);
+      return [entry, ...filtered].slice(0, 5);
+    });
+  }, [selectedWorkItemId, needsMeItems, allActiveItems]);
+
   const currentItems = (() => {
     switch (filter) {
       case "needs-me": return needsMeItems;
@@ -83,6 +110,53 @@ export default function StreamView({
   function handleSelect(id: string) {
     setSelectedWorkItemId(prev => prev === id ? null : id);
   }
+
+  // Merge handler
+  const handleMerge = useCallback(async (sourceId: string, targetId: string) => {
+    try {
+      setMergingId(sourceId);
+      // Start merge animation (300ms)
+      await new Promise((r) => setTimeout(r, 300));
+
+      const res = await mergeWorkItems(targetId, sourceId);
+      setUndoState({
+        message: `Merged into "${[...needsMeItems, ...allActiveItems].find((i) => i.workItem.id === targetId)?.workItem.title ?? targetId}"`,
+        sourceId: res.record.sourceId,
+      });
+
+      // Refresh data and select the target after merge
+      await poll();
+      setSelectedWorkItemId(targetId);
+      setMergingId(null);
+    } catch (err) {
+      console.error("Merge failed", err);
+      setMergingId(null);
+    }
+  }, [needsMeItems, allActiveItems, poll]);
+
+  // Undo handler
+  const handleUndo = useCallback(async () => {
+    if (!undoState) return;
+    try {
+      await unmergeWorkItem(undoState.sourceId);
+      setUndoState(null);
+      await poll();
+    } catch (err) {
+      console.error("Unmerge failed", err);
+    }
+  }, [undoState, poll]);
+
+  // ⌘Z keyboard shortcut for undo
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === "z" && undoState) {
+        e.preventDefault();
+        handleUndo();
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [undoState, handleUndo]);
 
   const sortedItems = [...currentItems].sort((a, b) => {
     // Pinned items first
@@ -119,6 +193,7 @@ export default function StreamView({
               selected={selectedWorkItemId === item.workItem.id}
               actionState={actionStates.get(item.workItem.id) ?? null}
               resolving={resolvingIds.has(item.workItem.id)}
+              mergingAway={mergingId === item.workItem.id}
               onSelect={() => handleSelect(item.workItem.id)}
             />
           ))}
@@ -135,6 +210,8 @@ export default function StreamView({
             serializeMention={serializeMention}
             platformMeta={platformMeta}
             onActioned={poll}
+            onMerge={(targetId) => handleMerge(selectedWorkItemId, targetId)}
+            recentlyViewed={recentlyViewed}
             onActionStateChange={(id, state) => {
               setActionStates(prev => new Map(prev).set(id, state));
               // Auto-resolve terminal actions after animation completes
@@ -165,6 +242,14 @@ export default function StreamView({
           </div>
         )}
       </div>
+
+      {undoState && (
+        <UndoToast
+          message={undoState.message}
+          onUndo={handleUndo}
+          onExpire={() => setUndoState(null)}
+        />
+      )}
     </div>
   );
 }
