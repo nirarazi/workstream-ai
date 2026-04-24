@@ -117,7 +117,11 @@ export class Pipeline {
 
     // Cap threads per poll to avoid LLM call bursts
     const maxThreads = this.config?.lookback?.maxThreadsPerPoll ?? DEFAULT_MAX_THREADS_PER_POLL;
-    const cappedThreads = maxThreads > 0 ? threads.slice(0, maxThreads) : threads;
+    const cappedThreads = (maxThreads > 0 ? threads.slice(0, maxThreads) : [...threads]).sort((a, b) => {
+      const aTime = a.messages[0]?.timestamp ?? a.lastActivity;
+      const bTime = b.messages[0]?.timestamp ?? b.lastActivity;
+      return aTime.localeCompare(bTime);
+    });
 
     if (threads.length > cappedThreads.length) {
       log.info(`Capped threads from ${threads.length} to ${cappedThreads.length} (maxThreadsPerPoll=${maxThreads})`);
