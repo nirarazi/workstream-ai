@@ -17,15 +17,21 @@ interface StreamListItemProps {
   resolving?: boolean;
   mergingAway?: boolean;
   onSelect: () => void;
+  onDragStart?: (id: string) => void;
+  onDragEnd?: () => void;
+  onDrop?: (targetId: string) => void;
+  onDragEnter?: (id: string) => void;
+  dragOverId?: string | null;
 }
 
-export default function StreamListItem({ item, selected, actionState, resolving, mergingAway, onSelect }: StreamListItemProps) {
+export default function StreamListItem({ item, selected, actionState, resolving, mergingAway, onSelect, onDragStart, onDragEnd, onDrop, onDragEnter, dragOverId }: StreamListItemProps) {
   const { workItem, latestEvent, agent } = item;
   const isThreadItem = workItem.id.startsWith("thread:");
   const status = workItem.currentAtcStatus ?? "noise";
   const borderColor = BORDER_COLORS[status] ?? "border-l-gray-600";
   const isSnoozed = Boolean(workItem.snoozedUntil);
   const isPinned = workItem.pinned;
+  const isDragOver = dragOverId === workItem.id;
 
   // For thread-based items, derive a display title: use the work item title if
   // present, otherwise build a contextual label from the channel name.
@@ -47,16 +53,38 @@ export default function StreamListItem({ item, selected, actionState, resolving,
 
   return (
     <div
+      draggable
       onClick={onSelect}
+      onDragStart={(e) => {
+        e.dataTransfer.setData("text/plain", workItem.id);
+        e.dataTransfer.effectAllowed = "move";
+        onDragStart?.(workItem.id);
+      }}
+      onDragEnd={() => onDragEnd?.()}
+      onDragOver={(e) => {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = "move";
+        onDragEnter?.(workItem.id);
+      }}
+      onDrop={(e) => {
+        e.preventDefault();
+        onDrop?.(workItem.id);
+      }}
       className={`
         px-4 py-3 border-b border-gray-800/50 border-l-[3px] cursor-pointer
-        transition-all duration-200
+        transition-all duration-200 relative
         ${borderColor}
         ${selected ? "bg-gray-900/80" : "hover:bg-gray-900/40"}
         ${isSnoozed ? "opacity-50" : ""}
+        ${isDragOver ? "ring-1 ring-purple-500 animate-merge-glow" : ""}
         ${mergingAway ? "animate-merge-absorb pointer-events-none" : resolving ? "animate-list-exit pointer-events-none" : !entered ? "animate-list-enter" : ""}
       `}
     >
+      {isDragOver && (
+        <div className="absolute inset-0 flex items-center justify-center bg-purple-900/20 rounded text-purple-400 text-xs font-medium z-10">
+          ⤵ Drop to merge
+        </div>
+      )}
       <div className="flex justify-between items-center">
         <div className="flex items-center gap-2 min-w-0">
           {isPinned && <span className="text-[10px] text-gray-600">📌</span>}
