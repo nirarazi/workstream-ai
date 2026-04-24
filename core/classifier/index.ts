@@ -12,6 +12,15 @@ import type { RateLimiter } from "../rate-limiter.js";
 
 const log = createLogger("classifier");
 
+function timeAgoShort(isoTimestamp: string): string {
+  const diff = Date.now() - new Date(isoTimestamp).getTime();
+  const minutes = Math.floor(diff / 60000);
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  return `${hours}h ago`;
+}
+
 function inferEntryType(status: StatusCategory): EntryType {
   switch (status) {
     case "blocked_on_human":
@@ -132,6 +141,13 @@ export class Classifier {
     operatorIdentities?: OperatorIdentityMap | null,
     senderContext?: { senderName: string; senderType: string; channelName: string },
     validIdPrefixes?: string[],
+    channelContext?: Array<{
+      workItemId: string;
+      workItemTitle: string;
+      senderName: string;
+      text: string;
+      timestamp: string;
+    }>,
   ): Promise<Classification> {
     try {
       // Rate-limit LLM calls
@@ -182,6 +198,14 @@ Return false if:
           return `${i + 1}. ${wi.id}: "${wi.title}"${reasons}`;
         }).join("\n");
         effectiveSystemPrompt += `\n\n## Candidate Work Items (ranked by relevance)\n\nThe following work items are the most likely matches for this message, based on graph signals (same agent, same channel, recency, keyword overlap). If the message is about one of these items, return its ID in workItemIds. If none match, return an empty workItemIds array — do NOT force a match.\n\n${itemLines}`;
+      }
+
+      if (channelContext && channelContext.length > 0) {
+        const contextLines = channelContext.map((ctx) => {
+          const ago = timeAgoShort(ctx.timestamp);
+          return `- [${ctx.senderName}, ${ago}] "${ctx.text}" → work item: ${ctx.workItemId}`;
+        }).join("\n");
+        effectiveSystemPrompt += `\n\n## Recent Messages from the Same Channel\n\nThe following recent messages are from the same channel as this new message. If this new message is a continuation of one of these conversations (a reply, follow-up, or related remark), return that conversation's work item ID in workItemIds. If it's a new, unrelated topic, return empty workItemIds as usual.\n\n${contextLines}`;
       }
 
       // Prepend sender context to message if provided

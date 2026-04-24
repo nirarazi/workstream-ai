@@ -200,6 +200,81 @@ describe("Classifier", () => {
     const systemPrompt = callArgs[1] as string;
     expect(systemPrompt).not.toContain("Open Work Items");
   });
+
+  it("includes channel context section in system prompt when provided", async () => {
+    const provider = mockProvider({
+      status: "in_progress",
+      confidence: 0.9,
+      reason: "continuation",
+      workItemIds: ["AI-382"],
+    });
+    const classifier = new Classifier(provider, SYSTEM_PROMPT, FEW_SHOT);
+
+    const channelContext = [
+      {
+        workItemId: "AI-382",
+        workItemTitle: "Deploy new auth service",
+        senderName: "Byte",
+        text: "Starting the deployment now",
+        timestamp: new Date(Date.now() - 5 * 60 * 1000).toISOString(), // 5 minutes ago
+      },
+      {
+        workItemId: "IT-205",
+        workItemTitle: "Fix login bug",
+        senderName: "Pixel",
+        text: "Login issue is resolved",
+        timestamp: new Date(Date.now() - 30 * 60 * 1000).toISOString(), // 30 minutes ago
+      },
+    ];
+
+    await classifier.classify(
+      "Deployment is looking good so far",
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      channelContext,
+    );
+
+    const callArgs = (provider.classify as ReturnType<typeof vi.fn>).mock.calls[0];
+    const systemPrompt = callArgs[1] as string;
+    expect(systemPrompt).toContain("Recent Messages from the Same Channel");
+    expect(systemPrompt).toContain("Starting the deployment now");
+    expect(systemPrompt).toContain("AI-382");
+    expect(systemPrompt).toContain("Byte");
+    expect(systemPrompt).toContain("Login issue is resolved");
+    expect(systemPrompt).toContain("IT-205");
+    expect(systemPrompt).toContain("Pixel");
+  });
+
+  it("does not include channel context section when channelContext is empty or undefined", async () => {
+    const provider = mockProvider({
+      status: "noise",
+      confidence: 0.9,
+      reason: "no context",
+      workItemIds: [],
+    });
+    const classifier = new Classifier(provider, SYSTEM_PROMPT, FEW_SHOT);
+
+    // Test with undefined (no 6th argument)
+    await classifier.classify("Hello world");
+    const callArgs1 = (provider.classify as ReturnType<typeof vi.fn>).mock.calls[0];
+    const systemPrompt1 = callArgs1[1] as string;
+    expect(systemPrompt1).not.toContain("Recent Messages from the Same Channel");
+
+    // Test with empty array
+    await classifier.classify(
+      "Hello again",
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      [],
+    );
+    const callArgs2 = (provider.classify as ReturnType<typeof vi.fn>).mock.calls[1];
+    const systemPrompt2 = callArgs2[1] as string;
+    expect(systemPrompt2).not.toContain("Recent Messages from the Same Channel");
+  });
 });
 
 // --- action_required_from → targetedAtOperator + nextAction tests (with OperatorIdentityMap) ---
