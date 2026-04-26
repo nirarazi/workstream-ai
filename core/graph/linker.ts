@@ -17,7 +17,8 @@ export class WorkItemLinker {
 
   /**
    * Extract work item IDs from message text, ensure each exists in the graph,
-   * and link the thread to the first found work item.
+   * write junction rows for all extracted IDs (first = primary, rest = mentioned),
+   * and keep threads.work_item_id in sync for backwards compatibility.
    * Returns the list of extracted work item IDs.
    */
   linkMessage(text: string, threadId: string): string[] {
@@ -37,7 +38,13 @@ export class WorkItemLinker {
       log.debug("Ensured work item exists", id);
     }
 
-    // Link thread to the first work item found (if any)
+    // Write junction rows for all extracted IDs
+    for (let i = 0; i < workItemIds.length; i++) {
+      const relation = i === 0 ? "primary" : "mentioned";
+      this.graph.linkThreadWorkItem(threadId, workItemIds[i], relation);
+    }
+
+    // Keep threads.work_item_id in sync (backwards compatibility)
     if (workItemIds.length > 0) {
       const thread = this.graph.getThreadById(threadId);
       if (thread && !thread.workItemId) {
