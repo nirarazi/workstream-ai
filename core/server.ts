@@ -176,7 +176,7 @@ export function createApp(state: EngineState): Hono {
     const limit = Number(c.req.query("limit")) || 10;
     const before = c.req.query("before") || undefined;
 
-    const threads = state.graph.getThreadsForWorkItem(id);
+    const threads = state.graph.getThreadsForWorkItemViaJunction(id);
     const { events, hasOlder } = state.graph.getEventsForWorkItemPaginated(id, limit, before);
     const agents = state.graph.getAgentsForWorkItem(id);
     const channels = state.graph.getChannelsForWorkItem(id);
@@ -701,6 +701,16 @@ export function createApp(state: EngineState): Hono {
       return c.json({ ok: false, error: "Work item not found" }, 404);
     }
 
+    function findThreadForWorkItem(workItemId: string) {
+      const threads = state.graph.getThreadsForWorkItemViaJunction(workItemId);
+      if (threads.length > 0) return threads[0];
+      // Fallback: scan events (covers edge cases during migration)
+      const events = state.graph.getEventsForWorkItem(workItemId);
+      const withThread = [...events].reverse().find((e) => e.threadId);
+      if (withThread) return state.graph.getThreadById(withThread.threadId) ?? undefined;
+      return undefined;
+    }
+
     try {
       switch (body.action) {
         case "approve":
@@ -735,9 +745,9 @@ export function createApp(state: EngineState): Hono {
         case "dismiss": {
           state.graph.dismissWorkItem(body.workItemId);
           // Insert an event recording the operator dismissal
-          const dismissThreads = state.graph.getThreadsForWorkItem(body.workItemId);
+          const dismissThread = findThreadForWorkItem(body.workItemId);
           state.graph.insertEvent({
-            threadId: dismissThreads[0]?.id ?? null,
+            threadId: dismissThread?.id ?? null,
             messageId: `operator-dismiss-${Date.now()}`,
             workItemId: body.workItemId,
             agentId: null,
@@ -758,9 +768,9 @@ export function createApp(state: EngineState): Hono {
             source: workItem.source,
             currentAtcStatus: "noise",
           });
-          const noiseThreads = state.graph.getThreadsForWorkItem(body.workItemId);
+          const noiseThread = findThreadForWorkItem(body.workItemId);
           state.graph.insertEvent({
-            threadId: noiseThreads[0]?.id ?? null,
+            threadId: noiseThread?.id ?? null,
             messageId: `operator-noise-${Date.now()}`,
             workItemId: body.workItemId,
             agentId: null,
@@ -837,8 +847,7 @@ export function createApp(state: EngineState): Hono {
 
       // Record the operator's action as an event in the timeline
       // (dismiss and noise already inserted their own events above)
-      const threads = state.graph.getThreadsForWorkItem(body.workItemId);
-      const actionThread = threads[0];
+      const actionThread = findThreadForWorkItem(body.workItemId);
       if (body.action !== "dismiss" && body.action !== "noise") {
         const actionStatus = body.action === "approve" || body.action === "close" ? "completed" : "in_progress";
         const actionLabels: Record<string, string> = {

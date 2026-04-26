@@ -124,6 +124,7 @@ describe("Stream", () => {
         currentAtcStatus: "blocked_on_human", currentConfidence: 0.9,
       });
       graph.upsertThread({ id: "t1", channelId: "C1", platform: "slack", workItemId: "AI-1" });
+      graph.linkThreadWorkItem("t1", "AI-1", "primary");
       graph.insertEvent({
         threadId: "t1", messageId: "m1", workItemId: "AI-1", agentId: "a1",
         status: "blocked_on_human", confidence: 0.9, reason: "Needs operator approval",
@@ -136,6 +137,7 @@ describe("Stream", () => {
         currentAtcStatus: "blocked_on_human", currentConfidence: 0.85,
       });
       graph.upsertThread({ id: "t2", channelId: "C1", platform: "slack", workItemId: "AI-2" });
+      graph.linkThreadWorkItem("t2", "AI-2", "primary");
       graph.insertEvent({
         threadId: "t2", messageId: "m2", workItemId: "AI-2", agentId: "a1",
         status: "blocked_on_human", confidence: 0.85, reason: "Blocked on Guy's review",
@@ -162,6 +164,7 @@ describe("Stream", () => {
         currentAtcStatus: "blocked_on_human", currentConfidence: 0.9,
       });
       graph.upsertThread({ id: "t1", channelId: "C1", channelName: "orchestrator", platform: "slack", workItemId: "AI-300" });
+      graph.linkThreadWorkItem("t1", "AI-300", "primary");
       graph.upsertAgent({ id: "a1", name: "Byte", platform: "slack", platformUserId: "U1" });
       graph.insertEvent({
         threadId: "t1", messageId: "m1", workItemId: "AI-300", agentId: "a1",
@@ -335,7 +338,9 @@ describe("Stream", () => {
     it("getAgentsForWorkItem returns all agents who have events", () => {
       graph.upsertWorkItem({ id: "AI-100", source: "jira", title: "Test" });
       graph.upsertThread({ id: "t1", channelId: "C1", channelName: "orchestrator", platform: "slack", workItemId: "AI-100" });
+      graph.linkThreadWorkItem("t1", "AI-100", "primary");
       graph.upsertThread({ id: "t2", channelId: "C2", channelName: "strategy", platform: "slack", workItemId: "AI-100" });
+      graph.linkThreadWorkItem("t2", "AI-100", "primary");
       const agent1 = graph.upsertAgent({ name: "Byte", platform: "slack", platformUserId: "U1" });
       const agent2 = graph.upsertAgent({ name: "Pixel", platform: "slack", platformUserId: "U2" });
       graph.insertEvent({ threadId: "t1", messageId: "m1", workItemId: "AI-100", agentId: agent1.id, status: "in_progress", confidence: 0.9, timestamp: new Date().toISOString(), entryType: "progress" });
@@ -348,7 +353,9 @@ describe("Stream", () => {
     it("getChannelsForWorkItem returns all channels", () => {
       graph.upsertWorkItem({ id: "AI-100", source: "jira", title: "Test" });
       graph.upsertThread({ id: "t1", channelId: "C1", channelName: "orchestrator", platform: "slack", workItemId: "AI-100" });
+      graph.linkThreadWorkItem("t1", "AI-100", "primary");
       graph.upsertThread({ id: "t2", channelId: "C2", channelName: "strategy", platform: "slack", workItemId: "AI-100" });
+      graph.linkThreadWorkItem("t2", "AI-100", "primary");
       const channels = graph.getChannelsForWorkItem("AI-100");
       expect(channels).toHaveLength(2);
       expect(channels.map((c) => c.name).sort()).toEqual(["orchestrator", "strategy"]);
@@ -373,6 +380,7 @@ describe("timeline pagination", () => {
     // Seed a work item with 15 events
     graph.upsertWorkItem({ id: "AI-300", source: "jira", title: "Pagination test", currentAtcStatus: "in_progress" });
     graph.upsertThread({ id: "T-300", channelId: "C001", channelName: "test", platform: "slack", workItemId: "AI-300" });
+    graph.linkThreadWorkItem("T-300", "AI-300", "primary");
     graph.upsertAgent({ id: "agent-1", name: "Byte", platform: "slack", platformUserId: "U001" });
 
     for (let i = 0; i < 15; i++) {
@@ -402,5 +410,58 @@ describe("timeline pagination", () => {
     const body2 = await res2.json();
     expect(body2.timeline.length).toBe(5);
     expect(body2.hasOlder).toBe(false);
+  });
+
+  it("timeline entries include relation field (primary vs mentioned)", async () => {
+    // Create work item and two threads: one primary, one mentioned
+    graph.upsertWorkItem({ id: "AI-400", source: "jira", title: "Relation test", currentAtcStatus: "in_progress" });
+
+    // Primary thread — directly linked to AI-400
+    graph.upsertThread({ id: "T-400", channelId: "C001", channelName: "main", platform: "slack", workItemId: "AI-400" });
+    graph.linkThreadWorkItem("T-400", "AI-400", "primary");
+
+    // Mentioned thread — linked via junction only (different work_item_id on event)
+    graph.upsertWorkItem({ id: "AI-401", source: "jira", title: "Other item", currentAtcStatus: "in_progress" });
+    graph.upsertThread({ id: "T-401", channelId: "C002", channelName: "other", platform: "slack", workItemId: "AI-401" });
+    graph.linkThreadWorkItem("T-401", "AI-401", "primary");
+    graph.linkThreadWorkItem("T-401", "AI-400", "mentioned");
+
+    graph.upsertAgent({ id: "agent-1", name: "Byte", platform: "slack", platformUserId: "U001" });
+
+    // Event on primary thread with matching work_item_id → should be "primary"
+    graph.insertEvent({
+      threadId: "T-400", messageId: "msg-primary", workItemId: "AI-400",
+      agentId: "agent-1", status: "in_progress", confidence: 0.9,
+      reason: "Primary event", rawText: "Working on AI-400",
+      timestamp: new Date(Date.now() - 2 * 60000).toISOString(),
+      entryType: "progress", targetedAtOperator: false,
+    });
+
+    // Event on mentioned thread with different work_item_id → should be "mentioned"
+    graph.insertEvent({
+      threadId: "T-401", messageId: "msg-mentioned", workItemId: "AI-401",
+      agentId: "agent-1", status: "in_progress", confidence: 0.9,
+      reason: "Mentioned event", rawText: "Also mentions AI-400",
+      timestamp: new Date(Date.now() - 1 * 60000).toISOString(),
+      entryType: "progress", targetedAtOperator: false,
+    });
+
+    const state = makeState(graph, db);
+    const app = createApp(state);
+
+    const res = await app.request("/api/work-item/AI-400/stream?limit=10");
+    const body = await res.json();
+
+    expect(body.timeline.length).toBe(2);
+
+    // Oldest first: primary event comes first
+    const primaryEntry = body.timeline.find((e: any) => e.summary === "Primary event");
+    const mentionedEntry = body.timeline.find((e: any) => e.summary === "Mentioned event");
+
+    expect(primaryEntry).toBeDefined();
+    expect(primaryEntry.relation).toBe("primary");
+
+    expect(mentionedEntry).toBeDefined();
+    expect(mentionedEntry.relation).toBe("mentioned");
   });
 });

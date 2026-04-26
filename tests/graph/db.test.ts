@@ -321,7 +321,7 @@ describe("Database", () => {
       expect(items[1].workItem.currentAtcStatus).toBe("needs_decision");
     });
 
-    it("getActionableItems finds events linked via thread work_item_id", () => {
+    it("getActionableItems finds events linked via junction table", () => {
       // Create a work item
       graph.upsertWorkItem({
         id: "WI-THREAD",
@@ -341,6 +341,8 @@ describe("Database", () => {
         lastActivity: new Date().toISOString(),
         messageCount: 1,
       });
+      // Populate junction table (queries now use thread_work_items)
+      graph.linkThreadWorkItem("thread-linked-1", "WI-THREAD", "primary");
 
       // Create an agent
       graph.upsertAgent({
@@ -350,7 +352,7 @@ describe("Database", () => {
         platformUserId: "U001",
       });
 
-      // Insert event linked via thread (event.work_item_id is NULL, but thread.work_item_id = "WI-THREAD")
+      // Insert event linked via thread (event.work_item_id is NULL, but thread linked via junction)
       graph.insertEvent({
         threadId: "thread-linked-1",
         messageId: "msg-via-thread",

@@ -376,6 +376,7 @@ export interface TimelineEntry {
   summary: string;
   rawText: string;
   isOperator: boolean;
+  relation?: "primary" | "mentioned";
 }
 
 export interface StreamData {
