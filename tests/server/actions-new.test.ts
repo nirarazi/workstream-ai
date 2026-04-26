@@ -158,4 +158,51 @@ describe("dismiss and noise actions", () => {
     const body = await res.json();
     expect(body.delivered).toBe(false);
   });
+
+  it("dismiss succeeds when thread is linked via junction table only (not threads.work_item_id)", async () => {
+    // Create a second work item (AI-200-JT) with no directly linked thread
+    graph.upsertWorkItem({
+      id: "AI-200-JT",
+      source: "jira",
+      title: "Junction-only item",
+      currentAtcStatus: "blocked_on_human",
+    });
+
+    // Create a thread T-JT linked to AI-100 via work_item_id (not to AI-200-JT)
+    graph.upsertWorkItem({
+      id: "AI-100",
+      source: "jira",
+      title: "Primary item",
+      currentAtcStatus: "in_progress",
+    });
+    graph.upsertThread({
+      id: "T-JT",
+      channelId: "C002",
+      channelName: "dev",
+      platform: "slack",
+      workItemId: "AI-100",
+    });
+
+    // Link T-JT → AI-200-JT via junction table only (relation: 'mentioned')
+    graph.linkThreadWorkItem("T-JT", "AI-200-JT", "mentioned");
+
+    const state = makeState(graph, db);
+    const app = createApp(state);
+
+    // Perform a dismiss action on AI-200-JT
+    // The handler must find T-JT via the junction table, not via threads.work_item_id
+    const res = await app.request("/api/action", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ workItemId: "AI-200-JT", action: "dismiss" }),
+    });
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.ok).toBe(true);
+
+    // The work item should be dismissed
+    const wi = graph.getWorkItemById("AI-200-JT");
+    expect(wi?.dismissedAt).not.toBeNull();
+  });
 });
