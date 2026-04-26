@@ -25,16 +25,24 @@ system: |
   - **needs_decision**: A choice is required before the agent can continue. Look for: "should I", "which option", "two approaches", presenting alternatives, requesting direction.
   - **noise**: Status update, system message, greeting, or informational — no action needed. Look for: greetings, acknowledgments, "ok", system notifications, routine status without new information.
 
-  ## Summary / Brief Messages
+  ## Multi-Item Messages and Breakdown
 
-  If a message is a summary, morning brief, shift report, or status round-up that mentions **multiple work items with different statuses**, you MUST include a "breakdown" array in your response. Each entry has:
+  When a message mentions **multiple work items**, you MUST include a "breakdown" array with per-item classifications. This applies to ALL multi-item messages — not just summaries. Examples:
+  - Morning briefs, shift reports, status round-ups
+  - Weekly/daily plans, sprint schedules, dispatch lists
+  - Verification reports, batch status updates
+  - Any message that lists, schedules, or references several tickets
+
+  Each breakdown entry has:
   - workItemId: the ticket/PR ID
-  - status: the status for THAT specific item
+  - status: the status for THAT specific item based on what the message says about it
   - confidence: confidence for that item
   - reason: brief reason
   - title: short title for that item
 
-  For summary messages, set the top-level status to "noise" (the summary itself is not actionable), but the breakdown items carry the real per-item statuses. This ensures blocked items inside a summary are not missed.
+  **Critical:** Classify each work item based on what the message says about THAT item specifically — not the message's overall intent. A planning message asking "should I dispatch?" is needs_decision for the plan itself, but the individual tickets listed in the plan are typically "in_progress" (scheduled) or "noise" (merely listed). A dispatch verification saying "AI-355 done, AI-379 blocked — repo not found" should give AI-355 "completed" and AI-379 "blocked_on_human" in the breakdown.
+
+  For summary/planning messages, set the top-level status to reflect the message's own intent (often "noise" or "needs_decision"), and let the breakdown items carry the real per-item statuses.
 
   If the message is about a single topic or a single work item, omit the "breakdown" field entirely.
 
@@ -179,6 +187,77 @@ few_shot_examples:
           title: "REST vs GraphQL endpoint decision"
           action_required_from: []
           next_action: "Decide REST vs GraphQL for endpoint"
+          targeted_at_operator: true
+
+  - role: user
+    content: "[Sender: Levy (agent) | Channel: #agent-orchestrator]\nHere's the week plan:\n| Day | Byte | Pixel |\n| Mon | AI-414 IRSA+EKS | MS-26 design review |\n| Tue | AI-379 voice gw | MS-1 broker one-pager |\n| Wed | AI-379 cont. | MS-1 cont. |\nWant me to dispatch on this, or any swaps?"
+    expected:
+      status: needs_decision
+      confidence: 0.9
+      reason: "Agent presenting a weekly plan and asking for approval before dispatching"
+      workItemIds: ["AI-414", "AI-379", "MS-26", "MS-1"]
+      title: "Weekly dispatch plan approval"
+      action_required_from: []
+      next_action: "Approve or adjust weekly plan"
+      targeted_at_operator: true
+      breakdown:
+        - workItemId: "AI-414"
+          status: noise
+          confidence: 0.85
+          reason: "Scheduled in plan for Monday — not started, no action needed"
+          title: "IRSA+EKS scheduled"
+        - workItemId: "AI-379"
+          status: noise
+          confidence: 0.85
+          reason: "Scheduled in plan for Tue/Wed — merely listed, not being discussed"
+          title: "Voice gateway scheduled"
+        - workItemId: "MS-26"
+          status: noise
+          confidence: 0.85
+          reason: "Scheduled in plan for Monday — merely listed"
+          title: "Design review scheduled"
+        - workItemId: "MS-1"
+          status: noise
+          confidence: 0.85
+          reason: "Scheduled in plan for Tue/Wed — merely listed"
+          title: "Broker one-pager scheduled"
+
+  - role: user
+    content: "[Sender: Levy (agent) | Channel: DM]\nDispatch Verification — 7/8 tickets clean.\nAI-355 ✅ AI-361 ✅ AI-389 ✅ AI-416 ✅\nNeeds human attention:\n• AI-379 (Voice call loop) — still In Progress in JIRA. norma-calling repo not found. Ticket may be blocked or scope changed. Please confirm if Done or still pending."
+    expected:
+      status: noise
+      confidence: 0.85
+      reason: "Dispatch verification report covering multiple items with different statuses"
+      workItemIds: ["AI-355", "AI-361", "AI-389", "AI-416", "AI-379"]
+      title: "Dispatch verification report"
+      breakdown:
+        - workItemId: "AI-355"
+          status: completed
+          confidence: 0.9
+          reason: "Verified done"
+          title: "Ticket verified complete"
+        - workItemId: "AI-361"
+          status: completed
+          confidence: 0.9
+          reason: "Verified done"
+          title: "Ticket verified complete"
+        - workItemId: "AI-389"
+          status: completed
+          confidence: 0.9
+          reason: "Verified done"
+          title: "Ticket verified complete"
+        - workItemId: "AI-416"
+          status: completed
+          confidence: 0.9
+          reason: "Verified done"
+          title: "Ticket verified complete"
+        - workItemId: "AI-379"
+          status: blocked_on_human
+          confidence: 0.9
+          reason: "Repo not found, agent cannot proceed — asking operator to confirm status"
+          title: "Voice call loop — repo missing, needs confirmation"
+          action_required_from: []
+          next_action: "Confirm if AI-379 is done or still pending"
           targeted_at_operator: true
 
   - role: user

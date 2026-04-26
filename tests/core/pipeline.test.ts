@@ -746,12 +746,19 @@ describe("Pipeline", () => {
 
       await pipeline.processOnce();
 
-      // Both work items should get status updates
+      // Primary (inherited) work item gets status update
       const upsertCalls = vi.mocked(graph.upsertWorkItem).mock.calls;
       const aiUpdate = upsertCalls.find((c) => c[0].id === "AI-382" && c[0].currentAtcStatus);
-      const itUpdate = upsertCalls.find((c) => c[0].id === "IT-200" && c[0].currentAtcStatus);
       expect(aiUpdate).toBeDefined();
-      expect(itUpdate).toBeDefined();
+
+      // Mentioned item does NOT inherit top-level status (no breakdown entry)
+      const itUpdate = upsertCalls.find((c) => c[0].id === "IT-200" && c[0].currentAtcStatus);
+      expect(itUpdate).toBeUndefined();
+
+      // But junction row IS still written for the mentioned item
+      expect(graph.linkThreadWorkItem).toHaveBeenCalledWith(
+        expect.anything(), "IT-200", "mentioned",
+      );
     });
   });
 
@@ -850,11 +857,61 @@ describe("Pipeline", () => {
         }),
       );
 
-      // Both work items should get status updates
+      // Primary work item gets status update
       const upsertCalls = vi.mocked(graph.upsertWorkItem).mock.calls;
       const aiUpdate = upsertCalls.find((c) => c[0].id === "AI-382" && c[0].currentAtcStatus);
-      const itUpdate = upsertCalls.find((c) => c[0].id === "IT-100" && c[0].currentAtcStatus);
       expect(aiUpdate).toBeDefined();
+
+      // Mentioned item does NOT inherit top-level status (no breakdown entry)
+      const itUpdate = upsertCalls.find((c) => c[0].id === "IT-100" && c[0].currentAtcStatus);
+      expect(itUpdate).toBeUndefined();
+
+      // But junction row IS still written
+      expect(graph.linkThreadWorkItem).toHaveBeenCalledWith(
+        expect.anything(), "IT-100", "mentioned",
+      );
+    });
+
+    it("updates mentioned item status when breakdown entry exists", async () => {
+      vi.mocked(linker.linkMessage).mockReturnValue(["AI-382"]);
+      vi.mocked(classifier.classify).mockResolvedValue(
+        makeClassification({
+          status: "noise",
+          workItemIds: ["IT-100"],
+          breakdown: [
+            { workItemId: "AI-382", status: "completed", confidence: 0.95, reason: "Done", title: "Done", targetedAtOperator: false, actionRequiredFrom: null, nextAction: null },
+            { workItemId: "IT-100", status: "blocked_on_human", confidence: 0.9, reason: "Repo missing", title: "Blocked", targetedAtOperator: true, actionRequiredFrom: [], nextAction: "Confirm status" },
+          ],
+        }),
+      );
+
+      const existingAI382: WorkItem = {
+        id: "AI-382", source: "extracted", title: "Auth refactor",
+        externalStatus: null, assignee: null, url: null,
+        currentAtcStatus: null, currentConfidence: null,
+        snoozedUntil: null, createdAt: "2026-03-29T10:00:00.000Z",
+        updatedAt: "2026-03-29T10:00:00.000Z",
+      };
+      const existingIT100: WorkItem = { ...existingAI382, id: "IT-100", title: "Other" };
+
+      vi.mocked(graph.getWorkItemById).mockImplementation((id: string) => {
+        if (id === "AI-382") return existingAI382;
+        if (id === "IT-100") return existingIT100;
+        return null;
+      });
+
+      vi.mocked(adapter.readThreads).mockResolvedValue([makeThread()]);
+
+      await pipeline.processOnce();
+
+      const upsertCalls = vi.mocked(graph.upsertWorkItem).mock.calls;
+
+      // Primary gets breakdown status (completed), not top-level (noise)
+      const aiUpdate = upsertCalls.find((c) => c[0].id === "AI-382" && c[0].currentAtcStatus === "completed");
+      expect(aiUpdate).toBeDefined();
+
+      // Mentioned item gets its own breakdown status (blocked_on_human)
+      const itUpdate = upsertCalls.find((c) => c[0].id === "IT-100" && c[0].currentAtcStatus === "blocked_on_human");
       expect(itUpdate).toBeDefined();
     });
   });
