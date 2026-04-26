@@ -26,12 +26,12 @@ const ACTION_BUTTONS: {
   {
     action: "dismiss",
     label: "Dismiss",
-    classes: "bg-gray-700/70 hover:bg-gray-600 text-gray-300",
+    classes: "bg-rose-900/60 hover:bg-rose-800/70 text-rose-200",
   },
   {
     action: "noise",
     label: "Noise",
-    classes: "bg-gray-800/70 hover:bg-gray-700 text-gray-400",
+    classes: "border border-amber-700/40 hover:border-amber-600/50 hover:bg-amber-900/20 text-amber-500/80",
   },
 ];
 
@@ -126,7 +126,7 @@ export default function SuggestedActions({ data, onActioned, getReplyText, onAct
           <button
             onClick={onTogglePin}
             disabled={busy}
-            className="cursor-pointer rounded px-3 py-1.5 text-xs font-medium bg-gray-700/50 hover:bg-gray-600 text-gray-400 disabled:opacity-40 disabled:cursor-not-allowed"
+            className="cursor-pointer rounded px-3 py-1.5 text-xs font-medium border border-gray-700 hover:border-gray-500 hover:bg-gray-800/50 text-gray-500 disabled:opacity-40 disabled:cursor-not-allowed"
           >
             {pinned ? "Unpin" : "Pin"}
           </button>
@@ -144,7 +144,7 @@ export default function SuggestedActions({ data, onActioned, getReplyText, onAct
           <div className="relative">
             <button
               onClick={() => setShowMerge(!showMerge)}
-              className="cursor-pointer rounded px-3 py-1.5 text-xs font-medium bg-purple-800/70 hover:bg-purple-700 text-purple-200 transition-colors"
+              className="cursor-pointer rounded px-3 py-1.5 text-xs font-medium border border-gray-700 hover:border-gray-500 hover:bg-gray-800/50 text-gray-500 transition-colors"
             >
               ⤵ Merge into…
             </button>

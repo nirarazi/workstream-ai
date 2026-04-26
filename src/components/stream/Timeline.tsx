@@ -3,12 +3,13 @@ import { timeAgo } from "../../lib/time";
 import { openExternalUrl } from "../../lib/api";
 import { PlatformMessage } from "../../messaging/registry";
 import { buildSlackThreadUrl } from "../../messaging/slack/urls";
-import type { TimelineEntry as TimelineEntryType } from "../../lib/api";
+import type { TimelineEntry as TimelineEntryType, Mentionable } from "../../lib/api";
 
 interface TimelineProps {
   entries: TimelineEntryType[];
   hasOlder: boolean;
   platformMeta?: Record<string, unknown>;
+  mentionables?: Mentionable[];
   onLoadOlder: () => void;
 }
 
@@ -32,7 +33,7 @@ function avatarColor(name: string): string {
   return colors[Math.abs(hash) % colors.length];
 }
 
-export default function Timeline({ entries, hasOlder, platformMeta, onLoadOlder }: TimelineProps) {
+export default function Timeline({ entries, hasOlder, platformMeta, mentionables, onLoadOlder }: TimelineProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const prevCountRef = useRef(entries.length);
@@ -59,6 +60,11 @@ export default function Timeline({ entries, hasOlder, platformMeta, onLoadOlder 
   }
 
   const workspaceUrl = platformMeta?.slackWorkspaceUrl as string | undefined;
+
+  // Build user ID → display name map for resolving bare mentions like <@U123>
+  const userMap = mentionables && mentionables.length > 0
+    ? new Map(mentionables.map((m) => [m.id, m.name]))
+    : undefined;
 
   return (
     <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-3">
@@ -147,14 +153,14 @@ export default function Timeline({ entries, hasOlder, platformMeta, onLoadOlder 
                         </summary>
                         <div className="mt-1">
                           {entry.platform ? (
-                            <PlatformMessage platform={entry.platform} text={entry.rawText} />
+                            <PlatformMessage platform={entry.platform} text={entry.rawText} userMap={userMap} />
                           ) : (
                             entry.rawText
                           )}
                         </div>
                       </details>
                     ) : entry.platform ? (
-                      <PlatformMessage platform={entry.platform} text={entry.rawText} />
+                      <PlatformMessage platform={entry.platform} text={entry.rawText} userMap={userMap} />
                     ) : (
                       entry.rawText
                     )}
