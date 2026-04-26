@@ -9,3 +9,4 @@ config/local.yaml
 .DS_Store
 .superpowers/
 .claude/
+.worktrees/
