@@ -286,6 +286,40 @@ export class Database {
       this.db.exec("ALTER TABLE work_items ADD COLUMN merged_into TEXT DEFAULT NULL");
       log.info("Migration: added merged_into column to work_items");
     }
+
+    // Backfill thread_work_items junction table from existing data
+    const twiCount = (this.db.prepare("SELECT COUNT(*) AS n FROM thread_work_items").get() as { n: number }).n;
+    if (twiCount === 0) {
+      // Check if there's data to backfill
+      const threadCount = (this.db.prepare("SELECT COUNT(*) AS n FROM threads WHERE work_item_id IS NOT NULL").get() as { n: number }).n;
+      if (threadCount > 0) {
+        // Step 1: Primary rows from threads.work_item_id
+        const primaryResult = this.db.prepare(`
+          INSERT OR IGNORE INTO thread_work_items (thread_id, work_item_id, relation, created_at)
+          SELECT id, work_item_id, 'primary', last_activity
+          FROM threads
+          WHERE work_item_id IS NOT NULL
+        `).run();
+        log.info(`Migration: backfilled ${primaryResult.changes} primary junction rows from threads`);
+
+        // Step 2: Mentioned rows from events whose work_item_id differs from thread's
+        const mentionedResult = this.db.prepare(`
+          INSERT OR IGNORE INTO thread_work_items (thread_id, work_item_id, relation, created_at)
+          SELECT e.thread_id, e.work_item_id, 'mentioned', e.timestamp
+          FROM events e
+          JOIN threads t ON e.thread_id = t.id
+          WHERE e.work_item_id IS NOT NULL
+            AND e.work_item_id != COALESCE(t.work_item_id, '')
+        `).run();
+        log.info(`Migration: backfilled ${mentionedResult.changes} mentioned junction rows from events`);
+
+        // Step 3: Delete breakdown event duplicates (message_id contains ':')
+        const breakdownResult = this.db.prepare(`
+          DELETE FROM events WHERE message_id LIKE '%:%'
+        `).run();
+        log.info(`Migration: deleted ${breakdownResult.changes} breakdown duplicate events`);
+      }
+    }
   }
 
   prepare<T>(sql: string): BetterSqlite3Type.Statement<T[]> {
