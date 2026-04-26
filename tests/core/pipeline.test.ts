@@ -161,6 +161,7 @@ function createMockGraph(): ContextGraph {
     upsertEnrichment: vi.fn(),
     getActiveThreads: vi.fn().mockReturnValue([]),
     getRecentChannelContext: vi.fn().mockReturnValue([]),
+    linkThreadWorkItem: vi.fn(),
   } as unknown as ContextGraph;
 }
 
@@ -1137,6 +1138,126 @@ describe("Pipeline", () => {
       const upsertWorkItemCalls = vi.mocked(graph.upsertWorkItem).mock.calls;
       const syntheticIds = upsertWorkItemCalls.map((c: any[]) => c[0].id);
       expect(syntheticIds).not.toContain("thread:t-new");
+    });
+  });
+
+  describe("junction rows and no breakdown events", () => {
+    it("writes a primary junction row for the primary work item", async () => {
+      vi.mocked(linker.linkMessage).mockReturnValue(["AI-382"]);
+      vi.mocked(classifier.classify).mockResolvedValue(
+        makeClassification({ status: "completed", workItemIds: [] }),
+      );
+
+      const existingWi: WorkItem = {
+        id: "AI-382",
+        source: "extracted",
+        title: "",
+        externalStatus: null,
+        assignee: null,
+        url: null,
+        currentAtcStatus: null,
+        currentConfidence: null,
+        snoozedUntil: null,
+        createdAt: "2026-03-29T10:00:00.000Z",
+        updatedAt: "2026-03-29T10:00:00.000Z",
+      };
+      vi.mocked(graph.getWorkItemById).mockReturnValue(existingWi);
+      vi.mocked(adapter.readThreads).mockResolvedValue([makeThread()]);
+
+      await pipeline.processOnce();
+
+      expect(graph.linkThreadWorkItem).toHaveBeenCalledWith("t-1", "AI-382", "primary");
+    });
+
+    it("writes mentioned junction rows for secondary work items", async () => {
+      vi.mocked(linker.linkMessage).mockReturnValue(["AI-382", "IT-200"]);
+      vi.mocked(classifier.classify).mockResolvedValue(
+        makeClassification({ status: "in_progress", workItemIds: [] }),
+      );
+
+      const makeWi = (id: string): WorkItem => ({
+        id,
+        source: "extracted",
+        title: "",
+        externalStatus: null,
+        assignee: null,
+        url: null,
+        currentAtcStatus: null,
+        currentConfidence: null,
+        snoozedUntil: null,
+        createdAt: "2026-03-29T10:00:00.000Z",
+        updatedAt: "2026-03-29T10:00:00.000Z",
+      });
+      vi.mocked(graph.getWorkItemById).mockImplementation((id: string) => makeWi(id));
+      vi.mocked(adapter.readThreads).mockResolvedValue([makeThread()]);
+
+      await pipeline.processOnce();
+
+      expect(graph.linkThreadWorkItem).toHaveBeenCalledWith("t-1", "AI-382", "primary");
+      expect(graph.linkThreadWorkItem).toHaveBeenCalledWith("t-1", "IT-200", "mentioned");
+    });
+
+    it("does not create breakdown events (no insertEvent calls with composite messageId)", async () => {
+      vi.mocked(linker.linkMessage).mockReturnValue(["AI-382", "IT-200"]);
+
+      const breakdownClassification = makeClassification({
+        status: "completed",
+        workItemIds: ["AI-382", "IT-200"],
+        breakdown: [
+          {
+            workItemId: "AI-382",
+            status: "completed",
+            entryType: "progress",
+            confidence: 0.95,
+            reason: "AI-382 is done",
+            title: "Auth refactor",
+            targetedAtOperator: false,
+            actionRequiredFrom: null,
+            nextAction: null,
+          },
+          {
+            workItemId: "IT-200",
+            status: "blocked_on_human",
+            entryType: "request",
+            confidence: 0.9,
+            reason: "IT-200 needs review",
+            title: "Related work",
+            targetedAtOperator: true,
+            actionRequiredFrom: ["U-operator"],
+            nextAction: "Review PR",
+          },
+        ],
+      });
+      vi.mocked(classifier.classify).mockResolvedValue(breakdownClassification);
+
+      const makeWi = (id: string): WorkItem => ({
+        id,
+        source: "extracted",
+        title: "",
+        externalStatus: null,
+        assignee: null,
+        url: null,
+        currentAtcStatus: null,
+        currentConfidence: null,
+        snoozedUntil: null,
+        createdAt: "2026-03-29T10:00:00.000Z",
+        updatedAt: "2026-03-29T10:00:00.000Z",
+      });
+      vi.mocked(graph.getWorkItemById).mockImplementation((id: string) => makeWi(id));
+      vi.mocked(adapter.readThreads).mockResolvedValue([makeThread()]);
+
+      await pipeline.processOnce();
+
+      // No insertEvent calls should have a composite messageId (e.g. "msg-1:AI-382")
+      const insertEventCalls = vi.mocked(graph.insertEvent).mock.calls;
+      const compositeIdCalls = insertEventCalls.filter((c) =>
+        typeof c[0].messageId === "string" && c[0].messageId.includes(":"),
+      );
+      expect(compositeIdCalls).toHaveLength(0);
+
+      // Junction rows should have been written for both work items
+      expect(graph.linkThreadWorkItem).toHaveBeenCalledWith("t-1", "AI-382", "primary");
+      expect(graph.linkThreadWorkItem).toHaveBeenCalledWith("t-1", "IT-200", "mentioned");
     });
   });
 
