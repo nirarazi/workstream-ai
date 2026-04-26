@@ -691,6 +691,18 @@ export function createApp(state: EngineState): Hono {
       return c.json({ ok: false, error: "Missing required fields: workItemId, action" }, 400);
     }
 
+    // Find the best thread for a work item: prefer directly-linked threads,
+    // fall back to the most recent thread that has events for this work item
+    // (covers work items that only appear via classifier breakdowns).
+    function findThreadForWorkItem(workItemId: string) {
+      const direct = state.graph.getThreadsForWorkItem(workItemId);
+      if (direct.length > 0) return direct[0];
+      const events = state.graph.getEventsForWorkItem(workItemId);
+      const withThread = [...events].reverse().find((e) => e.threadId);
+      if (withThread) return state.graph.getThreadById(withThread.threadId) ?? undefined;
+      return undefined;
+    }
+
     const validActions = new Set(["approve", "redirect", "close", "snooze", "create_ticket", "dismiss", "noise"]);
     if (!validActions.has(body.action)) {
       return c.json({ ok: false, error: `Invalid action: ${body.action}` }, 400);
@@ -906,6 +918,14 @@ export function createApp(state: EngineState): Hono {
       messaging: stripEnvVar(getMessagingAdapterSetupInfo()),
       task: stripEnvVar(getTaskAdapterSetupInfo()),
     });
+  });
+
+  // --- POST /api/resync ---
+  app.post("/api/resync", async (c) => {
+    const body = await c.req.json<{ days?: number }>().catch(() => ({}));
+    const days = body.days ?? 7;
+    const updated = state.graph.rollBackPollCursors(days);
+    return c.json({ ok: true, cursorsRolledBack: updated, days });
   });
 
   // --- POST /api/setup ---
@@ -1348,6 +1368,9 @@ async function main(): Promise<void> {
     ticketPrefixes: config.taskAdapter.ticketPrefixes,
   });
   const linker = new WorkItemLinker(graph, [extractor]);
+
+  // Backfill junction rows from existing events' raw_text
+  graph.backfillJunctionFromRawText([extractor]);
 
   // Initialize engine state
   const state: EngineState = {
