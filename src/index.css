@@ -1,5 +1,10 @@
 @import "tailwindcss";
 
+/* ── Base: ensure background covers entire viewport and overscroll ── */
+html, body {
+  background-color: var(--color-gray-950);
+}
+
 /* ── Light theme — swap gray scale so dark-mode classes render light ── */
 html.light {
   --color-gray-950: #ffffff;
