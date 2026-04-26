@@ -9,6 +9,7 @@ import Timeline from "./Timeline";
 import SuggestedActions from "./SuggestedActions";
 import MentionInput, { type MentionInputHandle } from "../MentionInput";
 import SendConfirmation from "./SendConfirmation";
+import DoneCelebration from "./DoneCelebration";
 import MergeSuggestion from "./MergeSuggestion";
 
 interface StreamDetailProps {
@@ -35,7 +36,9 @@ export default function StreamDetail({
   const [data, setData] = useState<StreamData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
+  const [replySent, setReplySent] = useState(false);
   const [confirmation, setConfirmation] = useState<{ action: string; channelName: string } | null>(null);
+  const [showDoneCelebration, setShowDoneCelebration] = useState(false);
   const [inputFlash, setInputFlash] = useState(false);
   const replyInputRef = useRef<MentionInputHandle>(null);
 
@@ -83,8 +86,6 @@ export default function StreamDetail({
 
   function handleActionComplete(action: string) {
     replyInputRef.current?.clear();
-    setInputFlash(true);
-    setTimeout(() => setInputFlash(false), 800);
     // Map action types to ActionState for the list
     let state: ActionState = null;
     switch (action) {
@@ -103,7 +104,11 @@ export default function StreamDetail({
     if (state) {
       onActionStateChange?.(workItemId, state);
     }
-    // Show inline send confirmation for terminal actions (not snooze)
+    // Show celebration for "done"
+    if (state === "done") {
+      setShowDoneCelebration(true);
+    }
+    // Show confirmation for actions that send a reply to the channel
     if (state === "unblocked" || state === "done") {
       const channelName = data?.channels[0]?.name ?? "thread";
       setConfirmation({ action, channelName });
@@ -113,6 +118,7 @@ export default function StreamDetail({
   async function handleReply(serializedText: string) {
     if (!serializedText.trim() || !data) return;
     setSending(true);
+    setReplySent(false);
     try {
       await postReply(
         data.latestThreadId ?? undefined,
@@ -121,12 +127,14 @@ export default function StreamDetail({
         { workItemId },
       );
       replyInputRef.current?.clear();
+      setSending(false);
+      setReplySent(true);
+      setTimeout(() => setReplySent(false), 2000);
       onActionStateChange?.(workItemId, "replied");
       handleActioned();
     } catch {
-      // Keep text so the user can retry
-    } finally {
       setSending(false);
+      // Keep text so the user can retry
     }
   }
 
@@ -194,7 +202,12 @@ export default function StreamDetail({
   if (!data) return <></>;
 
   return (
-    <div className="h-full flex flex-col bg-gray-950">
+    <div className="h-full flex flex-col bg-gray-950 relative">
+      {/* Done celebration overlay */}
+      {showDoneCelebration && (
+        <DoneCelebration onComplete={() => setShowDoneCelebration(false)} />
+      )}
+
       {/* Header */}
       <StatusSnapshot
         data={data}
@@ -220,46 +233,76 @@ export default function StreamDetail({
         entries={data.timeline}
         hasOlder={data.hasOlder}
         platformMeta={platformMeta}
+        mentionables={mentionables}
+        workItemId={workItemId}
         onLoadOlder={handleLoadOlder}
       />
 
-      {/* Confirmation overlay (above actions) */}
-      {confirmation && (
-        <SendConfirmation
-          channelName={confirmation.channelName}
-          action={confirmation.action}
-          onComplete={() => setConfirmation(null)}
-        />
-      )}
-
       {/* Actions + Reply (sticky bottom) */}
       <div className="border-t border-gray-800">
-        <SuggestedActions
-          data={data}
-          onActioned={handleActioned}
-          getReplyText={getReplyText}
-          onActionComplete={handleActionComplete}
-          pinned={data.workItem.pinned}
-          onTogglePin={handleTogglePin}
-          onMerge={onMerge}
-          recentlyViewed={recentlyViewed}
-          workItemId={workItemId}
-        />
-        <div className={`px-5 pb-3 ${inputFlash ? "animate-input-success rounded" : ""}`}>
-          <MentionInput
-            ref={replyInputRef}
-            placeholder="Reply to thread..."
-            disabled={sending}
-            mentionables={mentionables}
-            serializeMention={serializeMention}
-            onSubmit={handleReply}
+        {confirmation ? (
+          <SendConfirmation
+            channelName={confirmation.channelName}
+            action={confirmation.action}
+            onComplete={() => setConfirmation(null)}
           />
-          {data.latestThreadId && data.channels.length > 0 && (
-            <div className="text-[10px] text-gray-600 mt-1">
-              replies to latest thread in #{data.channels[0].name}
+        ) : (
+          <>
+            <SuggestedActions
+              data={data}
+              onActioned={handleActioned}
+              getReplyText={getReplyText}
+              onActionComplete={handleActionComplete}
+              pinned={data.workItem.pinned}
+              onTogglePin={handleTogglePin}
+              onMerge={onMerge}
+              recentlyViewed={recentlyViewed}
+              workItemId={workItemId}
+            />
+            <div className={`px-5 pb-3 ${inputFlash ? "animate-input-success rounded" : ""}`}>
+              <div className="relative">
+                <MentionInput
+                  ref={replyInputRef}
+                  placeholder="Reply to thread..."
+                  disabled={sending}
+                  mentionables={mentionables}
+                  serializeMention={serializeMention}
+                  onSubmit={handleReply}
+                />
+                {/* Sending overlay */}
+                {sending && (
+                  <div className="absolute inset-0 flex items-center justify-center bg-gray-800/90 rounded border border-gray-700 animate-reply-sending">
+                    <div className="flex items-center gap-2 text-sm text-gray-300">
+                      <span className="animate-reply-dots flex gap-0.5">
+                        <span className="reply-dot" />
+                        <span className="reply-dot" />
+                        <span className="reply-dot" />
+                      </span>
+                      <span>Sending to #{data.channels[0]?.name ?? "thread"}</span>
+                    </div>
+                  </div>
+                )}
+                {/* Sent confirmation overlay */}
+                {replySent && !sending && (
+                  <div className="absolute inset-0 flex items-center justify-center bg-gray-800/90 rounded border border-green-700/50 animate-reply-sent">
+                    <div className="flex items-center gap-2 text-sm text-green-400 font-medium">
+                      <svg className="w-4 h-4 animate-reply-check" viewBox="0 0 16 16" fill="none">
+                        <circle cx="8" cy="8" r="7" stroke="currentColor" strokeWidth="1.5" />
+                        <path d="M5 8l2 2 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                      </svg>
+                      <span>Sent to #{data.channels[0]?.name ?? "thread"}</span>
+                    </div>
+                  </div>
+                )}
+              </div>
+              {!sending && !replySent && data.latestThreadId && data.channels.length > 0 && (
+                <div className="text-[10px] text-gray-600 mt-1">
+                  replies to latest thread in #{data.channels[0].name}
+                </div>
+              )}
             </div>
-          )}
-        </div>
+          </>
+        )}
       </div>
     </div>
   );

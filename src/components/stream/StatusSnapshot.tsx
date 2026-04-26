@@ -37,16 +37,22 @@ export default function StatusSnapshot({ data, pinned, platformMeta, onTogglePin
         <div className="text-xs font-mono text-gray-500 mb-1">{workItem.id}</div>
       )}
       <div className="flex items-start justify-between gap-2 mb-2">
-        <h2 className="text-lg font-semibold text-white">
+        <h2 className="text-lg font-semibold text-gray-100">
           {workItem.title || (workItem.id.startsWith("thread:") ? "Untitled conversation" : workItem.id)}
         </h2>
         {onTogglePin && (
           <button
             onClick={onTogglePin}
-            className="cursor-pointer flex-shrink-0 text-xs text-gray-500 hover:text-gray-300 transition-colors mt-1"
+            className={`cursor-pointer flex-shrink-0 p-1.5 rounded-md transition-all ${
+              pinned
+                ? "text-amber-400 bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30"
+                : "text-gray-500 hover:text-gray-300 hover:bg-gray-800/50 border border-transparent"
+            }`}
             title={pinned ? "Unpin" : "Pin"}
           >
-            {pinned ? "Unpin" : "Pin"}
+            <svg className="w-4 h-4" viewBox="0 0 16 16" fill={pinned ? "currentColor" : "none"} stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M9.5 2.5L13.5 6.5L10.5 9.5L11 13L8 10L5 13L5.5 9.5L2.5 6.5L6.5 2.5L8 4L9.5 2.5Z" />
+            </svg>
           </button>
         )}
       </div>
