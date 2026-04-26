@@ -540,17 +540,21 @@ export class Pipeline {
       nextAction: classification.nextAction,
     });
 
-    // Step 6: Update work item status if confidence is higher than existing
-    // If the classifier returned a per-item breakdown (summary messages), use
-    // each item's specific status instead of applying one status to all.
-    const breakdownMap = new Map(
-      (classification.breakdown ?? []).map((b) => [b.workItemId, b]),
+    // Step 6: Update work item status and write junction rows
+    const validatedBreakdownMap = new Map(
+      (classification.breakdown ?? [])
+        .filter((b) => allWorkItemIds.has(b.workItemId))
+        .map((b) => [b.workItemId, b]),
     );
 
     for (const workItemId of allWorkItemIds) {
+      // Write junction row (primary for the first/inherited ID, mentioned for the rest)
+      const relation = workItemId === primaryWorkItemId ? "primary" : "mentioned";
+      this.graph.linkThreadWorkItem(thread.id, workItemId, relation);
+
       const existing = this.graph.getWorkItemById(workItemId);
       if (existing) {
-        const itemClassification = breakdownMap.get(workItemId);
+        const itemClassification = validatedBreakdownMap.get(workItemId);
         const itemStatus = itemClassification?.status ?? classification.status;
         const itemConfidence = itemClassification?.confidence ?? classification.confidence;
         const itemTitle = itemClassification?.title ?? classification.title;
@@ -567,26 +571,6 @@ export class Pipeline {
             currentConfidence: itemConfidence,
             // Set LLM title if work item has no title yet (e.g. extracted IDs with no Jira enrichment)
             ...(itemTitle && !existing.title ? { title: itemTitle } : {}),
-          });
-        }
-
-        // Insert a dedicated event for breakdown items with non-noise status
-        // so they surface in the inbox/all-active views individually
-        if (itemClassification && itemClassification.status !== "noise") {
-          this.graph.insertEvent({
-            threadId: thread.id,
-            messageId: `${message.id}:${workItemId}`,
-            workItemId,
-            agentId: agent.id,
-            status: itemClassification.status,
-            entryType: itemClassification.entryType,
-            confidence: itemClassification.confidence,
-            reason: itemClassification.reason,
-            rawText: message.text,
-            timestamp: message.timestamp,
-            targetedAtOperator: itemClassification.targetedAtOperator,
-            actionRequiredFrom: itemClassification.actionRequiredFrom,
-            nextAction: itemClassification.nextAction,
           });
         }
       }
