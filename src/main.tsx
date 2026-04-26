@@ -17,6 +17,11 @@ if (localStorage.getItem("workstream-theme") === "light") {
   document.documentElement.classList.add("light");
 }
 
+// Restore text size preference
+const savedSize = localStorage.getItem("workstream-text-size");
+if (savedSize === "small") document.documentElement.style.zoom = "0.88";
+else if (savedSize === "large") document.documentElement.style.zoom = "1.12";
+
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <ErrorBoundary>

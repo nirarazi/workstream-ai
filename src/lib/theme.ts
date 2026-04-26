@@ -1,8 +1,10 @@
 import { useState, useEffect, useCallback } from "react";
 
 export type ThemeMode = "dark" | "light" | "system";
+export type TextSize = "small" | "default" | "large";
 
 const STORAGE_KEY = "workstream-theme";
+const TEXT_SIZE_KEY = "workstream-text-size";
 
 function getSystemTheme(): "dark" | "light" {
   return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
@@ -45,4 +47,31 @@ export function useTheme() {
   }, [mode]);
 
   return { mode, resolved, setMode, cycle };
+}
+
+const TEXT_SIZE_ZOOM: Record<TextSize, number> = {
+  small: 0.88,
+  default: 1,
+  large: 1.12,
+};
+
+function applyTextSize(size: TextSize) {
+  document.documentElement.style.zoom = String(TEXT_SIZE_ZOOM[size]);
+}
+
+export function useTextSize() {
+  const [size, setSizeState] = useState<TextSize>(() => {
+    return (localStorage.getItem(TEXT_SIZE_KEY) as TextSize) || "default";
+  });
+
+  const setSize = useCallback((s: TextSize) => {
+    setSizeState(s);
+    localStorage.setItem(TEXT_SIZE_KEY, s);
+  }, []);
+
+  useEffect(() => {
+    applyTextSize(size);
+  }, [size]);
+
+  return { size, setSize };
 }
