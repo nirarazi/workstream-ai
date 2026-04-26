@@ -11,6 +11,7 @@ import type {
   PollCursor,
   StatusCategory,
   Thread,
+  ThreadWorkItem,
   WorkItem,
 } from "../types.js";
 import type { Database } from "./db.js";
@@ -21,6 +22,7 @@ import type {
   PollCursorRow,
   SummaryRow,
   ThreadRow,
+  ThreadWorkItemRow,
   WorkItemRow,
 } from "./schema.js";
 
@@ -503,6 +505,41 @@ export class ContextGraph {
     params.push(limit);
 
     const rows = this.db.db.prepare(sql).all(...params) as ThreadRow[];
+    return rows.map(toThread);
+  }
+
+  // --- Thread-Work Item Junction ---
+
+  linkThreadWorkItem(threadId: string, workItemId: string, relation: "primary" | "mentioned"): void {
+    this.db.db.prepare(`
+      INSERT INTO thread_work_items (thread_id, work_item_id, relation, created_at)
+      VALUES (?, ?, ?, ?)
+      ON CONFLICT(thread_id, work_item_id) DO UPDATE SET
+        relation = excluded.relation
+    `).run(threadId, workItemId, relation, new Date().toISOString());
+  }
+
+  getWorkItemsForThread(threadId: string): ThreadWorkItem[] {
+    const rows = this.db.db
+      .prepare("SELECT * FROM thread_work_items WHERE thread_id = ? ORDER BY relation ASC")
+      .all(threadId) as ThreadWorkItemRow[];
+    return rows.map((r) => ({
+      threadId: r.thread_id,
+      workItemId: r.work_item_id,
+      relation: r.relation as "primary" | "mentioned",
+      createdAt: r.created_at,
+    }));
+  }
+
+  getThreadsForWorkItemViaJunction(workItemId: string): Thread[] {
+    const rows = this.db.db
+      .prepare(`
+        SELECT t.* FROM threads t
+        JOIN thread_work_items twi ON twi.thread_id = t.id
+        WHERE twi.work_item_id = ?
+        ORDER BY CASE twi.relation WHEN 'primary' THEN 0 ELSE 1 END, t.last_activity DESC
+      `)
+      .all(workItemId) as ThreadRow[];
     return rows.map(toThread);
   }
 
