@@ -82,3 +82,10 @@ export interface SummaryRow {
   generated_at: string;
   latest_event_id: string;
 }
+
+export interface ThreadWorkItemRow {
+  thread_id: string;
+  work_item_id: string;
+  relation: string;
+  created_at: string;
+}

@@ -37,3 +37,64 @@ describe("thread_work_items junction table", () => {
     expect(names.some((n) => n.includes("work_item"))).toBe(true);
   });
 });
+
+describe("junction CRUD", () => {
+  let db: Database;
+  let graph: ContextGraph;
+
+  beforeEach(() => {
+    db = new Database(":memory:");
+    graph = new ContextGraph(db);
+    // Seed data
+    graph.upsertWorkItem({ id: "AI-100", source: "jira", title: "Item 100" });
+    graph.upsertWorkItem({ id: "AI-200", source: "jira", title: "Item 200" });
+    graph.upsertThread({
+      id: "T1", channelId: "C1", channelName: "general",
+      platform: "slack", lastActivity: new Date().toISOString(),
+    });
+  });
+
+  afterEach(() => { db.close(); });
+
+  it("linkThreadWorkItem creates a junction row", () => {
+    graph.linkThreadWorkItem("T1", "AI-100", "primary");
+    const rows = graph.getWorkItemsForThread("T1");
+    expect(rows).toHaveLength(1);
+    expect(rows[0].workItemId).toBe("AI-100");
+    expect(rows[0].relation).toBe("primary");
+  });
+
+  it("linkThreadWorkItem is idempotent (upsert)", () => {
+    graph.linkThreadWorkItem("T1", "AI-100", "mentioned");
+    graph.linkThreadWorkItem("T1", "AI-100", "primary");
+    const rows = graph.getWorkItemsForThread("T1");
+    expect(rows).toHaveLength(1);
+    expect(rows[0].relation).toBe("primary");
+  });
+
+  it("getThreadsForWorkItemViaJunction returns threads", () => {
+    graph.linkThreadWorkItem("T1", "AI-100", "primary");
+    const threads = graph.getThreadsForWorkItemViaJunction("AI-100");
+    expect(threads).toHaveLength(1);
+    expect(threads[0].id).toBe("T1");
+  });
+
+  it("getThreadsForWorkItemViaJunction prefers primary over mentioned", () => {
+    graph.upsertThread({
+      id: "T2", channelId: "C1", channelName: "general",
+      platform: "slack", lastActivity: new Date().toISOString(),
+    });
+    graph.linkThreadWorkItem("T1", "AI-100", "mentioned");
+    graph.linkThreadWorkItem("T2", "AI-100", "primary");
+    const threads = graph.getThreadsForWorkItemViaJunction("AI-100");
+    expect(threads[0].id).toBe("T2");
+  });
+
+  it("getWorkItemsForThread returns all linked items", () => {
+    graph.linkThreadWorkItem("T1", "AI-100", "primary");
+    graph.linkThreadWorkItem("T1", "AI-200", "mentioned");
+    const items = graph.getWorkItemsForThread("T1");
+    expect(items).toHaveLength(2);
+    expect(items.map((i) => i.workItemId).sort()).toEqual(["AI-100", "AI-200"]);
+  });
+});
