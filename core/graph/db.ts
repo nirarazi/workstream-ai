@@ -92,12 +92,21 @@ CREATE TABLE IF NOT EXISTS llm_usage (
   model TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS thread_work_items (
+  thread_id     TEXT NOT NULL REFERENCES threads(id),
+  work_item_id  TEXT NOT NULL REFERENCES work_items(id),
+  relation      TEXT NOT NULL DEFAULT 'mentioned',
+  created_at    TEXT NOT NULL,
+  PRIMARY KEY (thread_id, work_item_id)
+);
+
 CREATE INDEX IF NOT EXISTS idx_events_thread_id ON events(thread_id);
 CREATE INDEX IF NOT EXISTS idx_events_work_item_id ON events(work_item_id);
 CREATE INDEX IF NOT EXISTS idx_threads_work_item_id ON threads(work_item_id);
 CREATE INDEX IF NOT EXISTS idx_enrichments_work_item_id ON enrichments(work_item_id);
 CREATE INDEX IF NOT EXISTS idx_llm_usage_timestamp ON llm_usage(timestamp);
 CREATE INDEX IF NOT EXISTS idx_llm_usage_caller ON llm_usage(caller);
+CREATE INDEX IF NOT EXISTS idx_twi_work_item ON thread_work_items(work_item_id);
 `;
 
 export class Database {
