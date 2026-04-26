@@ -3,6 +3,8 @@
 /* ── Base: ensure background covers entire viewport and overscroll ── */
 html, body {
   background-color: var(--color-gray-950);
+  overflow: hidden;
+  height: 100%;
 }
 
 /* ── Light theme — swap gray scale so dark-mode classes render light ── */

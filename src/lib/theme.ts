@@ -49,15 +49,11 @@ export function useTheme() {
   return { mode, resolved, setMode, cycle };
 }
 
-const TEXT_SIZE_ZOOM: Record<TextSize, number> = {
+export const TEXT_SIZE_ZOOM: Record<TextSize, number> = {
   small: 0.88,
   default: 1,
   large: 1.12,
 };
-
-function applyTextSize(size: TextSize) {
-  document.documentElement.style.zoom = String(TEXT_SIZE_ZOOM[size]);
-}
 
 export function useTextSize() {
   const [size, setSizeState] = useState<TextSize>(() => {
@@ -69,9 +65,9 @@ export function useTextSize() {
     localStorage.setItem(TEXT_SIZE_KEY, s);
   }, []);
 
-  useEffect(() => {
-    applyTextSize(size);
-  }, [size]);
+  const cycle = useCallback(() => {
+    setSize(size === "small" ? "default" : size === "default" ? "large" : "small");
+  }, [size, setSize]);
 
-  return { size, setSize };
+  return { size, setSize, cycle, zoom: TEXT_SIZE_ZOOM[size] };
 }

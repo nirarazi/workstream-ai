@@ -34,7 +34,7 @@ function SyncIndicator({ lastSyncAt, error }: { lastSyncAt: Date | null; error: 
   );
 }
 import { fetchSetupStatus, fetchStatus, fetchAgents, agentsToMentionables, type ServiceStatuses, type Mentionable } from "./lib/api";
-import { useTheme, useTextSize, type ThemeMode, type TextSize } from "./lib/theme";
+import { useTheme, useTextSize, type ThemeMode } from "./lib/theme";
 import StreamView from "./components/StreamView";
 import FleetBoard from "./components/FleetBoard";
 import Sidekick from "./components/Sidekick";
@@ -96,7 +96,7 @@ function App(): JSX.Element {
   const [agentPlatform, setAgentPlatform] = useState("slack");
   const [syncState, setSyncState] = useState<{ lastSyncAt: Date | null; error: boolean }>({ lastSyncAt: null, error: false });
   const { mode: themeMode, cycle: cycleTheme } = useTheme();
-  const { size: textSize, setSize: setTextSize } = useTextSize();
+  const { size: textSize, cycle: cycleTextSize, zoom: textZoom } = useTextSize();
   const statusInterval = useRef<ReturnType<typeof setInterval> | null>(null);
   const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -203,9 +203,9 @@ function App(): JSX.Element {
   }
 
   return (
-    <div className="flex flex-col h-screen bg-gray-950 text-gray-100">
+    <div className="flex flex-col bg-gray-950 text-gray-100" style={{ zoom: textZoom, height: `${100 / textZoom}vh` }}>
       {/* Sticky chrome — title bar + tab bar together so no gap appears */}
-      <div className="sticky top-0 z-50 bg-gray-950">
+      <div className="sticky top-0 z-50 bg-gray-950" style={textZoom !== 1 ? { zoom: 1 / textZoom } : undefined}>
         <header
           data-tauri-drag-region
           className="border-b border-gray-800 flex items-center justify-between"
@@ -218,6 +218,19 @@ function App(): JSX.Element {
             {view === "stream" && <SyncIndicator lastSyncAt={syncState.lastSyncAt} error={syncState.error} />}
           </div>
           <div className="flex items-center gap-3">
+            {/* Text size toggle */}
+            {view !== "loading" && view !== "setup" && (
+              <button
+                onClick={cycleTextSize}
+                title={`Text size: ${textSize}`}
+                className={`cursor-pointer text-gray-500 hover:text-gray-300 transition-colors font-semibold ${
+                  textSize === "small" ? "text-[10px]" : textSize === "default" ? "text-xs" : "text-sm"
+                }`}
+              >
+                A
+              </button>
+            )}
+
             {/* Theme toggle */}
             {view !== "loading" && view !== "setup" && (
               <button
@@ -280,7 +293,7 @@ function App(): JSX.Element {
       </div>
 
       {/* Main content */}
-      <main className={view === "stream" ? "flex-1 overflow-hidden" : "p-6"}>
+      <main className={view === "stream" ? "flex-1 overflow-hidden" : "flex-1 overflow-y-auto p-6"}>
         {view === "loading" && (
           <div className="flex flex-col items-center justify-center py-32 gap-6">
             <div className="text-center">
@@ -307,30 +320,7 @@ function App(): JSX.Element {
         )}
         {view === "fleet" && <FleetBoard platformMeta={platformMeta} />}
         {view === "settings" && (
-          <>
-            <div className="max-w-2xl mx-auto mb-6">
-              <h2 className="text-xs font-semibold uppercase tracking-wider text-gray-500 mb-3">Preferences</h2>
-              <div className="flex items-center gap-4">
-                <label className="text-sm text-gray-400">Text size</label>
-                <div className="flex rounded-lg overflow-hidden border border-gray-700">
-                  {(["small", "default", "large"] as TextSize[]).map((s) => (
-                    <button
-                      key={s}
-                      onClick={() => setTextSize(s)}
-                      className={`cursor-pointer px-3 py-1.5 font-medium transition-colors ${
-                        textSize === s
-                          ? "bg-cyan-900/60 text-cyan-300"
-                          : "text-gray-400 hover:text-gray-200 hover:bg-gray-800"
-                      } ${s === "small" ? "text-[10px]" : s === "default" ? "text-xs" : "text-sm"}`}
-                    >
-                      A
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
-            <Setup onComplete={() => { init(); setView("stream"); }} />
-          </>
+          <Setup onComplete={() => { init(); setView("stream"); }} />
         )}
       </main>
       {sidekickOpen && <Sidekick onClose={() => setSidekickOpen(false)} />}
