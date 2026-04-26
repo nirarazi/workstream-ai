@@ -627,13 +627,14 @@ export class ContextGraph {
 
   getEventsForWorkItem(workItemId: string): Event[] {
     // Include events directly tagged with this work item ID, plus events
-    // from threads linked to this work item (which may have been classified
-    // under a different work item ID due to LLM/regex ID mismatches).
+    // from threads linked to this work item via the junction table (which
+    // may have been classified under a different work item ID due to
+    // LLM/regex ID mismatches).
     const rows = this.db.db
       .prepare(`
         SELECT e.* FROM events e
         WHERE e.work_item_id = ?
-           OR e.thread_id IN (SELECT id FROM threads WHERE work_item_id = ?)
+           OR e.thread_id IN (SELECT thread_id FROM thread_work_items WHERE work_item_id = ?)
         ORDER BY e.timestamp ASC, e.rowid ASC
       `)
       .all(workItemId, workItemId) as EventRow[];
@@ -644,13 +645,15 @@ export class ContextGraph {
     workItemId: string,
     limit: number = 10,
     before?: string,
-  ): { events: Event[]; hasOlder: boolean } {
+  ): { events: Array<Event & { relation?: "primary" | "mentioned" }>; hasOlder: boolean } {
     let sql = `
-      SELECT e.* FROM events e
-      LEFT JOIN threads t ON e.thread_id = t.id
-      WHERE (e.work_item_id = ? OR t.work_item_id = ?)
+      SELECT e.*,
+        CASE WHEN e.work_item_id = ? THEN 'primary' ELSE 'mentioned' END AS _relation
+      FROM events e
+      WHERE (e.work_item_id = ?
+         OR e.thread_id IN (SELECT thread_id FROM thread_work_items WHERE work_item_id = ?))
     `;
-    const params: any[] = [workItemId, workItemId];
+    const params: any[] = [workItemId, workItemId, workItemId];
 
     if (before) {
       sql += " AND e.timestamp < ?";
@@ -660,12 +663,15 @@ export class ContextGraph {
     sql += " ORDER BY e.timestamp DESC LIMIT ?";
     params.push(limit + 1); // fetch one extra to check hasOlder
 
-    const rows = this.db.db.prepare(sql).all(...params) as EventRow[];
+    const rows = this.db.db.prepare(sql).all(...params) as Array<EventRow & { _relation: string }>;
     const hasOlder = rows.length > limit;
     const eventRows = hasOlder ? rows.slice(0, limit) : rows;
 
     // Reverse to oldest-first for chat-style display
-    const events = eventRows.map(toEvent).reverse();
+    const events = eventRows.map((row) => ({
+      ...toEvent(row),
+      relation: row._relation as "primary" | "mentioned",
+    })).reverse();
     return { events, hasOlder };
   }
 
@@ -962,7 +968,8 @@ export class ContextGraph {
       .prepare(`
         SELECT DISTINCT t.channel_id AS id, t.channel_name AS name
         FROM threads t
-        WHERE t.work_item_id = ?
+        JOIN thread_work_items twi ON twi.thread_id = t.id
+        WHERE twi.work_item_id = ?
         ORDER BY t.last_activity DESC
       `)
       .all(workItemId) as Array<{ id: string; name: string }>;
@@ -996,9 +1003,8 @@ export class ContextGraph {
       FROM work_items wi
       LEFT JOIN events e ON e.id = (
           SELECT e2.id FROM events e2
-          LEFT JOIN threads t2 ON e2.thread_id = t2.id
           WHERE e2.work_item_id = wi.id
-             OR t2.work_item_id = wi.id
+             OR e2.thread_id IN (SELECT thread_id FROM thread_work_items WHERE work_item_id = wi.id)
           ORDER BY e2.timestamp DESC
           LIMIT 1
         )
@@ -1047,9 +1053,8 @@ export class ContextGraph {
       FROM work_items wi
       INNER JOIN events e ON e.id = (
           SELECT e2.id FROM events e2
-          LEFT JOIN threads t2 ON e2.thread_id = t2.id
           WHERE e2.work_item_id = wi.id
-             OR t2.work_item_id = wi.id
+             OR e2.thread_id IN (SELECT thread_id FROM thread_work_items WHERE work_item_id = wi.id)
           ORDER BY e2.timestamp DESC
           LIMIT 1
         )
@@ -1098,9 +1103,8 @@ export class ContextGraph {
       FROM work_items wi
       LEFT JOIN events e ON e.id = (
           SELECT e2.id FROM events e2
-          LEFT JOIN threads t2 ON e2.thread_id = t2.id
           WHERE e2.work_item_id = wi.id
-             OR t2.work_item_id = wi.id
+             OR e2.thread_id IN (SELECT thread_id FROM thread_work_items WHERE work_item_id = wi.id)
           ORDER BY e2.timestamp DESC
           LIMIT 1
         )
@@ -1293,9 +1297,8 @@ export class ContextGraph {
       FROM work_items wi
       LEFT JOIN events e ON e.id = (
           SELECT e2.id FROM events e2
-          LEFT JOIN threads t2 ON e2.thread_id = t2.id
           WHERE e2.work_item_id = wi.id
-             OR t2.work_item_id = wi.id
+             OR e2.thread_id IN (SELECT thread_id FROM thread_work_items WHERE work_item_id = wi.id)
           ORDER BY e2.timestamp DESC
           LIMIT 1
         )

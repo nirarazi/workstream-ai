@@ -17,6 +17,7 @@ export interface TimelineEntry {
   summary: string;
   rawText: string;
   isOperator: boolean;
+  relation?: "primary" | "mentioned";
 }
 
 export interface StreamData {
@@ -102,7 +103,7 @@ export function buildUnifiedStatus(
 }
 
 export function buildTimeline(
-  events: Event[],
+  events: Array<Event & { relation?: "primary" | "mentioned" }>,
   agentMap: Map<string, string>,
   agentAvatarMap: Map<string, string | null>,
   threadChannelMap: Map<string, { channelId: string; channelName: string }>,
@@ -129,6 +130,7 @@ export function buildTimeline(
         summary: e.reason,
         rawText: e.rawText,
         isOperator: e.agentId === null,
+        relation: e.relation,
       };
     });
 }
