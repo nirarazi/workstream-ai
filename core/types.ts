@@ -160,6 +160,13 @@ export interface WorkItemComment {
   created: string;
 }
 
+export interface ThreadWorkItem {
+  threadId: string;
+  workItemId: string;
+  relation: "primary" | "mentioned";
+  createdAt: string;
+}
+
 export interface ActionableItem {
   workItem: WorkItem;
   latestEvent: Event;
