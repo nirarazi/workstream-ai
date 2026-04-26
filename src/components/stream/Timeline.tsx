@@ -136,8 +136,24 @@ export default function Timeline({ entries, hasOlder, platformMeta, onLoadOlder 
 
                 {/* Raw text with platform-specific formatting */}
                 {entry.rawText && entry.rawText !== entry.summary && (
-                  <div className="mt-1 text-xs text-gray-500 leading-relaxed whitespace-pre-wrap">
-                    {entry.platform ? (
+                  <div className={`mt-1 text-xs leading-relaxed whitespace-pre-wrap ${
+                    entry.relation === "mentioned" ? "text-gray-600" : "text-gray-500"
+                  }`}>
+                    {entry.relation === "mentioned" ? (
+                      <details className="group">
+                        <summary className="cursor-pointer text-gray-600 hover:text-gray-400 list-none">
+                          <span className="text-[11px] italic">Mentioned in this thread</span>
+                          <span className="ml-1 text-[10px] text-gray-700 group-open:hidden">Show full message</span>
+                        </summary>
+                        <div className="mt-1">
+                          {entry.platform ? (
+                            <PlatformMessage platform={entry.platform} text={entry.rawText} />
+                          ) : (
+                            entry.rawText
+                          )}
+                        </div>
+                      </details>
+                    ) : entry.platform ? (
                       <PlatformMessage platform={entry.platform} text={entry.rawText} />
                     ) : (
                       entry.rawText
