@@ -555,6 +555,16 @@ export class Pipeline {
       const existing = this.graph.getWorkItemById(workItemId);
       if (existing) {
         const itemClassification = validatedBreakdownMap.get(workItemId);
+
+        // Only the primary work item inherits the thread-level classification.
+        // Mentioned items must have an explicit breakdown entry — otherwise we
+        // skip the status update.  This prevents a planning/summary thread's
+        // top-level status (e.g. "needs_decision") from bleeding into every
+        // ticket that happened to be listed in the message.
+        if (!itemClassification && relation === "mentioned") {
+          continue;
+        }
+
         const itemStatus = itemClassification?.status ?? classification.status;
         const itemConfidence = itemClassification?.confidence ?? classification.confidence;
         const itemTitle = itemClassification?.title ?? classification.title;
