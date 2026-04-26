@@ -15,6 +15,7 @@ import type {
   WorkItem,
 } from "../types.js";
 import type { Database } from "./db.js";
+import type { Extractor } from "./extractors/interface.js";
 import type {
   AgentRow,
   EnrichmentRow,
@@ -543,6 +544,48 @@ export class ContextGraph {
     return rows.map(toThread);
   }
 
+  /**
+   * Scan all events' raw_text for work item IDs using the given extractor,
+   * and create `mentioned` junction rows for any that are missing.
+   * Skips IDs that already have a junction row for that thread.
+   */
+  backfillJunctionFromRawText(extractors: Extractor[]): number {
+    const events = this.db.db.prepare(
+      "SELECT id, thread_id, work_item_id, raw_text FROM events WHERE raw_text != ''"
+    ).all() as Array<{ id: string; thread_id: string; work_item_id: string | null; raw_text: string }>;
+
+    const knownWorkItems = new Set(
+      (this.db.db.prepare("SELECT id FROM work_items").all() as Array<{ id: string }>).map(r => r.id)
+    );
+
+    let created = 0;
+    for (const event of events) {
+      const allIds = new Set<string>();
+      for (const extractor of extractors) {
+        for (const id of extractor.extractWorkItemIds(event.raw_text)) {
+          allIds.add(id);
+        }
+      }
+
+      for (const workItemId of allIds) {
+        if (!knownWorkItems.has(workItemId)) continue;
+        // Don't overwrite a primary relation with mentioned
+        const existing = this.db.db.prepare(
+          "SELECT relation FROM thread_work_items WHERE thread_id = ? AND work_item_id = ?"
+        ).get(event.thread_id, workItemId) as { relation: string } | undefined;
+        if (!existing) {
+          this.linkThreadWorkItem(event.thread_id, workItemId, "mentioned");
+          created++;
+        }
+      }
+    }
+
+    if (created > 0) {
+      log.info(`Backfill: created ${created} junction rows from raw_text scanning`);
+    }
+    return created;
+  }
+
   // --- Events ---
 
   insertEvent(event: {
@@ -586,10 +629,16 @@ export class ContextGraph {
     );
 
     if (result.changes === 0) {
-      // Duplicate — return existing event
+      // INSERT OR IGNORE produced no changes — either a true duplicate or a
+      // constraint violation (e.g. thread_id NOT NULL with a null value).
       const existing = this.db.db.prepare(
-        "SELECT * FROM events WHERE message_id = ? AND thread_id = ?"
-      ).get(event.messageId, event.threadId) as EventRow;
+        event.threadId
+          ? "SELECT * FROM events WHERE message_id = ? AND thread_id = ?"
+          : "SELECT * FROM events WHERE message_id = ? AND thread_id IS NULL"
+      ).get(...(event.threadId ? [event.messageId, event.threadId] : [event.messageId])) as EventRow | undefined;
+      if (!existing) {
+        throw new Error(`Failed to insert event: threadId=${event.threadId}, messageId=${event.messageId}`);
+      }
       return toEvent(existing);
     }
 
@@ -739,6 +788,26 @@ export class ContextGraph {
     log.debug("Set poll cursor for channel", channelId);
 
     return this.getPollCursor(channelId)!;
+  }
+
+  /**
+   * Roll back all poll cursors by the given number of days.
+   * Next pipeline poll will re-fetch Slack history from the rolled-back timestamps.
+   */
+  rollBackPollCursors(days: number): number {
+    const ms = days * 24 * 60 * 60 * 1000;
+    const cursors = this.getAllPollCursors();
+    let updated = 0;
+    for (const cursor of cursors) {
+      const oldTs = new Date(cursor.lastTimestamp);
+      const newTs = new Date(oldTs.getTime() - ms);
+      this.setPollCursor(cursor.channelId, newTs.toISOString());
+      updated++;
+    }
+    if (updated > 0) {
+      log.info(`Rolled back ${updated} poll cursors by ${days} days`);
+    }
+    return updated;
   }
 
   // --- Summaries ---
@@ -1053,8 +1122,9 @@ export class ContextGraph {
       FROM work_items wi
       INNER JOIN events e ON e.id = (
           SELECT e2.id FROM events e2
-          WHERE e2.work_item_id = wi.id
-             OR e2.thread_id IN (SELECT thread_id FROM thread_work_items WHERE work_item_id = wi.id)
+          WHERE (e2.work_item_id = wi.id
+             OR e2.thread_id IN (SELECT thread_id FROM thread_work_items WHERE work_item_id = wi.id))
+            AND e2.targeted_at_operator = 1
           ORDER BY e2.timestamp DESC
           LIMIT 1
         )
@@ -1062,7 +1132,6 @@ export class ContextGraph {
       LEFT JOIN threads t ON e.thread_id = t.id
       WHERE wi.current_atc_status IN ('blocked_on_human', 'needs_decision')
         AND (wi.snoozed_until IS NULL OR wi.snoozed_until <= datetime('now'))
-        AND e.targeted_at_operator = 1
         AND (wi.dismissed_at IS NULL OR e.timestamp > wi.dismissed_at)
         AND (wi.merged_into IS NULL)
       ORDER BY
