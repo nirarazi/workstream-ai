@@ -127,3 +127,47 @@ describe("WorkItemLinker", () => {
     expect(ids).toContain("IT-2");
   });
 });
+
+describe("junction row creation", () => {
+  let db: Database;
+  let graph: ContextGraph;
+  let linker: WorkItemLinker;
+
+  beforeEach(() => {
+    db = new Database(":memory:");
+    graph = new ContextGraph(db);
+    const extractor = new DefaultExtractor(defaultConfig);
+    linker = new WorkItemLinker(graph, [extractor]);
+    graph.upsertThread({
+      id: "T1", channelId: "C1", channelName: "general",
+      platform: "slack", lastActivity: new Date().toISOString(),
+    });
+  });
+
+  afterEach(() => { db.close(); });
+
+  it("creates junction rows for all extracted IDs", () => {
+    linker.linkMessage("Working on AI-100 and AI-200 now", "T1");
+    const junctions = graph.getWorkItemsForThread("T1");
+    expect(junctions).toHaveLength(2);
+    const primary = junctions.find((j) => j.relation === "primary");
+    expect(primary).toBeDefined();
+    expect(primary!.workItemId).toBe("AI-100");
+    const mentioned = junctions.find((j) => j.relation === "mentioned");
+    expect(mentioned).toBeDefined();
+    expect(mentioned!.workItemId).toBe("AI-200");
+  });
+
+  it("still sets threads.work_item_id for backwards compatibility", () => {
+    linker.linkMessage("Working on AI-100", "T1");
+    const thread = graph.getThreadById("T1");
+    expect(thread!.workItemId).toBe("AI-100");
+  });
+
+  it("creates junction row even for single work item", () => {
+    linker.linkMessage("Fix AI-300 urgently", "T1");
+    const junctions = graph.getWorkItemsForThread("T1");
+    expect(junctions).toHaveLength(1);
+    expect(junctions[0].relation).toBe("primary");
+  });
+});
