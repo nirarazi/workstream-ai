@@ -433,6 +433,20 @@ export class Pipeline {
         })
       : [];
 
+    // Step 0g: Ensure the thread row exists before the linker writes junction
+    // rows (thread_work_items has a FK on threads.id).
+    if (!existingThread) {
+      this.graph.upsertThread({
+        id: thread.id,
+        channelId: thread.channelId,
+        channelName: thread.channelName,
+        platformMeta: thread.platformMeta,
+        platform: thread.platform,
+        lastActivity: message.timestamp,
+        messageCount: thread.messages.length,
+      });
+    }
+
     // Step 1: Link work items from message text (regex — only known prefixes)
     const extractedIds = this.linker.linkMessage(message.text, thread.id);
 
