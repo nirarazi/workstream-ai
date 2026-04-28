@@ -187,6 +187,7 @@ export interface EngineStatus {
   services: ServiceStatuses;
   llmBackoff: LlmBackoff | null;
   llmUsage: LlmUsage | null;
+  projectKeys?: string[];
 }
 
 export interface WorkItemDetail {

@@ -1,8 +1,9 @@
 import { useState, useEffect } from "react";
 import type { StreamData } from "../../lib/api";
-import { postAction, createTicket, openExternalUrl } from "../../lib/api";
+import { postAction } from "../../lib/api";
 import SnoozeDropdown from "./SnoozeDropdown";
 import MergeDropdown from "./MergeDropdown";
+import CreateTicketButton from "../CreateTicketButton";
 
 type ActionKind = "unblock" | "done" | "dismiss" | "snooze" | "noise";
 
@@ -60,12 +61,11 @@ interface SuggestedActionsProps {
 export default function SuggestedActions({ data, onActioned, getReplyText, onActionComplete, pinned, onTogglePin, onMerge, recentlyViewed, workItemId }: SuggestedActionsProps) {
   const { workItem } = data;
   const [acting, setActing] = useState<ActionKind | null>(null);
-  const [creatingTicket, setCreatingTicket] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showMerge, setShowMerge] = useState(false);
 
   const isInferred = workItem.source === "inferred" || workItem.id.startsWith("thread:");
-  const busy = acting !== null || creatingTicket;
+  const busy = acting !== null;
 
   async function handleAction(action: ActionKind, snoozeDuration?: number) {
     setActing(action);
@@ -87,22 +87,6 @@ export default function SuggestedActions({ data, onActioned, getReplyText, onAct
     window.addEventListener("workstream:open-merge-dropdown", handler);
     return () => window.removeEventListener("workstream:open-merge-dropdown", handler);
   }, []);
-
-  async function handleCreateTicket() {
-    setCreatingTicket(true);
-    setError(null);
-    try {
-      const result = await createTicket(workItem.id);
-      if (result.ticketUrl) {
-        openExternalUrl(result.ticketUrl);
-      }
-      onActioned?.();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to create ticket");
-    } finally {
-      setCreatingTicket(false);
-    }
-  }
 
   return (
     <div className="px-5 py-4">
@@ -132,13 +116,12 @@ export default function SuggestedActions({ data, onActioned, getReplyText, onAct
           </button>
         )}
         {isInferred && (
-          <button
-            onClick={handleCreateTicket}
+          <CreateTicketButton
+            workItemId={workItem.id}
             disabled={busy}
-            className="cursor-pointer rounded px-3 py-1.5 text-xs font-medium bg-purple-800/70 hover:bg-purple-700 text-purple-200 disabled:opacity-40 disabled:cursor-not-allowed"
-          >
-            {creatingTicket ? "..." : "Create Ticket"}
-          </button>
+            onCreated={onActioned}
+            onError={setError}
+          />
         )}
         {onMerge && (
           <div className="relative">

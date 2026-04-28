@@ -4,8 +4,6 @@ import {
   generateSummary,
   postReply,
   postAction,
-  createTicket,
-  openExternalUrl,
   postForward,
   linkThread as apiLinkThread,
   unlinkThread as apiUnlinkThread,
@@ -15,6 +13,7 @@ import {
   type Mentionable,
   type Thread,
 } from "../lib/api";
+import CreateTicketButton from "./CreateTicketButton";
 import Tooltip from "./Tooltip";
 import { timeAgo } from "../lib/time";
 import StatusBadge from "./StatusBadge";
@@ -61,7 +60,6 @@ export default function ContextPane({
   const [newThreadTargetType, setNewThreadTargetType] = useState<"user" | "channel">("channel");
   const [newThreadMessage, setNewThreadMessage] = useState("");
   const [sendingNewThread, setSendingNewThread] = useState(false);
-  const [creatingTicket, setCreatingTicket] = useState(false);
   const paneRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<MentionInputHandle>(null);
 
@@ -163,23 +161,6 @@ export default function ContextPane({
       setError(err instanceof Error ? err.message : "Action failed");
     } finally {
       setActing(false);
-    }
-  }
-
-  async function handleCreateTicket() {
-    setCreatingTicket(true);
-    setError(null);
-    try {
-      const result = await createTicket(workItemId);
-      if (result.ticketUrl) {
-        openExternalUrl(result.ticketUrl);
-      }
-      onActioned?.();
-      onClose();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to create ticket");
-    } finally {
-      setCreatingTicket(false);
     }
   }
 
@@ -761,9 +742,12 @@ export default function ContextPane({
                 </Tooltip>
                 {(workItem.source === "inferred" || workItem.id.startsWith("thread:")) && (
                   <Tooltip text="Create a ticket from this conversation">
-                    <button onClick={handleCreateTicket} disabled={acting || creatingTicket} className="cursor-pointer rounded px-2.5 py-1 text-xs font-medium bg-purple-800/70 hover:bg-purple-700 text-purple-200 disabled:opacity-40 disabled:cursor-not-allowed">
-                      {creatingTicket ? "..." : "Create Ticket"}
-                    </button>
+                    <CreateTicketButton
+                      workItemId={workItemId}
+                      disabled={acting}
+                      onCreated={() => { onActioned?.(); onClose(); }}
+                      onError={setError}
+                    />
                   </Tooltip>
                 )}
               </div>
