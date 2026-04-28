@@ -1,5 +1,5 @@
 import { createLogger } from "../logger.js";
-import { SUMMARIZER_SYSTEM_PROMPT, buildSummarizationPrompt } from "./prompt.js";
+import { SUMMARIZER_SYSTEM_PROMPT, buildSummarizationPrompt, TICKET_DESCRIPTION_SYSTEM_PROMPT, buildTicketDescriptionPrompt } from "./prompt.js";
 import type { Event } from "../types.js";
 import type { UsageTracker } from "../usage/tracker.js";
 
@@ -35,17 +35,39 @@ export class Summarizer {
     const userPrompt = buildSummarizationPrompt(events, workItemId);
 
     try {
-      const summary = this.isAnthropic
-        ? await this.callAnthropic(userPrompt)
-        : await this.callOpenAI(userPrompt);
-      return summary;
+      return await this.complete(userPrompt, SUMMARIZER_SYSTEM_PROMPT, "summarizer");
     } catch (error) {
       log.warn("Summarization failed, generating fallback", error);
       return this.fallbackSummary(events, workItemId);
     }
   }
 
-  private async callAnthropic(userPrompt: string): Promise<string> {
+  async generateTicketDescription(events: Event[], title: string): Promise<string> {
+    if (events.length === 0) {
+      return title;
+    }
+
+    const userPrompt = buildTicketDescriptionPrompt(events, title);
+
+    try {
+      return await this.complete(userPrompt, TICKET_DESCRIPTION_SYSTEM_PROMPT, "ticket-description");
+    } catch (error) {
+      log.warn("Ticket description generation failed, using fallback", error);
+      return events
+        .slice(-5)
+        .map((e) => e.rawText)
+        .filter(Boolean)
+        .join("\n\n");
+    }
+  }
+
+  private async complete(userPrompt: string, systemPrompt: string, usageLabel: string): Promise<string> {
+    return this.isAnthropic
+      ? this.callAnthropic(userPrompt, systemPrompt, usageLabel)
+      : this.callOpenAI(userPrompt, systemPrompt, usageLabel);
+  }
+
+  private async callAnthropic(userPrompt: string, systemPrompt: string, usageLabel: string): Promise<string> {
     const url = `${this.baseUrl}/messages`;
     const headers: Record<string, string> = {
       "content-type": "application/json",
@@ -61,13 +83,13 @@ export class Summarizer {
       body: JSON.stringify({
         model: this.model,
         max_tokens: 512,
-        system: SUMMARIZER_SYSTEM_PROMPT,
+        system: systemPrompt,
         messages: [{ role: "user", content: userPrompt }],
       }),
       signal: AbortSignal.timeout(30_000),
     };
     const response = this.usageTracker
-      ? await this.usageTracker.completionCall(url, fetchOptions, "summarizer")
+      ? await this.usageTracker.completionCall(url, fetchOptions, usageLabel)
       : await fetch(url, fetchOptions);
 
     if (!response.ok) {
@@ -79,7 +101,7 @@ export class Summarizer {
     return json.content[0].text;
   }
 
-  private async callOpenAI(userPrompt: string): Promise<string> {
+  private async callOpenAI(userPrompt: string, systemPrompt: string, usageLabel: string): Promise<string> {
     const url = `${this.baseUrl}/chat/completions`;
     const headers: Record<string, string> = {
       "content-type": "application/json",
@@ -94,7 +116,7 @@ export class Summarizer {
       body: JSON.stringify({
         model: this.model,
         messages: [
-          { role: "system", content: SUMMARIZER_SYSTEM_PROMPT },
+          { role: "system", content: systemPrompt },
           { role: "user", content: userPrompt },
         ],
         temperature: 0,
@@ -102,7 +124,7 @@ export class Summarizer {
       signal: AbortSignal.timeout(30_000),
     };
     const response = this.usageTracker
-      ? await this.usageTracker.completionCall(url, fetchOptions, "summarizer")
+      ? await this.usageTracker.completionCall(url, fetchOptions, usageLabel)
       : await fetch(url, fetchOptions);
 
     if (!response.ok) {
