@@ -808,16 +808,21 @@ export function createApp(state: EngineState): Hono {
           if (!projectKey) {
             return c.json({ ok: false, error: "projectKey required (or set taskAdapter.defaultProject in config)" }, 400);
           }
-          // Build description from conversation history
+          // Generate description from conversation history via LLM
           const events = state.graph.getEventsForWorkItem(body.workItemId);
-          const description = events
-            .slice(-5)
-            .map((e) => e.rawText)
-            .filter(Boolean)
-            .join("\n\n");
+          const title = workItem.title || "Untitled";
+          let description: string;
+          try {
+            const { baseUrl, model, apiKey } = state.config.classifier.provider;
+            const summarizer = new Summarizer({ baseUrl, model, apiKey, usageTracker: state.usageTracker ?? undefined });
+            description = await summarizer.generateTicketDescription(events, title);
+          } catch {
+            // Fallback to raw text if LLM fails
+            description = events.slice(-5).map((e) => e.rawText).filter(Boolean).join("\n\n");
+          }
 
           const ticket = await state.taskAdapter.createWorkItem({
-            title: workItem.title || "Untitled",
+            title,
             description,
             projectKey,
           });
