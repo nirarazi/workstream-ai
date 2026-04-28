@@ -822,7 +822,19 @@ export function createApp(state: EngineState): Hono {
             projectKey,
           });
 
-          // Relink: update the old synthetic work item's threads and events to point to the real ticket
+          // Create the real work item first (threads and junction rows FK-reference it)
+          state.graph.upsertWorkItem({
+            id: ticket.id,
+            source: state.taskAdapter.name,
+            title: ticket.title,
+            externalStatus: ticket.status,
+            assignee: ticket.assignee,
+            url: ticket.url,
+            currentAtcStatus: workItem.currentAtcStatus,
+            currentConfidence: workItem.currentConfidence,
+          });
+
+          // Relink: update the old synthetic work item's threads and junction rows to point to the real ticket
           const threads = state.graph.getThreadsForWorkItem(body.workItemId);
           for (const t of threads) {
             state.graph.upsertThread({
@@ -834,19 +846,9 @@ export function createApp(state: EngineState): Hono {
               lastActivity: t.lastActivity,
               messageCount: t.messageCount,
             });
+            // Update junction row to point to the new ticket
+            state.graph.linkThreadWorkItem(t.id, ticket.id, "primary");
           }
-
-          // Create the real work item
-          state.graph.upsertWorkItem({
-            id: ticket.id,
-            source: state.taskAdapter.name,
-            title: ticket.title,
-            externalStatus: ticket.status,
-            assignee: ticket.assignee,
-            url: ticket.url,
-            currentAtcStatus: workItem.currentAtcStatus,
-            currentConfidence: workItem.currentConfidence,
-          });
 
           // Mark the synthetic work item as completed (superseded)
           state.graph.upsertWorkItem({
