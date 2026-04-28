@@ -801,7 +801,9 @@ export function createApp(state: EngineState): Hono {
           if (!state.taskAdapter?.createWorkItem) {
             return c.json({ ok: false, error: "No task adapter with ticket creation support" }, 400);
           }
-          const projectKey = body.projectKey ?? state.config.taskAdapter?.defaultProject;
+          const projectKey = body.projectKey
+            ?? state.config.taskAdapter?.defaultProject
+            ?? state.config.taskAdapter?.ticketPrefixes?.[0]?.replace(/-$/, "");
           if (!projectKey) {
             return c.json({ ok: false, error: "projectKey required (or set taskAdapter.defaultProject in config)" }, 400);
           }
