@@ -101,6 +101,9 @@ export function createApp(state: EngineState): Hono {
       },
       llmBackoff,
       llmUsage,
+      projectKeys: (state.config.taskAdapter?.ticketPrefixes ?? []).map(
+        (p: string) => p.replace(/-$/, ""),
+      ),
     });
   });
 

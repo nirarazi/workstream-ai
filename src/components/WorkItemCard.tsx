@@ -1,6 +1,7 @@
 import { useState, useRef, type JSX } from "react";
 import type { ActionableItem, Mentionable } from "../lib/api";
-import { postAction, postReply, openExternalUrl, createTicket } from "../lib/api";
+import { postAction, postReply } from "../lib/api";
+import CreateTicketButton from "./CreateTicketButton";
 import { timeAgo } from "../lib/time";
 import StatusBadge from "./StatusBadge";
 import Tooltip from "./Tooltip";
@@ -81,7 +82,6 @@ export default function WorkItemCard({ item, platformMeta, userMap, mentionables
   const [sending, setSending] = useState(false);
   const [done, setDone] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [creatingTicket, setCreatingTicket] = useState(false);
   const inputRef = useRef<MentionInputHandle>(null);
 
   // Pick the right mention serializer based on platform
@@ -119,24 +119,7 @@ export default function WorkItemCard({ item, platformMeta, userMap, mentionables
 
   const isInferred = workItem.source === "inferred" || workItem.id.startsWith("thread:");
 
-  async function handleCreateTicket() {
-    setCreatingTicket(true);
-    setError(null);
-    try {
-      const result = await createTicket(workItem.id);
-      if (result.ticketUrl) {
-        openExternalUrl(result.ticketUrl);
-      }
-      setDone(true);
-      onActioned?.();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to create ticket");
-    } finally {
-      setCreatingTicket(false);
-    }
-  }
-
-  const busy = acting !== null || sending || creatingTicket;
+  const busy = acting !== null || sending;
 
   return done ? (
     <div className="rounded border border-gray-800 bg-gray-900/50 p-4 opacity-40 transition-opacity duration-300">
@@ -248,13 +231,12 @@ export default function WorkItemCard({ item, platformMeta, userMap, mentionables
           {/* Create Ticket — only for inferred/unticketed work items */}
           {isInferred && (
             <Tooltip text="Create a ticket from this conversation">
-              <button
-                onClick={handleCreateTicket}
+              <CreateTicketButton
+                workItemId={workItem.id}
                 disabled={busy}
-                className="cursor-pointer rounded px-2.5 py-1 text-xs font-medium bg-purple-800/70 hover:bg-purple-700 text-purple-200 disabled:opacity-40 disabled:cursor-not-allowed"
-              >
-                {creatingTicket ? "..." : "Create Ticket"}
-              </button>
+                onCreated={() => { setDone(true); onActioned?.(); }}
+                onError={setError}
+              />
             </Tooltip>
           )}
         </div>
