@@ -15,11 +15,17 @@ import type { JSX } from "react";
 import { buildSlackThreadUrl } from "./slack/urls";
 import { slackSerializeMention } from "./slack/mentions";
 import SlackMessage from "./slack/SlackMessage";
+import SlackFormatToolbar, { handleFormatShortcut as slackFormatShortcut } from "./slack/SlackFormatToolbar";
+import type { FormatToolbarProps } from "./slack/SlackFormatToolbar";
+import { decorateSlackMrkdwn } from "./slack/mrkdwnDecorator";
 
 interface PlatformModule {
   buildThreadUrl: (thread: Thread, meta?: Record<string, unknown>) => string | null;
   serializeMention: (userId: string) => string;
   MessageRenderer: (props: { text: string; userMap?: Map<string, string> }) => JSX.Element;
+  FormatToolbar?: (props: FormatToolbarProps) => JSX.Element;
+  handleFormatShortcut?: (e: React.KeyboardEvent<HTMLDivElement>, editor: HTMLDivElement) => boolean;
+  decorateInput?: (editor: HTMLDivElement) => void;
 }
 
 const PLATFORMS: Record<string, PlatformModule> = {
@@ -33,6 +39,9 @@ const PLATFORMS: Record<string, PlatformModule> = {
     },
     serializeMention: slackSerializeMention,
     MessageRenderer: SlackMessage,
+    FormatToolbar: SlackFormatToolbar,
+    handleFormatShortcut: slackFormatShortcut,
+    decorateInput: decorateSlackMrkdwn,
   },
 };
 
@@ -47,6 +56,21 @@ export function buildThreadUrl(thread: Thread, platformMeta?: Record<string, unk
 /** Get the mention serializer for a platform, with a fallback */
 export function getSerializeMention(platform: string): (userId: string) => string {
   return PLATFORMS[platform]?.serializeMention ?? ((id: string) => `@${id}`);
+}
+
+/** Get the format toolbar component for a platform, or null */
+export function getFormatToolbar(platform: string): ((props: FormatToolbarProps) => JSX.Element) | null {
+  return PLATFORMS[platform]?.FormatToolbar ?? null;
+}
+
+/** Get the keyboard shortcut handler for a platform, or null */
+export function getFormatShortcutHandler(platform: string): ((e: React.KeyboardEvent<HTMLDivElement>, editor: HTMLDivElement) => boolean) | null {
+  return PLATFORMS[platform]?.handleFormatShortcut ?? null;
+}
+
+/** Get the live input decorator for a platform, or null */
+export function getInputDecorator(platform: string): ((editor: HTMLDivElement) => void) | null {
+  return PLATFORMS[platform]?.decorateInput ?? null;
 }
 
 /** Render a message using the platform-specific renderer, with plain text fallback */

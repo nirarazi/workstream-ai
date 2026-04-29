@@ -316,7 +316,7 @@ function App(): JSX.Element {
         )}
         {view === "setup" && <Setup onComplete={handleSetupComplete} />}
         {view === "stream" && (
-          <StreamView mentionables={mentionables} serializeMention={serializeMention} platformMeta={platformMeta} onSyncStateChange={setSyncState} />
+          <StreamView mentionables={mentionables} serializeMention={serializeMention} platform={agentPlatform} platformMeta={platformMeta} onSyncStateChange={setSyncState} />
         )}
         {view === "fleet" && <FleetBoard platformMeta={platformMeta} />}
         {view === "settings" && (
