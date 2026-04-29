@@ -700,3 +700,8 @@ const EMOJI_MAP: Record<string, string> = {
   ":open_mouth:": "\uD83D\uDE2E",
   ":no_mouth:": "\uD83D\uDE36",
 };
+
+/** Replace emoji shortcodes in a string with their unicode equivalents. */
+export function resolveEmoji(text: string): string {
+  return text.replace(/:[a-zA-Z0-9_+-]+:/g, (m) => EMOJI_MAP[m] ?? m);
+}

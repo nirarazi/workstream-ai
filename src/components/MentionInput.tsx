@@ -18,6 +18,12 @@ interface MentionInputProps {
   onSubmit: (serializedText: string) => void;
   /** When set, populates the editor with this text and focuses it. Increment the key to re-trigger. */
   prefill?: { text: string; key: number };
+  /** Optional platform-specific formatting toolbar rendered below the input */
+  FormatToolbar?: React.ComponentType<{ editorRef: React.RefObject<HTMLDivElement | null>; disabled?: boolean }>;
+  /** Optional platform-specific keyboard shortcut handler for formatting */
+  onFormatShortcut?: (e: React.KeyboardEvent<HTMLDivElement>, editor: HTMLDivElement) => boolean;
+  /** Optional live input decorator for formatting preview (e.g., mrkdwn highlighting) */
+  decorateInput?: (editor: HTMLDivElement) => void;
 }
 
 // Unicode zero-width space — used as a cursor landing pad after mention pills
@@ -37,6 +43,9 @@ const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(function 
   serializeMention,
   onSubmit,
   prefill,
+  FormatToolbar,
+  onFormatShortcut,
+  decorateInput,
 }, ref): JSX.Element {
   const editorRef = useRef<HTMLDivElement>(null);
   const [showDropdown, setShowDropdown] = useState(false);
@@ -144,7 +153,9 @@ const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(function 
     setMentionQuery("");
     setSelectedIndex(0);
     updateEmpty();
-  }, []);
+    // Re-decorate after mention insertion
+    if (decorateInput && el) decorateInput(el);
+  }, [decorateInput]);
 
   // --- Input handling ---
 
@@ -182,10 +193,19 @@ const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(function 
       setSelectedIndex(0);
     } else {
       setShowDropdown(false);
+      // Apply live formatting decoration when not in mention mode
+      if (decorateInput && editorRef.current) {
+        decorateInput(editorRef.current);
+      }
     }
   }
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
+    // Platform formatting shortcuts (Ctrl+B, Ctrl+I, etc.)
+    if (onFormatShortcut && editorRef.current && onFormatShortcut(e, editorRef.current)) {
+      return;
+    }
+
     if (showDropdown) {
       const filtered = filterMentionables(mentionables, mentionQuery);
 
@@ -296,23 +316,26 @@ const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(function 
           onSelect={insertMention}
         />
       )}
-      <div
-        ref={editorRef}
-        contentEditable={!disabled}
-        suppressContentEditableWarning
-        onInput={handleInput}
-        onKeyDown={handleKeyDown}
-        data-placeholder={placeholder}
-        className={`
-          min-h-[34px] w-full rounded border border-gray-700 bg-gray-800
-          px-3 py-1.5 text-sm text-gray-100 outline-none
-          focus:border-gray-500
-          ${disabled ? "opacity-50 pointer-events-none" : ""}
-          ${isEmpty ? "before:content-[attr(data-placeholder)] before:text-gray-500 before:pointer-events-none" : ""}
-        `}
-        role="textbox"
-        aria-label={placeholder}
-      />
+      <div className={`rounded border border-gray-700 bg-gray-800 focus-within:border-gray-500 ${disabled ? "opacity-50 pointer-events-none" : ""}`}>
+        <div
+          ref={editorRef}
+          contentEditable={!disabled}
+          suppressContentEditableWarning
+          onInput={handleInput}
+          onKeyDown={handleKeyDown}
+          data-placeholder={placeholder}
+          className={`
+            min-h-[34px] w-full
+            px-3 py-1.5 text-sm text-gray-100 outline-none
+            ${isEmpty ? "before:content-[attr(data-placeholder)] before:text-gray-500 before:pointer-events-none" : ""}
+          `}
+          role="textbox"
+          aria-label={placeholder}
+        />
+        {FormatToolbar && (
+          <FormatToolbar editorRef={editorRef} disabled={disabled} />
+        )}
+      </div>
     </div>
   );
 });

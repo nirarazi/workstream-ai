@@ -1,5 +1,5 @@
 import type { JSX } from "react";
-import { parseSlackMessage, type Segment } from "./format";
+import { parseSlackMessage, resolveEmoji, type Segment } from "./format";
 import { openExternalUrl } from "../../lib/api";
 
 interface SlackMessageProps {
@@ -79,14 +79,14 @@ function renderSegment(seg: Segment, i: number): JSX.Element {
     case "bold":
       return (
         <strong key={i} className="font-semibold">
-          {seg.value}
+          {resolveEmoji(seg.value)}
         </strong>
       );
 
     case "italic":
       return (
         <em key={i} className="italic">
-          {seg.value}
+          {resolveEmoji(seg.value)}
         </em>
       );
   }

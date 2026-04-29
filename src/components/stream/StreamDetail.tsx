@@ -11,11 +11,13 @@ import MentionInput, { type MentionInputHandle } from "../MentionInput";
 import SendConfirmation from "./SendConfirmation";
 import DoneCelebration from "./DoneCelebration";
 import MergeSuggestion from "./MergeSuggestion";
+import { getFormatToolbar, getFormatShortcutHandler, getInputDecorator } from "../../messaging/registry";
 
 interface StreamDetailProps {
   workItemId: string;
   mentionables: Mentionable[];
   serializeMention: (userId: string) => string;
+  platform: string;
   platformMeta?: Record<string, unknown>;
   onActioned?: () => void;
   onActionStateChange?: (workItemId: string, state: ActionState) => void;
@@ -27,6 +29,7 @@ export default function StreamDetail({
   workItemId,
   mentionables,
   serializeMention,
+  platform,
   platformMeta,
   onActioned,
   onActionStateChange,
@@ -268,6 +271,9 @@ export default function StreamDetail({
                   mentionables={mentionables}
                   serializeMention={serializeMention}
                   onSubmit={handleReply}
+                  FormatToolbar={getFormatToolbar(platform) ?? undefined}
+                  onFormatShortcut={getFormatShortcutHandler(platform) ?? undefined}
+                  decorateInput={getInputDecorator(platform) ?? undefined}
                 />
                 {/* Sending overlay */}
                 {sending && (

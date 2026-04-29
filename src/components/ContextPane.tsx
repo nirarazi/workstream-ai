@@ -19,7 +19,7 @@ import { timeAgo } from "../lib/time";
 import StatusBadge from "./StatusBadge";
 import MentionInput, { type MentionInputHandle } from "./MentionInput";
 import MessageRenderer from "../messaging/MessageRenderer";
-import { getSerializeMention } from "../messaging/registry";
+import { getSerializeMention, getFormatToolbar, getFormatShortcutHandler, getInputDecorator } from "../messaging/registry";
 
 interface ContextPaneProps {
   workItemId: string;
@@ -726,6 +726,9 @@ export default function ContextPane({
                 serializeMention={serializeMention}
                 onSubmit={handleReplySubmit}
                 prefill={prefill}
+                FormatToolbar={getFormatToolbar(thread?.platform ?? "") ?? undefined}
+                onFormatShortcut={getFormatShortcutHandler(thread?.platform ?? "") ?? undefined}
+                decorateInput={getInputDecorator(thread?.platform ?? "") ?? undefined}
               />
               <div className="flex items-center gap-2 flex-wrap">
                 <Tooltip text="Unblock the agent — your reply lets them continue">

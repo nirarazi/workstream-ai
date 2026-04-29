@@ -15,6 +15,7 @@ const POLL_INTERVAL = 5000;
 interface StreamViewProps {
   mentionables: Mentionable[];
   serializeMention: (userId: string) => string;
+  platform: string;
   platformMeta?: Record<string, unknown>;
   onSyncStateChange?: (state: { lastSyncAt: Date | null; error: boolean }) => void;
 }
@@ -22,6 +23,7 @@ interface StreamViewProps {
 export default function StreamView({
   mentionables,
   serializeMention,
+  platform,
   platformMeta,
   onSyncStateChange,
 }: StreamViewProps): JSX.Element {
@@ -248,6 +250,7 @@ export default function StreamView({
             workItemId={selectedWorkItemId}
             mentionables={mentionables}
             serializeMention={serializeMention}
+            platform={platform}
             platformMeta={platformMeta}
             onActioned={poll}
             onMerge={(targetId) => handleMerge(selectedWorkItemId, targetId)}
