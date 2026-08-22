@@ -1,4 +1,4 @@
-import { useRef, useEffect } from "react";
+import { useRef, useEffect, useLayoutEffect, useState, useCallback } from "react";
 import { timeAgo } from "../../lib/time";
 import { openExternalUrl } from "../../lib/api";
 import { PlatformMessage } from "../../messaging/registry";
@@ -36,20 +36,81 @@ function avatarColor(name: string): string {
 export default function Timeline({ entries, hasOlder, platformMeta, mentionables, onLoadOlder }: TimelineProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const sentinelRef = useRef<HTMLDivElement>(null);
   const prevCountRef = useRef(entries.length);
+  const savedScrollHeightRef = useRef<number | null>(null);
+  const [loadingOlder, setLoadingOlder] = useState(false);
 
-  // Auto-scroll to bottom on mount
+  // Auto-scroll to bottom on initial mount
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "instant" });
   }, []);
 
-  // Auto-scroll to bottom when new entries arrive (appended at end = newest)
-  useEffect(() => {
-    if (entries.length > prevCountRef.current) {
-      bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  // Preserve scroll position when older messages are prepended;
+  // auto-scroll to bottom when new messages are appended
+  useLayoutEffect(() => {
+    const container = scrollRef.current;
+    if (!container) return;
+
+    const prevCount = prevCountRef.current;
+    const savedHeight = savedScrollHeightRef.current;
+
+    if (entries.length > prevCount) {
+      if (savedHeight !== null) {
+        // Older messages prepended — keep user at same visual position
+        container.scrollTop += container.scrollHeight - savedHeight;
+        savedScrollHeightRef.current = null;
+      } else if (prevCount > 0) {
+        // New messages appended at end — scroll to bottom
+        bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+      }
     }
+
+    setLoadingOlder(false);
     prevCountRef.current = entries.length;
-  }, [entries.length]);
+  }, [entries]);
+
+  // Trigger loading older messages — saves scroll height before load
+  const triggerLoadOlder = useCallback(() => {
+    if (loadingOlder || !hasOlder) return;
+    const container = scrollRef.current;
+    if (container) {
+      savedScrollHeightRef.current = container.scrollHeight;
+    }
+    setLoadingOlder(true);
+    onLoadOlder();
+  }, [loadingOlder, hasOlder, onLoadOlder]);
+
+  // Keep a ref to the latest trigger so the observer doesn't need to re-create
+  const triggerRef = useRef(triggerLoadOlder);
+  triggerRef.current = triggerLoadOlder;
+
+  // Infinite scroll: observe sentinel at top of messages
+  useEffect(() => {
+    const sentinel = sentinelRef.current;
+    const container = scrollRef.current;
+    if (!sentinel || !container || !hasOlder) return;
+
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) triggerRef.current();
+      },
+      { root: container, threshold: 0 },
+    );
+
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [hasOlder]);
+
+  // Safety: reset loading after timeout if fetch silently fails
+  useEffect(() => {
+    if (!loadingOlder) return;
+    const timer = setTimeout(() => {
+      savedScrollHeightRef.current = null;
+      setLoadingOlder(false);
+    }, 10000);
+    return () => clearTimeout(timer);
+  }, [loadingOlder]);
 
   if (entries.length === 0) {
     return (
@@ -68,14 +129,11 @@ export default function Timeline({ entries, hasOlder, platformMeta, mentionables
 
   return (
     <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-3">
-      {hasOlder && (
+      {/* Infinite scroll sentinel — triggers load when scrolled into view */}
+      {hasOlder && <div ref={sentinelRef} className="h-px" />}
+      {loadingOlder && (
         <div className="flex justify-center mb-3">
-          <button
-            onClick={onLoadOlder}
-            className="cursor-pointer text-xs text-gray-500 hover:text-gray-300 bg-gray-800/60 hover:bg-gray-700/60 rounded-full px-3 py-1 transition-colors"
-          >
-            Load older messages
-          </button>
+          <span className="text-xs text-gray-600 animate-pulse">Loading older messages…</span>
         </div>
       )}
 
