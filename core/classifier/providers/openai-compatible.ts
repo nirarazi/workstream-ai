@@ -94,6 +94,18 @@ export class OpenAICompatibleProvider implements ModelProvider {
     systemPrompt: string,
     fewShotExamples: Array<{ role: string; content: string }>,
   ): Promise<ClassificationResult> {
+    const rawText = await this.complete(message, systemPrompt, fewShotExamples);
+    const result = this.parseResponse(rawText);
+    log.debug("Classification result", { input: message.slice(0, 120), result });
+    return result;
+  }
+
+  /** Raw completion with retry/backoff. Shared by the classifier and the LLM decision provider. */
+  async complete(
+    message: string,
+    systemPrompt: string,
+    fewShotExamples: Array<{ role: string; content: string }> = [],
+  ): Promise<string> {
     let lastError: unknown;
 
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
@@ -107,10 +119,7 @@ export class OpenAICompatibleProvider implements ModelProvider {
           log.info("LLM recovered after backoff");
         }
         this._backoff = { active: false, retryCount: 0, nextRetryAt: null, lastError: null };
-
-        const result = this.parseResponse(rawText);
-        log.debug("Classification result", { input: message.slice(0, 120), result });
-        return result;
+        return rawText;
       } catch (error) {
         lastError = error;
 
@@ -150,7 +159,7 @@ export class OpenAICompatibleProvider implements ModelProvider {
           nextRetryAt: null,
           lastError: error instanceof Error ? error.message.slice(0, 200) : String(error),
         };
-        log.error("Classification failed", error);
+        log.error("LLM call failed", error);
         throw error;
       }
     }
