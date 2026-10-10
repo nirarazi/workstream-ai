@@ -5,7 +5,7 @@
 //   production   what the live classifier stored at the time (free baseline)
 //   classifier   today's LLM classifier (config/prompts/classify.yaml) on the configured provider
 //   llm          DecisionProvider questions answered by an LLM (configured provider unless overridden)
-//   typesafe     DecisionProvider questions answered by TypeSafe Jev (needs TYPESAFE_API_KEY)
+//   typesafe     DecisionProvider questions answered by Jev (TYPESAFE_API_KEY, else via OpenRouter)
 // Options:
 //   --base-url URL  --model NAME  --api-key-env VAR   override the LLM endpoint (classifier, llm)
 //   --typesafe-model NAME                              default jev-latest
@@ -100,10 +100,17 @@ function makeBackend(name: string, config: Config, root: string): { label: strin
       return { label: `decisions · llm · ${ep.model}`, predict: viaDecisions(LLMDecisionProvider.fromEndpoint(ep), config) };
     }
     case "typesafe": {
-      const apiKey = process.env.TYPESAFE_API_KEY;
-      if (!apiKey) throw new Error("typesafe backend needs TYPESAFE_API_KEY");
-      const model = arg("typesafe-model") ?? "jev-latest";
-      return { label: `decisions · typesafe · ${model}`, predict: viaDecisions(new TypeSafeDecisionProvider({ apiKey, model }), config) };
+      // Direct TypeSafe key if present, otherwise Jev through OpenRouter on the configured key.
+      const direct = process.env.TYPESAFE_API_KEY;
+      const viaOpenRouter = !direct && config.classifier.provider.baseUrl.includes("openrouter.ai");
+      if (!direct && !viaOpenRouter) {
+        throw new Error("typesafe backend needs TYPESAFE_API_KEY, or an OpenRouter classifier provider");
+      }
+      const model = arg("typesafe-model") ?? (direct ? "jev-latest" : "typesafe/jev-1.13");
+      const provider = direct
+        ? new TypeSafeDecisionProvider({ apiKey: direct, model })
+        : TypeSafeDecisionProvider.viaOpenRouter(config.classifier.provider.apiKey ?? "", model);
+      return { label: `decisions · typesafe · ${model}${direct ? "" : " (openrouter)"}`, predict: viaDecisions(provider, config) };
     }
     default:
       throw new Error(`Unknown backend "${name}" (expected production, classifier, llm, typesafe)`);

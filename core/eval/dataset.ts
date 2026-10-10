@@ -28,6 +28,8 @@ export interface EvalItem {
     status: StatusCategory;
     targetedAtOperator: boolean;
     labeledAt: string;
+    /** "human" = operator ground truth; "draft" = model-proposed, awaiting operator review. */
+    source?: "human" | "draft";
     note?: string;
   };
 }
