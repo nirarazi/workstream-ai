@@ -38,6 +38,29 @@ accuracy on the reference fleet) has never been measured.
    - **Left to do:** compare backends on the labeled set. If decisions win, add a `classifier.mode`
      config and run decisions on every message, with the LLM writing text only for surfaced items.
      Then use the threshold sweep to choose an interrupt threshold.
+   **First results (2026-10-10, 150 messages, draft labels — see caveats):**
+
+   | Backend | Status acc. | Unnecessary / missed interrupts | Calibration error | p50 latency |
+   |---|---|---|---|---|
+   | Live labels in `workstream.db` | 52% | 32 / 4 | 0.36 | — |
+   | Current classifier, Gemini 2.5 Flash-Lite | 57% | 52 / 2 | 0.34 | 1.1 s |
+   | Current classifier, Haiku 5.5 | 57% | 44 / 2 | 0.26 | 2.0 s |
+   | Decision questions, Gemini 2.5 Flash-Lite | 53% | 32 / 4 | 0.31 | 0.9 s |
+   | Decision questions, Jev 1.13 (OpenRouter) | 63% | 48 / 1 | **0.18** | **0.5 s** |
+   | Decision questions, Haiku 5.5 | **74%** | **21 / 1** | 0.34 | 2.5 s |
+
+   - Nothing reaches the 80% target yet.
+   - Splitting the classifier into separate questions helped Haiku a lot (57% → 74%).
+   - Jev is the fastest and best calibrated, but weak on `noise` (28% recall).
+   - **Caveats:** the labels are Claude drafts, not the operator's, and Haiku is also a Claude model, so its
+     lead may be inflated. Run `npm run eval:label -- --disputed` before trusting any of this.
+   - **Two failure sources dominate every backend, and both are product problems, not model problems:**
+     - **Messages from humans** (34 of 150, mostly Dana instructing agents) score 18–47%. They should probably
+       be routed by sender in code rather than classified.
+     - **Blocks owned by a second human** (Dana approving Echo's drafts) account for 10–22 of the
+       "unnecessary" interrupts. The "operator is the backstop for every block" rule doesn't fit a fleet
+       with two humans. This needs per-channel or per-person ownership.
+
 5. **Operator persona** (plan `2026-04-17-operator-persona.md`): add "Not for me" and correction capture.
    Every correction becomes a new labeled eval item and a live count of unnecessary interrupts.
 

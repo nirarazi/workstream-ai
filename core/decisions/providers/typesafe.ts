@@ -1,6 +1,7 @@
 // core/decisions/providers/typesafe.ts — TypeSafe Jev ("System One") decision provider
 //
-// Hosted-only, optional backend. API: POST {baseUrl}/v1/systemone
+// Hosted-only, optional backend. Reachable directly (POST api.typesafe.ai/v1/systemone) or through
+// OpenRouter (POST openrouter.ai/api/alpha/decisions, model "typesafe/jev-1.13") with the same body:
 //   { model, state, questions: { key: { type: "choice"|"score"|"noul", instructions, criteria } } }
 //   → { model, answers: { key: {...} }, usage: { input_tokens, output_tokens } }
 // Schema per docs.typesafe.ai/api.md (checked 2026-10-10). Score levels are 0-based.
@@ -25,7 +26,8 @@ const RETRYABLE = new Set([429, 500, 502, 503, 504, 529]);
 export interface TypeSafeConfig {
   apiKey: string;
   model?: string;
-  baseUrl?: string;
+  /** Full endpoint URL. Defaults to TypeSafe's own API. */
+  url?: string;
   timeoutMs?: number;
   fetchImpl?: typeof fetch;
 }
@@ -96,17 +98,22 @@ export class TypeSafeDecisionProvider implements DecisionProvider {
   readonly name = "typesafe";
   private readonly apiKey: string;
   private readonly model: string;
-  private readonly baseUrl: string;
+  private readonly url: string;
   private readonly timeoutMs: number;
-  private readonly fetchImpl: typeof fetch;
+  private fetchImpl: typeof fetch;
 
   constructor(config: TypeSafeConfig) {
     if (!config.apiKey) throw new Error("TypeSafe provider requires an apiKey");
     this.apiKey = config.apiKey;
     this.model = config.model ?? "jev-latest";
-    this.baseUrl = (config.baseUrl ?? "https://api.typesafe.ai").replace(/\/+$/, "");
+    this.url = config.url ?? "https://api.typesafe.ai/v1/systemone";
     this.timeoutMs = config.timeoutMs ?? 10_000;
     this.fetchImpl = config.fetchImpl ?? fetch;
+  }
+
+  /** Jev through OpenRouter's decisions endpoint, billed to an existing OpenRouter key. */
+  static viaOpenRouter(apiKey: string, model = "typesafe/jev-1.13"): TypeSafeDecisionProvider {
+    return new TypeSafeDecisionProvider({ apiKey, model, url: "https://openrouter.ai/api/alpha/decisions" });
   }
 
   async decide<Qs extends QuestionSet>(state: string, questions: Qs): Promise<DecisionResult<Qs>> {
@@ -119,7 +126,7 @@ export class TypeSafeDecisionProvider implements DecisionProvider {
 
     const started = Date.now();
     for (let attempt = 0; ; attempt++) {
-      const response = await this.fetchImpl(`${this.baseUrl}/v1/systemone`, {
+      const response = await this.fetchImpl(this.url, {
         method: "POST",
         headers: { "content-type": "application/json", authorization: `Bearer ${this.apiKey}` },
         body,

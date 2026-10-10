@@ -1,8 +1,10 @@
 #!/usr/bin/env node
 // core/eval/label.ts — Keyboard-driven labeler for the eval set
 //
-// Usage: npm run eval:label
-// Shows each unlabeled message with the live classifier's answer pre-selected.
+// Usage: npm run eval:label [-- --disputed] [path]
+// Walks every item without a human label: unlabeled ones pre-filled with the live classifier's
+// answer, draft-labeled ones pre-filled with the draft. --disputed limits the queue to drafts that
+// disagree with the live classifier or are marked ambiguous.
 //   1-5   set status          t     toggle "belongs in my inbox"
 //   enter accept & next      s     skip        n  add note       q  save & quit
 // Progress is saved after every label.
@@ -13,9 +15,13 @@ import { findProjectRoot } from "../config.js";
 import type { StatusCategory } from "../types.js";
 import { STATUSES, defaultDatasetPath, loadDataset, saveDataset } from "./dataset.js";
 
-const path = process.argv[2] ?? defaultDatasetPath(findProjectRoot());
+const args = process.argv.slice(2);
+const disputedOnly = args.includes("--disputed");
+const path = args.find((a) => !a.startsWith("--")) ?? defaultDatasetPath(findProjectRoot());
 const items = loadDataset(path);
-const queue = items.filter((i) => !i.label);
+const isDisputed = (i: (typeof items)[number]) =>
+  i.label?.source === "draft" && (i.label.status !== i.production.status || /ambiguous/.test(i.label.note ?? ""));
+const queue = items.filter((i) => (disputedOnly ? isDisputed(i) : !i.label || i.label.source === "draft"));
 
 if (!process.stdin.isTTY) {
   console.error("eval:label needs an interactive terminal");
@@ -33,19 +39,21 @@ let note: string | undefined;
 
 function load(): void {
   const item = queue[idx];
-  status = item.production.status;
-  targeted = item.production.targetedAtOperator;
-  note = undefined;
+  status = item.label?.status ?? item.production.status;
+  targeted = item.label?.targetedAtOperator ?? item.production.targetedAtOperator;
+  note = item.label?.note;
 }
 
 function render(): void {
   const item = queue[idx];
-  const done = items.length - queue.length + idx;
+  const done = items.filter((i) => i.label?.source === "human" || (i.label && !i.label.source)).length;
   console.clear();
-  console.log(`[${done}/${items.length} labeled]  ${item.senderName} (${item.senderType}) in #${item.channelName}  ${item.timestamp}\n`);
+  console.log(`[${idx + 1}/${queue.length} in queue · ${done}/${items.length} human-labeled]  ${item.senderName} (${item.senderType}) in #${item.channelName}  ${item.timestamp}\n`);
   console.log(item.message.length > 2500 ? item.message.slice(0, 2500) + "\n…(truncated)" : item.message);
   console.log("\n" + "─".repeat(60));
-  console.log(`live classifier: ${item.production.status} (${item.production.confidence.toFixed(2)}), inbox=${item.production.targetedAtOperator}\n`);
+  console.log(`live classifier: ${item.production.status} (${item.production.confidence.toFixed(2)}), inbox=${item.production.targetedAtOperator}`);
+  if (item.label?.source === "draft") console.log(`draft label:     ${item.label.status}, inbox=${item.label.targetedAtOperator}`);
+  console.log("");
   STATUSES.forEach((s, i) => console.log(`  ${i + 1}  ${s === status ? "●" : "○"} ${s}`));
   console.log(`\n  t  belongs in my inbox: ${targeted ? "YES" : "no"}`);
   if (note) console.log(`  note: ${note}`);
@@ -85,7 +93,7 @@ process.stdin.on("keypress", (str: string | undefined, key: { name?: string; ctr
   if (key.ctrl && key.name === "c") quit();
   if (key.name === "q") quit();
   if (key.name === "return") {
-    queue[idx].label = { status, targetedAtOperator: targeted, labeledAt: new Date().toISOString(), note };
+    queue[idx].label = { status, targetedAtOperator: targeted, labeledAt: new Date().toISOString(), source: "human", note };
     saveDataset(path, items);
     next();
     return;

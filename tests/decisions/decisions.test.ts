@@ -162,3 +162,16 @@ describe("classification questions", () => {
     expect(result.workItemId).toBeNull();
   });
 });
+
+describe("TypeSafeDecisionProvider via OpenRouter", () => {
+  it("posts the same body to OpenRouter's decisions endpoint", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(jsonResponse({ answers: { refund: { type: "noul", noul: 0.7 } } }));
+    const provider = TypeSafeDecisionProvider.viaOpenRouter("or-key");
+    (provider as unknown as { fetchImpl: typeof fetch }).fetchImpl = fetchImpl;
+    await provider.decide("x", { refund: QUESTIONS.refund });
+    const [url, init] = fetchImpl.mock.calls[0];
+    expect(url).toBe("https://openrouter.ai/api/alpha/decisions");
+    expect(JSON.parse(init.body).model).toBe("typesafe/jev-1.13");
+    expect(init.headers.authorization).toBe("Bearer or-key");
+  });
+});
