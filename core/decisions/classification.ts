@@ -24,9 +24,9 @@ export const STATUS_OPTIONS: Record<StatusCategory, string> = {
   in_progress:
     "Work is underway: progress updates, partial completion, or a block on infrastructure the agent says it will retry or recover from by itself. Also reports about another agent's or person's state.",
   blocked_on_human:
-    "The sender is waiting on something specific from a human: an approval, review, credentials, access, or a manual action. Includes errors that come with a request for help.",
+    "A human has to do work before the sender can continue: a manual action (credentials, access, a call) or approving/reviewing a work product (a draft, a PR, a quote). The human holds responsibility until they respond, even if the reply is just \"approved\". Includes errors that come with a request for help.",
   needs_decision:
-    "The sender presents options or asks which way to go and cannot continue until someone chooses.",
+    "A human has to choose a direction, with no work product to inspect: the sender presents options or asks which way to go, and the work returns to the sender as soon as someone chooses.",
   noise:
     "Nothing to act on: greetings, acknowledgements, routine status without new information, or templated alerts from notification bots.",
 };

@@ -78,21 +78,44 @@ accuracy on the reference fleet) has never been measured.
      groups by work item rather than by message. The inbox stays the only thing that interrupts you.
    - Depends on the label review (3) and per-person ownership (see the second failure source in 4).
 
+7. **Decision log and action ownership.** The two "needs you" statuses differ in what happens after the
+   human responds:
+   - **Action (`blocked_on_human`)** — the human has to examine or produce something (credentials, a
+     call, approving a draft, reviewing a PR). They hold responsibility until they respond.
+     **Track ownership:** who holds which item and for how long ("you've held AI-401 for 2 days").
+     The item closes when the agent confirms the action is done, not when someone replies.
+   - **Decision (`needs_decision`)** — the human chooses a direction with no work product to inspect,
+     and the work returns to the agent straight away. **Log the decision:** work item, question,
+     options offered, choice, who decided, when, and an optional one-line reason.
+   - **Where decisions come from:**
+     - Approve, Redirect and Reply in the app, captured for free.
+     - The `options` in `workstream_request_approval`.
+     - A human reply in Slack that follows a needs_decision message (needs detection).
+   - **What the log enables:**
+     - **Precedent on pending decisions:** "what do we usually do in similar cases?" Show similar past
+       decisions next to the pending one, suggest an answer, and push back when the choice about to be
+       made differs from precedent.
+     - **Precedent for agents:** an MCP resource agents can check before escalating.
+     - **Delegation:** when a type of decision always goes the same way, offer it as a standing rule for
+       the agent. This removes the interrupt, the metric that matters most.
+     - **Searchable history:** "why did we pick REST for the reports API?"
+   - Decisions made by other humans (Dana) are also Catch-up material (6).
+
 ## Then — strategic
 
-7. **MCP over Streamable HTTP, on spec 2026-07-28.** The reference fleet runs on EC2, so the stdio-only
+8. **MCP over Streamable HTTP, on spec 2026-07-28.** The reference fleet runs on EC2, so the stdio-only
    push path never reaches it. Have `workstream_request_approval` block until the operator answers,
    using the Tasks extension or multi-round-trip requests.
-8. **Runtime sources beyond chat.** Read events from the OpenClaw gateway, Claude Code / Codex sessions
+9. **Runtime sources beyond chat.** Read events from the OpenClaw gateway, Claude Code / Codex sessions
    or OTel GenAI traces, which gives structured status and avoids Slack rate limits. Slack stays the
    channel for replies.
-9. **GitHub/Bitbucket task adapter.** Agent work mostly ends in a PR, so show PR state next to the item.
+10. **GitHub/Bitbucket task adapter.** Agent work mostly ends in a PR, so show PR state next to the item.
 
 ## Before open-sourcing
 
-10. **Self-contained desktop build.** Tauri currently starts the engine with `npx tsx` from the project
+11. **Self-contained desktop build.** Tauri currently starts the engine with `npx tsx` from the project
    root (`src-tauri/src/lib.rs`). Ship the engine as a bundled sidecar instead.
-11. **Update CLAUDE.md to match the product** (Stream view, Sidekick, Fleet Board, settings, folder
+12. **Update CLAUDE.md to match the product** (Stream view, Sidekick, Fleet Board, settings, folder
     layout, default model). Add the README, LICENSE, `docs/adapters.md` and `docs/mcp.md`.
 
 ## Cleanup
