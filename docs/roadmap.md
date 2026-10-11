@@ -49,6 +49,18 @@ accuracy on the reference fleet) has never been measured.
    | Decision questions, Jev 1.13 (OpenRouter) | 63% | 48 / 1 | **0.18** | **0.5 s** |
    | Decision questions, Haiku 5.5 | **74%** | **21 / 1** | 0.34 | 2.5 s |
 
+   **Second run (2026-10-11):** after Alex reviewed the 77 disputed items (8 statuses changed) and the
+   action-vs-decision definitions were added to the prompt.
+   - Haiku 5.5 with decision questions: **79.3%**. The current classifier with Haiku: 64.7%. Jev: 64.7%.
+   - On the 77 reviewed items alone, the hard ones, the scores are 62%, 40% and 47%.
+   - **21 of Haiku's 28 unnecessary interrupts are real blocks that Dana owns.**
+     - A channel rule (Dana's channels never reach Alex) cuts unnecessary interrupts to 4.
+     - But it also misses 4 items that Alex needs: agent and infra failures inside #partners
+       (an integration erroring, an agent sending outreach without approval).
+     - So ownership depends on channel *and* the kind of problem: business approvals go to Dana;
+       infra and agent misbehaviour go to Alex.
+     - That means filling in the operator's remit in config, and asking the "targeted" question with
+       ownership in the state instead of forcing every block into the inbox.
    - Nothing reaches the 80% target yet.
    - Splitting the classifier into separate questions helped Haiku a lot (57% → 74%).
    - Jev is the fastest and best calibrated, but weak on `noise` (28% recall).
