@@ -63,22 +63,36 @@ accuracy on the reference fleet) has never been measured.
 
 5. **Operator persona** (plan `2026-04-17-operator-persona.md`): add "Not for me" and correction capture.
    Every correction becomes a new labeled eval item and a live count of unnecessary interrupts.
+6. **Catch-up (FYI news that needs no action).** The inbox covers what needs action; nothing covers
+   *what happened*, so the operator still opens Slack to check whether the deploy went out or what
+   happened overnight. "Noise" is ~65% of classified events (2,274 of ~3,500), and the app shows none of it.
+   - Split noise into **news** (a change of state: deploy, merge, tag, ticket closed, task completed,
+     shift summary) and **chatter** (acks, heartbeats, intermediate progress). Only news is shown.
+   - **First version, no classifier change:** a "Catch-up" tab in Stream with completed events plus
+     bot notifications (`bot_type = 'notification'`) since the last visit, grouped by work item.
+     Use it for a week before building more.
+   - **Full version:** add a decision question ("does this report a change of state?") and filter
+     per person, using the same ownership model as the inbox (engineering news to Alex,
+     partners news to Dana).
+   - **Guardrails:** it ends with an "all caught up" state, has no unread badge or notifications, and
+     groups by work item rather than by message. The inbox stays the only thing that interrupts you.
+   - Depends on the label review (3) and per-person ownership (see the second failure source in 4).
 
 ## Then — strategic
 
-6. **MCP over Streamable HTTP, on spec 2026-07-28.** The reference fleet runs on EC2, so the stdio-only
+7. **MCP over Streamable HTTP, on spec 2026-07-28.** The reference fleet runs on EC2, so the stdio-only
    push path never reaches it. Have `workstream_request_approval` block until the operator answers,
    using the Tasks extension or multi-round-trip requests.
-7. **Runtime sources beyond chat.** Read events from the OpenClaw gateway, Claude Code / Codex sessions
+8. **Runtime sources beyond chat.** Read events from the OpenClaw gateway, Claude Code / Codex sessions
    or OTel GenAI traces, which gives structured status and avoids Slack rate limits. Slack stays the
    channel for replies.
-8. **GitHub/Bitbucket task adapter.** Agent work mostly ends in a PR, so show PR state next to the item.
+9. **GitHub/Bitbucket task adapter.** Agent work mostly ends in a PR, so show PR state next to the item.
 
 ## Before open-sourcing
 
-9. **Self-contained desktop build.** Tauri currently starts the engine with `npx tsx` from the project
+10. **Self-contained desktop build.** Tauri currently starts the engine with `npx tsx` from the project
    root (`src-tauri/src/lib.rs`). Ship the engine as a bundled sidecar instead.
-10. **Update CLAUDE.md to match the product** (Stream view, Sidekick, Fleet Board, settings, folder
+11. **Update CLAUDE.md to match the product** (Stream view, Sidekick, Fleet Board, settings, folder
     layout, default model). Add the README, LICENSE, `docs/adapters.md` and `docs/mcp.md`.
 
 ## Cleanup
