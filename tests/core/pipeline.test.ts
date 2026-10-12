@@ -444,6 +444,27 @@ describe("Pipeline", () => {
       // Should set cursor to the latest timestamp
       expect(graph.setPollCursor).toHaveBeenCalledWith("C-1", "2026-03-30T12:00:00.000Z");
     });
+
+    it("caps to the oldest threads and keeps the cursor before the ones it deferred", async () => {
+      const at = (h: number) => `2026-03-30T${String(h).padStart(2, "0")}:00:00.000Z`;
+      const thread = (h: number, replyH?: number) =>
+        makeThread({ id: `t-${h}` }, [
+          makeMessage({ id: `msg-${h}`, text: `msg-${h}`, threadId: `t-${h}`, timestamp: at(h) }),
+          ...(replyH ? [makeMessage({ id: `reply-${h}`, text: `reply-${h}`, threadId: `t-${h}`, timestamp: at(replyH) })] : []),
+        ]);
+      // Newest first, as Slack returns history; the 09:00 thread has a reply at 13:00
+      vi.mocked(adapter.readThreads).mockResolvedValue([thread(12), thread(11), thread(10), thread(9, 13)]);
+      pipeline = new Pipeline(adapter, classifier, graph, linker, undefined, makeConfig({
+        lookback: { ...config.lookback, maxThreadsPerPoll: 2 },
+      } as Partial<Config>));
+
+      await pipeline.processOnce();
+
+      const classifiedIds = vi.mocked(classifier.classify).mock.calls.map((c) => c[0]);
+      expect(classifiedIds).toEqual(["msg-9", "reply-9", "msg-10"]);
+      // Not 13:00 (the reply) — the 11:00 and 12:00 threads must still be read next poll
+      expect(graph.setPollCursor).toHaveBeenCalledWith("C-1", at(10));
+    });
   });
 
   describe("error handling", () => {

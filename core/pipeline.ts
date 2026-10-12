@@ -126,11 +126,14 @@ export class Pipeline {
 
     // Cap threads per poll to avoid LLM call bursts
     const maxThreads = this.config?.lookback?.maxThreadsPerPoll ?? DEFAULT_MAX_THREADS_PER_POLL;
-    const cappedThreads = (maxThreads > 0 ? threads.slice(0, maxThreads) : [...threads]).sort((a, b) => {
-      const aTime = a.messages[0]?.timestamp ?? a.lastActivity;
-      const bTime = b.messages[0]?.timestamp ?? b.lastActivity;
-      return aTime.localeCompare(bTime);
-    });
+    // Oldest first, then cap: adapters return newest first, and capping before sorting dropped the oldest
+    // threads behind a cursor that had already moved past them.
+    const threadStart = (t: Thread) => t.messages[0]?.timestamp ?? t.lastActivity;
+    const sortedThreads = [...threads].sort((a, b) => threadStart(a).localeCompare(threadStart(b)));
+    const cappedThreads = maxThreads > 0 ? sortedThreads.slice(0, maxThreads) : sortedThreads;
+
+    // Channels with threads left for a later poll: their cursor must stay before the first one skipped.
+    const deferredChannels = new Set(sortedThreads.slice(cappedThreads.length).map((t) => t.channelId));
 
     if (threads.length > cappedThreads.length) {
       log.info(`Capped threads from ${threads.length} to ${cappedThreads.length} (maxThreadsPerPoll=${maxThreads})`);
@@ -166,11 +169,14 @@ export class Pipeline {
       }
 
       // Track the latest timestamp for poll cursor updates
-      const latestMessage = thread.messages[thread.messages.length - 1];
+      // (a deferred channel advances only to this thread's start; later replies come back via re-polls)
       const channelId = thread.channelId;
+      const cursorTs = deferredChannels.has(channelId)
+        ? threadStart(thread)
+        : thread.messages[thread.messages.length - 1].timestamp;
       const existing = latestTimestamps.get(channelId);
-      if (!existing || latestMessage.timestamp > existing) {
-        latestTimestamps.set(channelId, latestMessage.timestamp);
+      if (!existing || cursorTs > existing) {
+        latestTimestamps.set(channelId, cursorTs);
       }
     }
 
