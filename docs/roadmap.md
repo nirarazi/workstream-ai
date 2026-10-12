@@ -171,6 +171,21 @@ accuracy on the reference fleet) has never been measured.
      - **Searchable history:** "why did we pick REST for the reports API?"
    - Decisions made by other humans (Dana) are also Catch-up material (6).
 
+**Local (offline) classification — findings from 2026-10-12, on an M4 with 16 GB:**
+- **Generative local models aren't viable on a typical laptop yet.**
+  - Qwen3 8B: about 6 tokens/s; each message timed out.
+  - Qwen3 1.7B: fast (about 2 s per message), but 7 of 25 statuses correct and it never detected a block.
+  - Ollama's default 4,096-token context also cuts off the ~7,300-token classifier prompt. Setup must
+    raise `num_ctx`, and the app should warn when the prompt doesn't fit.
+- **An embedding model plus a small trained classifier is fast and cheap**
+  (nomic-embed-text, 137M parameters, 64 ms per message). Results, cross-validated on the 150 labels:
+  - **Inbox flag:** 88%, better than Haiku's 82%. Ownership is learnable from labels.
+  - **Status:** 63%.
+  - **Needed interrupts:** misses 7 of 15. There are only 15 positive examples, so it's starved of data.
+  - **As a front filter for Haiku:** it handles only 12–20% of messages locally. Not worth it yet.
+- **Revisit when corrections have grown the label set** (item 5). The most promising piece is using the
+  embedding classifier to decide *whose* item it is, alongside the LLM.
+
 ## Then — strategic
 
 8. **MCP over Streamable HTTP, on spec 2026-07-28.** The reference fleet runs on a cloud VM, so the stdio-only
