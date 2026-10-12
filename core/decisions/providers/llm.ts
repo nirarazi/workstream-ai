@@ -124,7 +124,7 @@ export class LLMDecisionProvider implements DecisionProvider {
     this.name = name;
   }
 
-  static fromEndpoint(config: { baseUrl: string; model: string; apiKey?: string }): LLMDecisionProvider {
+  static fromEndpoint(config: { baseUrl: string; model: string; apiKey?: string; reasoningEffort?: string }): LLMDecisionProvider {
     const transport = new OpenAICompatibleProvider({ name: "decisions-llm", ...config });
     return new LLMDecisionProvider(
       (message, system) => transport.completeWithUsage(message, system),

@@ -21,6 +21,8 @@ export interface OpenAICompatibleConfig {
   baseUrl: string;
   model: string;
   apiKey?: string;
+  /** Sent as reasoning_effort on OpenAI-compatible calls, e.g. "none" to turn off thinking in local models. */
+  reasoningEffort?: string;
 }
 
 /** Error with an optional Retry-After hint (seconds) from 429 responses */
@@ -71,6 +73,7 @@ export class OpenAICompatibleProvider implements ModelProvider {
   private readonly apiKey: string | undefined;
   private readonly isAnthropic: boolean;
   private readonly cacheBreakpoints: boolean;
+  private readonly reasoningEffort?: string;
   private abortController = new AbortController();
 
   // Backoff state — exposed so the server can surface it to the UI
@@ -96,6 +99,7 @@ export class OpenAICompatibleProvider implements ModelProvider {
     this.name = config.name;
     this.baseUrl = config.baseUrl.replace(/\/+$/, ""); // strip trailing slashes
     this.model = config.model;
+    this.reasoningEffort = config.reasoningEffort;
     this.apiKey = config.apiKey;
     this.isAnthropic = this.baseUrl.includes("anthropic");
     // Claude needs explicit cache breakpoints (directly or through OpenRouter); other providers cache
@@ -288,6 +292,7 @@ export class OpenAICompatibleProvider implements ModelProvider {
         model: this.model,
         messages: makeMessages(useSystemRole),
         temperature: 0,
+        ...(this.reasoningEffort ? { reasoning_effort: this.reasoningEffort } : {}),
       };
 
       log.debug("Calling OpenAI-compatible API", { url, model: this.model, useSystemRole });

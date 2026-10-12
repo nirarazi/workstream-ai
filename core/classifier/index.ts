@@ -102,10 +102,10 @@ export function formatThreadContext(ctx: ThreadContext): string {
 }
 
 export function createProvider(config: Config): ModelProvider {
-  const { baseUrl, model, apiKey } = config.classifier.provider;
+  const { baseUrl, model, apiKey, reasoningEffort } = config.classifier.provider;
   const isAnthropic = baseUrl.includes("anthropic");
   const name = isAnthropic ? "anthropic" : "openai-compatible";
-  return new OpenAICompatibleProvider({ name, baseUrl, model, apiKey });
+  return new OpenAICompatibleProvider({ name, baseUrl, model, apiKey, reasoningEffort });
 }
 
 export class Classifier {

@@ -24,6 +24,8 @@ const ConfigSchema = z.object({
       baseUrl: z.string(),
       model: z.string(),
       apiKey: z.string().optional(),
+      /** Passed as reasoning_effort, e.g. "none" to stop local thinking models (Qwen3) from thinking. */
+      reasoningEffort: z.string().optional(),
     }),
     confidenceThreshold: z.number(),
   }),
