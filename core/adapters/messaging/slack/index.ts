@@ -120,7 +120,12 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/** Slack errors that mean "this channel can't be read any more", as opposed to auth or rate-limit failures. */
+const CHANNEL_GONE_ERRORS = new Set(["channel_not_found", "not_in_channel", "is_archived", "access_denied"]);
+
 export class SlackAdapter implements MessagingAdapter {
+  /** Channels that error on read (deleted, archived, left) — skipped and logged once each. */
+  private readonly unreadableChannels = new Set<string>();
   readonly name = "slack";
   readonly displayName = "Slack";
 
@@ -218,7 +223,21 @@ export class SlackAdapter implements MessagingAdapter {
         ? String(channelSince.getTime() / 1000)
         : globalOldest;
 
-      const messages = await this.fetchChannelHistory(channelId, oldest);
+      let messages: Awaited<ReturnType<SlackAdapter["fetchChannelHistory"]>>;
+      try {
+        messages = await this.fetchChannelHistory(channelId, oldest);
+      } catch (err) {
+        // One gone channel must not stop polling for all the others.
+        const code = (err as { data?: { error?: string } }).data?.error;
+        if (code && CHANNEL_GONE_ERRORS.has(code)) {
+          if (!this.unreadableChannels.has(channelId)) {
+            this.unreadableChannels.add(channelId);
+            log.warn(`Skipping channel ${channelName} (${channelId}): ${code}`);
+          }
+          continue;
+        }
+        throw err;
+      }
 
       for (const msg of messages) {
         if (!msg.ts || msg.subtype === "channel_join" || msg.subtype === "channel_leave") {
