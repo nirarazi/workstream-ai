@@ -59,6 +59,11 @@ describe("LLMDecisionProvider", () => {
     expect(answers.refund.probability).toBe(0.9);
   });
 
+  it("ignores text the model adds after the JSON", () => {
+    const answers = parseDecisionResponse({ refund: QUESTIONS.refund }, '{"refund":{"probability":0.3}}\nHope this helps! {"x":1}');
+    expect(answers.refund.probability).toBe(0.3);
+  });
+
   it("falls back safely on missing or malformed answers", () => {
     const answers = parseDecisionResponse(QUESTIONS, "{}");
     expect(answers.color.confidence).toBeCloseTo(0); // uniform
@@ -150,6 +155,15 @@ describe("classification questions", () => {
     }), { message: "need creds" });
     expect(result.status).toBe("blocked_on_human");
     expect(result.targetedAtOperator).toBe(true);
+  });
+
+  it("lets the remit keep another person's block out of the inbox", async () => {
+    const result = await classifyWithDecisions(stubProvider({
+      status: { type: "choice", choice: "blocked_on_human", confidence: 0.8, probabilities: { blocked_on_human: 0.9, noise: 0.1 } },
+      targeted: { type: "yesno", probability: 0.1 },
+    }), { message: "draft ready for Dana's approval", operatorContext: "Dana approves outreach drafts." });
+    expect(result.status).toBe("blocked_on_human");
+    expect(result.targetedAtOperator).toBe(false);
   });
 
   it("uses the targeted probability for non-blocks and maps none to null", async () => {
