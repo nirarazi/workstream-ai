@@ -281,8 +281,8 @@ describe("Classifier", () => {
 
 describe("action_required_from → targetedAtOperator (with OperatorIdentityMap)", () => {
   const OPERATOR_MAP: OperatorIdentityMap = new Map([
-    ["slack", { userId: "U0OPERATOR1", userName: "Nir Arazi" }],
-    ["jira", { userId: "operator@example.com", userName: "Nir (CTO)" }],
+    ["slack", { userId: "U0OPERATOR1", userName: "Alex Rivera" }],
+    ["jira", { userId: "operator@example.com", userName: "Alex (CTO)" }],
   ]);
 
   it("action_required_from includes Slack operator ID → targetedAtOperator=true", async () => {
@@ -326,7 +326,7 @@ describe("action_required_from → targetedAtOperator (with OperatorIdentityMap)
       reason: "Needs Dana to review",
       workItemIds: ["OPS-100"],
       title: "Review needed",
-      action_required_from: ["U0SECONDHUMAN"],
+      action_required_from: ["U0TEAMMATE1"],
       next_action: "Dana should review",
     });
     const classifier = new Classifier(provider, SYSTEM_PROMPT, FEW_SHOT, undefined, undefined, OPERATOR_MAP);
@@ -442,7 +442,7 @@ describe("action_required_from → targetedAtOperator (with OperatorIdentityMap)
       reason: "Needs multiple reviewers",
       workItemIds: ["OPS-100"],
       title: "Multi-review needed",
-      action_required_from: ["U0SECONDHUMAN", "U0OPERATOR1", "UOTHERUSER"],
+      action_required_from: ["U0TEAMMATE1", "U0OPERATOR1", "UOTHERUSER"],
       next_action: "Multiple people need to review",
     });
     const classifier = new Classifier(provider, SYSTEM_PROMPT, FEW_SHOT, undefined, undefined, OPERATOR_MAP);
@@ -450,7 +450,7 @@ describe("action_required_from → targetedAtOperator (with OperatorIdentityMap)
     const result = await classifier.classify("Please everyone review this");
 
     expect(result.targetedAtOperator).toBe(true);
-    expect(result.actionRequiredFrom).toEqual(["U0SECONDHUMAN", "U0OPERATOR1", "UOTHERUSER"]);
+    expect(result.actionRequiredFrom).toEqual(["U0TEAMMATE1", "U0OPERATOR1", "UOTHERUSER"]);
   });
 
   it("no action_required_from, no operator identity → falls back to targeted_at_operator boolean", async () => {
@@ -490,8 +490,8 @@ describe("action_required_from → targetedAtOperator (with OperatorIdentityMap)
 
 describe("Operator profile and sender context", () => {
   const OPERATOR_MAP: OperatorIdentityMap = new Map([
-    ["slack", { userId: "U0OPERATOR1", userName: "Nir Arazi" }],
-    ["jira", { userId: "operator@example.com", userName: "Nir (CTO)" }],
+    ["slack", { userId: "U0OPERATOR1", userName: "Alex Rivera" }],
+    ["jira", { userId: "operator@example.com", userName: "Alex (CTO)" }],
   ]);
 
   it("injects operator profile with all platform identities into system prompt", async () => {
@@ -886,7 +886,7 @@ describe("OpenAICompatibleProvider", () => {
       reason: "Waiting for Dana to review",
       workItemIds: ["OPS-100"],
       title: "PR review needed",
-      action_required_from: ["U0SECONDHUMAN"],
+      action_required_from: ["U0TEAMMATE1"],
       next_action: "Review and approve PR #716",
     };
 
@@ -906,7 +906,7 @@ describe("OpenAICompatibleProvider", () => {
     });
 
     const result = await provider.classify("test", "sys", []);
-    expect(result.action_required_from).toEqual(["U0SECONDHUMAN"]);
+    expect(result.action_required_from).toEqual(["U0TEAMMATE1"]);
     expect(result.next_action).toBe("Review and approve PR #716");
 
     fetchSpy.mockRestore();
@@ -942,7 +942,7 @@ describe("OpenAICompatibleProvider", () => {
       reason: "test",
       workItemIds: [],
       title: "test",
-      action_required_from: ["U0SECONDHUMAN", 123, null, "U0OPERATOR1"],
+      action_required_from: ["U0TEAMMATE1", 123, null, "U0OPERATOR1"],
       next_action: "Fix the flaky test",
     };
 
@@ -962,7 +962,7 @@ describe("OpenAICompatibleProvider", () => {
     });
 
     const result = await provider.classify("test", "sys", []);
-    expect(result.action_required_from).toEqual(["U0SECONDHUMAN", "U0OPERATOR1"]);
+    expect(result.action_required_from).toEqual(["U0TEAMMATE1", "U0OPERATOR1"]);
     expect(result.next_action).toBe("Fix the flaky test");
 
     fetchSpy.mockRestore();

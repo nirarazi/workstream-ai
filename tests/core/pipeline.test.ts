@@ -921,7 +921,7 @@ describe("Pipeline", () => {
       vi.mocked(adapter.readThreads).mockResolvedValue([makeThread()]);
 
       const operatorIdentities = new Map([
-        ["slack", { userId: "U-operator", userName: "Nir" }],
+        ["slack", { userId: "U-operator", userName: "Alex" }],
       ]);
       const pipelineWithIdentity = new Pipeline(adapter, classifier, graph, linker, undefined, config, operatorIdentities);
 
@@ -981,7 +981,7 @@ describe("Pipeline", () => {
         confidence: 0.9,
         reason: "Agent is waiting for operator review",
         workItemIds: [],
-        actionRequiredFrom: ["U_GUY123"],
+        actionRequiredFrom: ["U_DANA123"],
         nextAction: "Review and approve PR #716",
       });
       vi.mocked(classifier.classify).mockResolvedValue(classification);
@@ -993,7 +993,7 @@ describe("Pipeline", () => {
           threadId: "t-blocked",
           messageId: "msg-blocked",
           status: "blocked_on_human",
-          actionRequiredFrom: ["U_GUY123"],
+          actionRequiredFrom: ["U_DANA123"],
           nextAction: "Review and approve PR #716",
         }),
       );
@@ -1033,7 +1033,7 @@ describe("Pipeline", () => {
         channelId: "C001",
         channelName: "general",
         userId: "U002",
-        userName: "Nir",
+        userName: "Alex",
         text: "Looks good",
         timestamp: new Date().toISOString(),
         platform: "slack",

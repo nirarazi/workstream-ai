@@ -54,7 +54,7 @@ This is a Slack platform behavior, not a workstream.ai limitation. There is no A
 ### What this means in practice
 
 When you type a reply in workstream.ai:
-- It appears in Slack as a message from you (e.g., "Nir Arazi")
+- It appears in Slack as a message from you (e.g., "Alex Rivera")
 - Humans in the thread see it normally and can respond
 - **Agents may not see it** unless they are explicitly configured to process messages from apps
 

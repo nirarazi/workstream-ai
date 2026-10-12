@@ -479,7 +479,7 @@ describe("SlackAdapter", () => {
       mockUsersList.mockResolvedValueOnce({
         members: [
           { id: "U001", name: "byte", is_bot: true, profile: { display_name: "Relay" } },
-          { id: "U002", name: "nir", is_bot: false, profile: { display_name: "Nir" } },
+          { id: "U002", name: "nir", is_bot: false, profile: { display_name: "Alex" } },
         ],
         response_metadata: { next_cursor: "" },
       });
@@ -550,7 +550,7 @@ describe("SlackAdapter", () => {
       (localAdapter as any).channelMap = new Map([["C123", { name: "test", isPrivate: false }]]);
       (localAdapter as any).userInfoMap = new Map([
         ["U_BOT", { name: "Relay", avatar: "", isBot: true }],
-        ["U_HUMAN", { name: "Nir", avatar: "", isBot: false }],
+        ["U_HUMAN", { name: "Alex", avatar: "", isBot: false }],
       ]);
 
       const messages = await localAdapter.getThreadMessages("1711900000.000000", "C123");
