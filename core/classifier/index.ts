@@ -5,7 +5,7 @@ import { resolve } from "node:path";
 import { parse as parseYaml } from "yaml";
 import { createLogger } from "../logger.js";
 import { findProjectRoot, type Config } from "../config.js";
-import type { Classification, EntryType, OperatorIdentityMap, StatusCategory } from "../types.js";
+import type { Classification, EntryType, OperatorIdentityMap, StatusCategory, ThreadContext } from "../types.js";
 import { OpenAICompatibleProvider, type BackoffState } from "./providers/openai-compatible.js";
 import type { ModelProvider } from "./providers/interface.js";
 import type { RateLimiter } from "../rate-limiter.js";
@@ -80,6 +80,27 @@ export function buildOperatorContext(config: Config): string {
   return parts.join("\n");
 }
 
+const THREAD_CONTEXT_CHARS = 300;
+
+export function formatThreadContext(ctx: ThreadContext): string {
+  const lines = ["## This Thread", ""];
+  if (ctx.workItem) {
+    const status = ctx.workItem.status ? ` (${ctx.workItem.status})` : "";
+    // Inferred work items are keyed "thread:<ts>"; that id means nothing to the model.
+    const id = ctx.workItem.id.startsWith("thread:") ? "" : `${ctx.workItem.id}: `;
+    lines.push(`The new message belongs to a thread about ${id}"${ctx.workItem.title}"${status}.`);
+  }
+  if (ctx.messages.length > 0) {
+    lines.push("Earlier messages in the thread, oldest first:");
+    for (const m of ctx.messages) {
+      const text = m.text.replace(/\s+/g, " ").trim();
+      lines.push(`- [${m.senderName}] "${text.length > THREAD_CONTEXT_CHARS ? text.slice(0, THREAD_CONTEXT_CHARS) + "…" : text}"`);
+    }
+  }
+  lines.push("", "Use this to understand what the new message refers to (\"approved\", \"go ahead\", \"same error\"), but classify only the new message.");
+  return lines.join("\n");
+}
+
 export function createProvider(config: Config): ModelProvider {
   const { baseUrl, model, apiKey } = config.classifier.provider;
   const isAnthropic = baseUrl.includes("anthropic");
@@ -148,6 +169,7 @@ export class Classifier {
       text: string;
       timestamp: string;
     }>,
+    threadContext?: ThreadContext,
   ): Promise<Classification> {
     try {
       // Rate-limit LLM calls
@@ -175,8 +197,8 @@ export class Classifier {
         }
         profileBlock += `\n\nWhen classifying targeted_at_operator, consider: would this item belong in the operator's inbox? Return true if:
 - The operator is explicitly mentioned or addressed
-- An agent is blocked and needs human intervention (the operator is the fleet's backstop)
-- The issue is within the operator's stated remit
+- The issue is within the operator's stated remit, including any "escalate to me anyway" cases
+- An agent is blocked and needs human intervention, and nobody else's remit covers it (the operator is the fleet's backstop)
 
 Return false if:
 - The block is on an external party (client, vendor) with no operator action possible
@@ -206,6 +228,10 @@ Return false if:
           return `- [${ctx.senderName}, ${ago}] "${ctx.text}" → work item: ${ctx.workItemId}`;
         }).join("\n");
         effectiveSystemPrompt += `\n\n## Recent Messages from the Same Channel\n\nThe following recent messages are from the same channel as this new message. If this new message is a continuation of one of these conversations (a reply, follow-up, or related remark), return that conversation's work item ID in workItemIds. If it's a new, unrelated topic, return empty workItemIds as usual.\n\n${contextLines}`;
+      }
+
+      if (threadContext && (threadContext.workItem || threadContext.messages.length > 0)) {
+        effectiveSystemPrompt += `\n\n${formatThreadContext(threadContext)}`;
       }
 
       // Prepend sender context to message if provided
@@ -281,6 +307,14 @@ Return false if:
     operatorIdentities?: OperatorIdentityMap | null,
   ): boolean {
     const isActionable = result.status === "blocked_on_human" || result.status === "needs_decision";
+
+    // With a remit, the model has been told who owns what, so its targeted_at_operator answer decides
+    // instead of the backstop rule. Being named in action_required_from still always counts.
+    if (this.operatorContext) {
+      const operatorIds = new Set([...(operatorIdentities?.values() ?? [])].map((id) => id.userId));
+      if (result.action_required_from?.some((id) => operatorIds.has(id))) return true;
+      return result.targeted_at_operator ?? isActionable;
+    }
 
     if (result.action_required_from !== undefined) {
       // null = classifier says "no action needed".  But if the status IS

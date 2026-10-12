@@ -3,7 +3,7 @@
 import { createHash } from "node:crypto";
 import { createLogger } from "./logger.js";
 import type { Config } from "./config.js";
-import type { Classification, Message, OperatorIdentityMap, Thread } from "./types.js";
+import type { Classification, Message, OperatorIdentityMap, Thread, ThreadContext } from "./types.js";
 import type { MessagingAdapter } from "./adapters/messaging/interface.js";
 import type { TaskAdapter } from "./adapters/tasks/interface.js";
 import type { Classifier } from "./classifier/index.js";
@@ -16,6 +16,8 @@ const DEFAULT_POLL_INTERVAL = 30;
 const DEFAULT_LOOKBACK_DAYS = 1;
 const DEFAULT_MAX_THREADS_PER_POLL = 50;
 const DEFAULT_MAX_ACTIVE_THREAD_REPOLLS = 20;
+/** Earlier thread messages shown to the classifier with each new message. */
+const THREAD_CONTEXT_MESSAGES = 4;
 
 export interface ProcessResult {
   processed: number;
@@ -464,7 +466,18 @@ export class Pipeline {
       senderType: effectiveSenderType,
       channelName: message.channelName,
     };
-    const classification = await this.classifier.classify(message.text, candidateContext, this.operatorIdentities, senderContext, this.getValidPrefixes(), channelContext);
+    // Step 0h: Thread context — what this message is a reply to. Without it, "approved, go ahead" is unreadable.
+    const threadWorkItem = inheritedWorkItemId ? this.graph.getWorkItemById(inheritedWorkItemId) : null;
+    const threadContext: ThreadContext = {
+      workItem: threadWorkItem
+        ? { id: threadWorkItem.id, title: threadWorkItem.title, status: threadWorkItem.externalStatus }
+        : undefined,
+      messages: thread.messages
+        .filter((m) => m.id !== message.id && m.timestamp < message.timestamp && m.text.trim())
+        .slice(-THREAD_CONTEXT_MESSAGES)
+        .map((m) => ({ senderName: m.userName, text: m.text })),
+    };
+    const classification = await this.classifier.classify(message.text, candidateContext, this.operatorIdentities, senderContext, this.getValidPrefixes(), channelContext, threadContext);
 
     // Separate LLM-suggested IDs into verified (match an extracted ID) and unverified
     const extractedSet = new Set(extractedIds);

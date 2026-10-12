@@ -7,6 +7,7 @@ import { TypeSafeDecisionProvider, toWireQuestion } from "../../core/decisions/p
 import {
   NO_MATCH,
   buildClassificationQuestions,
+  buildState,
   classifyWithDecisions,
 } from "../../core/decisions/classification.js";
 import type { DecisionProvider } from "../../core/decisions/interface.js";
@@ -155,6 +156,16 @@ describe("classification questions", () => {
     }), { message: "need creds" });
     expect(result.status).toBe("blocked_on_human");
     expect(result.targetedAtOperator).toBe(true);
+  });
+
+  it("puts the thread's work item and earlier messages in the state", () => {
+    const state = buildState({
+      message: "go ahead",
+      threadContext: { workItem: { id: "AI-102", title: "Feature rollout", status: "Backlog" }, messages: [{ senderName: "Levy", text: "Ship it?" }] },
+    });
+    expect(state).toContain("Thread is about: AI-102 — Feature rollout (Backlog)");
+    expect(state).toContain("- [Levy] Ship it?");
+    expect(state.indexOf("Ship it?")).toBeLessThan(state.indexOf("go ahead"));
   });
 
   it("lets the remit keep another person's block out of the inbox", async () => {

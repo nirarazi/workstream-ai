@@ -73,7 +73,7 @@ function renderContext(eventId: string): ContextMessage[] {
   if (ctx.workItems.length === 0) console.log(`${BOLD}work item:${RESET} none linked`);
   for (const w of ctx.workItems) {
     const meta = [w.status, w.assignee && `assignee ${w.assignee}`].filter(Boolean).join(" · ");
-    console.log(`${BOLD}work item:${RESET} ${w.id}  ${w.title}${meta ? `  ${DIM}[${meta}]${RESET}` : ""}`);
+    console.log(`${BOLD}work item:${RESET} ${w.id.startsWith("thread:") ? "(no ticket)" : w.id}  ${w.title}${meta ? `  ${DIM}[${meta}]${RESET}` : ""}`);
     if (w.url) console.log(`           ${DIM}${w.url}${RESET}`);
   }
   console.log("");

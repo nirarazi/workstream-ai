@@ -64,7 +64,7 @@ export function loadItemContext(
     const jira = r.jira ? (JSON.parse(r.jira) as { title?: string; status?: string; assignee?: string; url?: string }) : {};
     return {
       // Inferred items are keyed by thread ("thread:1777…"); the title is what identifies them.
-      id: r.id.startsWith("thread:") ? "(no ticket)" : r.id,
+      id: r.id,
       title: jira.title || r.title,
       status: jira.status ?? r.external_status,
       assignee: jira.assignee ?? r.assignee,

@@ -488,6 +488,50 @@ describe("action_required_from → targetedAtOperator (with OperatorIdentityMap)
 
 // --- Operator profile injection test ---
 
+describe("thread context", () => {
+  it("adds the thread's work item and earlier messages to the system prompt", async () => {
+    const provider = mockProvider({ status: "in_progress", confidence: 0.8, reason: "", workItemIds: [], title: "" });
+    const classifier = new Classifier(provider, SYSTEM_PROMPT, FEW_SHOT);
+    await classifier.classify("approved, go ahead", undefined, undefined, undefined, undefined, undefined, {
+      workItem: { id: "thread:1777", title: "Partner outreach email", status: null },
+      messages: [{ senderName: "Norma", text: "Draft ready for review" }],
+    });
+    const system = (provider.classify as ReturnType<typeof vi.fn>).mock.calls[0][1] as string;
+    expect(system).toContain("## This Thread");
+    expect(system).toContain('a thread about "Partner outreach email"');
+    expect(system).not.toContain("thread:1777");
+    expect(system).toContain('- [Norma] "Draft ready for review"');
+  });
+});
+
+describe("targetedAtOperator with an operator remit", () => {
+  const OPERATOR_MAP: OperatorIdentityMap = new Map([["slack", { userId: "U0OPERATOR1", userName: "Alex Rivera" }]]);
+  const REMIT = "Dana owns partner outreach approvals.";
+  const make = (result: ClassificationResult) =>
+    new Classifier(mockProvider(result), SYSTEM_PROMPT, FEW_SHOT, undefined, undefined, OPERATOR_MAP, REMIT);
+  const block = { status: "blocked_on_human" as const, confidence: 0.9, reason: "", workItemIds: [], title: "" };
+
+  it("a block the model says is someone else's stays out of the inbox, even with no named actor", async () => {
+    const result = await make({ ...block, action_required_from: [], targeted_at_operator: false }).classify("Draft ready for approval");
+    expect(result.targetedAtOperator).toBe(false);
+  });
+
+  it("an escalation the model says is the operator's reaches the inbox even when someone else is named", async () => {
+    const result = await make({ ...block, action_required_from: ["U0TEAMMATE1"], targeted_at_operator: true }).classify("Meeting bot API 400 again");
+    expect(result.targetedAtOperator).toBe(true);
+  });
+
+  it("being named always reaches the inbox", async () => {
+    const result = await make({ ...block, action_required_from: ["U0OPERATOR1"], targeted_at_operator: false }).classify("Alex, can you check?");
+    expect(result.targetedAtOperator).toBe(true);
+  });
+
+  it("falls back to the backstop when the model omits targeted_at_operator", async () => {
+    const result = await make({ ...block }).classify("Blocked on credentials");
+    expect(result.targetedAtOperator).toBe(true);
+  });
+});
+
 describe("Operator profile and sender context", () => {
   const OPERATOR_MAP: OperatorIdentityMap = new Map([
     ["slack", { userId: "U0OPERATOR1", userName: "Alex Rivera" }],
