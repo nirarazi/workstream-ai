@@ -54,6 +54,10 @@ function getBackoffMs(attempt: number): number {
   return Math.min(base + jitter, MAX_BACKOFF_MS);
 }
 
+function cachedText(text: string) {
+  return { type: "text" as const, text, cache_control: { type: "ephemeral" as const } };
+}
+
 /** A completion's text plus the token usage the endpoint reported, when it reports any. */
 export interface Completion {
   text: string;
@@ -66,6 +70,7 @@ export class OpenAICompatibleProvider implements ModelProvider {
   private readonly model: string;
   private readonly apiKey: string | undefined;
   private readonly isAnthropic: boolean;
+  private readonly cacheBreakpoints: boolean;
   private abortController = new AbortController();
 
   // Backoff state — exposed so the server can surface it to the UI
@@ -93,6 +98,9 @@ export class OpenAICompatibleProvider implements ModelProvider {
     this.model = config.model;
     this.apiKey = config.apiKey;
     this.isAnthropic = this.baseUrl.includes("anthropic");
+    // Claude needs explicit cache breakpoints (directly or through OpenRouter); other providers cache
+    // repeated prefixes on their own.
+    this.cacheBreakpoints = this.isAnthropic || this.model.startsWith("anthropic/");
   }
 
   async classify(
@@ -182,6 +190,18 @@ export class OpenAICompatibleProvider implements ModelProvider {
     throw lastError;
   }
 
+  /**
+   * Marks the end of the static prefix (system prompt + few-shot examples) as cacheable, so repeat calls
+   * read it at the cache price. Per-message context lives in the final user turn, after the breakpoint.
+   */
+  private withCacheBreakpoint(
+    messages: Array<{ role: string; content: string }>,
+  ): Array<{ role: string; content: string | Array<ReturnType<typeof cachedText>> }> {
+    if (!this.cacheBreakpoints || messages.length === 0) return messages;
+    const last = messages[messages.length - 1];
+    return [...messages.slice(0, -1), { role: last.role, content: [cachedText(last.content)] }];
+  }
+
   private async callAnthropic(
     message: string,
     systemPrompt: string,
@@ -197,14 +217,14 @@ export class OpenAICompatibleProvider implements ModelProvider {
     }
 
     const messages = [
-      ...fewShotExamples.map((ex) => ({ role: ex.role, content: ex.content })),
+      ...this.withCacheBreakpoint(fewShotExamples.map((ex) => ({ role: ex.role, content: ex.content }))),
       { role: "user" as const, content: message },
     ];
 
     const body = {
       model: this.model,
       max_tokens: 1024,
-      system: systemPrompt,
+      system: this.cacheBreakpoints && fewShotExamples.length === 0 ? [cachedText(systemPrompt)] : systemPrompt,
       messages,
     };
 
@@ -249,8 +269,10 @@ export class OpenAICompatibleProvider implements ModelProvider {
     const makeMessages = (useSystemRole: boolean) => {
       if (useSystemRole) {
         return [
-          { role: "system" as const, content: systemPrompt },
-          ...fewShotExamples.map((ex) => ({ role: ex.role, content: ex.content })),
+          ...this.withCacheBreakpoint([
+            { role: "system", content: systemPrompt },
+            ...fewShotExamples.map((ex) => ({ role: ex.role, content: ex.content })),
+          ]),
           { role: "user" as const, content: message },
         ];
       }
