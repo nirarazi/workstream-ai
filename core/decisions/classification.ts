@@ -5,7 +5,7 @@
 // fields (title, next_action, reason) stay with the LLM classifier and are only needed for
 // items that actually surface.
 
-import type { StatusCategory } from "../types.js";
+import type { StatusCategory, ThreadContext } from "../types.js";
 import type {
   ChoiceAnswer,
   ChoiceQuestion,
@@ -40,6 +40,8 @@ export interface DecisionClassificationInput {
   operatorName?: string;
   /** Free-text description of the operator's remit, from config.operator.context. */
   operatorContext?: string;
+  /** The thread's work item and earlier messages, so replies like "approved" can be read. */
+  threadContext?: ThreadContext;
   candidateWorkItems?: Array<{ id: string; title: string }>;
 }
 
@@ -62,7 +64,20 @@ export function buildState(input: DecisionClassificationInput): string {
   const header: string[] = [];
   if (input.senderName) header.push(`Sender: ${input.senderName}${input.senderType ? ` (${input.senderType})` : ""}`);
   if (input.channelName) header.push(`Channel: ${input.channelName}`);
-  return [header.join(" | "), "Message:", input.message].filter(Boolean).join("\n");
+  const thread: string[] = [];
+  const ctx = input.threadContext;
+  if (ctx?.workItem) {
+    const id = ctx.workItem.id.startsWith("thread:") ? "" : `${ctx.workItem.id} — `;
+    thread.push(`Thread is about: ${id}${ctx.workItem.title}${ctx.workItem.status ? ` (${ctx.workItem.status})` : ""}`);
+  }
+  if (ctx?.messages.length) {
+    thread.push("Earlier messages in the thread:");
+    for (const m of ctx.messages) {
+      const text = m.text.replace(/\s+/g, " ").trim();
+      thread.push(`- [${m.senderName}] ${text.length > 300 ? text.slice(0, 300) + "…" : text}`);
+    }
+  }
+  return [header.join(" | "), ...thread, "Message:", input.message].filter(Boolean).join("\n");
 }
 
 export interface ClassificationQuestions {

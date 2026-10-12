@@ -63,6 +63,13 @@ export interface Message {
   senderType?: "agent" | "human" | "notification" | "unknown";
 }
 
+/** What a message is a reply to: the thread's work item and the messages before it. */
+export interface ThreadContext {
+  workItem?: { id: string; title: string; status?: string | null };
+  /** Earlier messages in the same thread, oldest first. */
+  messages: Array<{ senderName: string; text: string }>;
+}
+
 export interface Thread {
   id: string;
   channelId: string;

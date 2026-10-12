@@ -222,6 +222,7 @@ describe("Pipeline", () => {
         { senderName: "Relay", senderType: "unknown", channelName: "fleet-ops" },
         [],
         [],
+        expect.objectContaining({ messages: expect.any(Array) }),
       );
     });
 
@@ -585,6 +586,7 @@ describe("Pipeline", () => {
         { senderName: "Relay", senderType: "unknown", channelName: "fleet-ops" },
         [],
         [],
+        expect.objectContaining({ messages: expect.any(Array) }),
       );
     });
 
@@ -934,6 +936,7 @@ describe("Pipeline", () => {
         expect.objectContaining({ senderName: "Relay" }),
         [],
         [],
+        expect.objectContaining({ messages: expect.any(Array) }),
       );
     });
 
@@ -950,6 +953,7 @@ describe("Pipeline", () => {
         expect.objectContaining({ senderName: "Relay" }),
         [],
         [],
+        expect.objectContaining({ messages: expect.any(Array) }),
       );
     });
 
@@ -966,6 +970,7 @@ describe("Pipeline", () => {
         { senderName: "Prism", senderType: "agent", channelName: "#design" },
         [],
         [],
+        expect.objectContaining({ messages: expect.any(Array) }),
       );
     });
   });
@@ -1103,6 +1108,7 @@ describe("Pipeline", () => {
         expect.objectContaining({ senderName: "Relay" }),
         [],
         [],
+        expect.objectContaining({ messages: expect.any(Array) }),
       );
     });
 

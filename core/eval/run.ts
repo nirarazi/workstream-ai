@@ -10,6 +10,7 @@
 //   --base-url URL  --model NAME  --api-key-env VAR   override the LLM endpoint (classifier, llm)
 //   --typesafe-model NAME                              default jev-latest
 //   --concurrency N (default 4)   --limit N   --dataset PATH
+//   --no-thread-context          classify each message alone (no work item or earlier thread messages)
 // Writes per-item results to eval-data/runs/ for later comparison.
 
 import BetterSqlite3 from "better-sqlite3";
@@ -21,7 +22,8 @@ import { classifyWithDecisions, type DecisionClassificationInput } from "../deci
 import { LLMDecisionProvider } from "../decisions/providers/llm.js";
 import { TypeSafeDecisionProvider } from "../decisions/providers/typesafe.js";
 import type { DecisionProvider } from "../decisions/interface.js";
-import type { OperatorIdentityMap } from "../types.js";
+import type { OperatorIdentityMap, ThreadContext } from "../types.js";
+import { loadItemContext } from "./context.js";
 import { defaultDatasetPath, labeled, loadDataset, type EvalItem } from "./dataset.js";
 import { formatReport, scoreRun, type Prediction } from "./metrics.js";
 
@@ -58,8 +60,24 @@ function operatorIdentities(config: Config, root: string): OperatorIdentityMap |
   return row ? new Map([[row.platform, { userId: row.platform_user_id, userName: name }]]) : null;
 }
 
-function decisionInput(item: EvalItem, config: Config): DecisionClassificationInput {
+/** Same shape the live pipeline passes: the thread's work item and up to 4 earlier messages. No hindsight. */
+let contextDb: BetterSqlite3.Database | null = null;
+function threadContext(item: EvalItem, root: string): ThreadContext | undefined {
+  if (process.argv.includes("--no-thread-context")) return undefined;
+  const dbPath = resolve(root, "workstream.db");
+  if (!contextDb && existsSync(dbPath)) contextDb = new BetterSqlite3(dbPath, { readonly: true });
+  const ctx = contextDb && loadItemContext(contextDb, item.id, { before: 4, after: 0 });
+  if (!ctx) return undefined;
+  const wi = ctx.workItems[0];
   return {
+    workItem: wi ? { id: wi.id, title: wi.title, status: wi.status } : undefined,
+    messages: ctx.before.map((m) => ({ senderName: m.sender, text: m.text })),
+  };
+}
+
+function decisionInput(item: EvalItem, config: Config, root: string): DecisionClassificationInput {
+  return {
+    threadContext: threadContext(item, root),
     message: item.message,
     senderName: item.senderName,
     senderType: item.senderType,
@@ -69,9 +87,9 @@ function decisionInput(item: EvalItem, config: Config): DecisionClassificationIn
   };
 }
 
-function viaDecisions(provider: DecisionProvider, config: Config): Predict {
+function viaDecisions(provider: DecisionProvider, config: Config, root: string): Predict {
   return async (item) => {
-    const r = await classifyWithDecisions(provider, decisionInput(item, config));
+    const r = await classifyWithDecisions(provider, decisionInput(item, config, root));
     return {
       status: r.status,
       confidence: r.confidence,
@@ -107,7 +125,7 @@ function makeBackend(name: string, config: Config, root: string): { label: strin
             senderName: item.senderName,
             senderType: item.senderType,
             channelName: item.channelName,
-          });
+          }, undefined, undefined, threadContext(item, root));
           // Classifier swallows provider errors and returns noise; count those as errors, not predictions.
           if (c.reason.startsWith("Classification failed") || c.reason === "Provider returned empty result") {
             throw new Error(c.reason);
@@ -118,7 +136,7 @@ function makeBackend(name: string, config: Config, root: string): { label: strin
     }
     case "llm": {
       const ep = endpoint(config);
-      return { label: `decisions · llm · ${ep.model}`, predict: viaDecisions(LLMDecisionProvider.fromEndpoint(ep), config) };
+      return { label: `decisions · llm · ${ep.model}`, predict: viaDecisions(LLMDecisionProvider.fromEndpoint(ep), config, root) };
     }
     case "typesafe": {
       // Direct TypeSafe key if present, otherwise Jev through OpenRouter on the configured key.
@@ -131,7 +149,7 @@ function makeBackend(name: string, config: Config, root: string): { label: strin
       const provider = direct
         ? new TypeSafeDecisionProvider({ apiKey: direct, model })
         : TypeSafeDecisionProvider.viaOpenRouter(config.classifier.provider.apiKey ?? "", model);
-      return { label: `decisions · typesafe · ${model}${direct ? "" : " (openrouter)"}`, predict: viaDecisions(provider, config) };
+      return { label: `decisions · typesafe · ${model}${direct ? "" : " (openrouter)"}`, predict: viaDecisions(provider, config, root) };
     }
     default:
       throw new Error(`Unknown backend "${name}" (expected production, classifier, llm, typesafe)`);

@@ -77,6 +77,21 @@ accuracy on the reference fleet) has never been measured.
    - Haiku's status accuracy fell from 79.3% to 75.2%. The run had one parse error (fixed since), and the
      wording of the status question changed. The dip is within run-to-run noise on 150 items; check it again
      with thread context.
+   **Fourth run (2026-10-12): the live classifier follows the remit, and every backend sees the thread.**
+   Thread context means the thread's work item plus up to 4 earlier messages; the live pipeline now passes it too.
+
+   | Backend | Status acc. | Unnecessary / missed interrupts | Interrupt precision |
+   |---|---|---|---|
+   | **Current classifier, Haiku 5.5 (what the app runs)** | **73%** (was 65%) | **11 / 0** (was 34 / 5) | 58% |
+   | Decision questions, Haiku 5.5 | 75% | 6 / 2 | 68% |
+   | Decision questions, Jev 1.13 | 60% | **3 / 2** | **81%** |
+
+   - The app's own classifier gained the most: 8 points of status accuracy, a third of the unnecessary
+     interrupts, and it now misses nothing that needed Alex.
+   - What still stops anything reaching 80% is mostly in_progress vs noise (and in_progress read as a
+     decision). Telling progress from noise doesn't change what reaches the inbox; it matters for Catch-up (6).
+     **Consider making interrupts the headline metric** (unnecessary + missed, precision and recall).
+     CLAUDE.md already calls it the metric that matters, and the 5-way accuracy can stay as a diagnostic.
    - Nothing reaches the 80% target yet.
    - Splitting the classifier into separate questions helped Haiku a lot (57% → 74%).
    - Jev is the fastest and best calibrated, but weak on `noise` (28% recall).
