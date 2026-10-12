@@ -6,6 +6,7 @@ import { parse as parseYaml } from "yaml";
 import { createLogger } from "../logger.js";
 import { findProjectRoot, type Config } from "../config.js";
 import type { Classification, EntryType, OperatorIdentityMap, StatusCategory, ThreadContext } from "../types.js";
+import { applyDecision, createDecisionGate, type DecisionGate } from "../decisions/gate.js";
 import { OpenAICompatibleProvider, type BackoffState } from "./providers/openai-compatible.js";
 import type { ModelProvider } from "./providers/interface.js";
 import type { RateLimiter } from "../rate-limiter.js";
@@ -115,6 +116,7 @@ export class Classifier {
   private readonly operatorRole: string;
   private readonly operatorIdentities: OperatorIdentityMap | null;
   private readonly operatorContext: string;
+  private decisionGate: DecisionGate | null = null;
   private rateLimiter?: RateLimiter;
 
   constructor(
@@ -153,10 +155,55 @@ export class Classifier {
     const fewShot = buildFewShotMessages(prompt.few_shot_examples);
     const operatorContext = buildOperatorContext(config);
     const operatorRole = config.operator?.role ?? "";
-    return new Classifier(provider, prompt.system, fewShot, undefined, operatorRole, null, operatorContext);
+    const classifier = new Classifier(provider, prompt.system, fewShot, undefined, operatorRole, null, operatorContext);
+    classifier.setDecisionGate(createDecisionGate(config));
+    return classifier;
+  }
+
+  /** Optional decision model that overrides status and inbox membership (classifier.mode: "decisions"). */
+  setDecisionGate(gate: DecisionGate | null): void {
+    this.decisionGate = gate;
   }
 
   async classify(
+    message: string,
+    candidateWorkItems?: Array<{ id: string; title: string; reasons?: string[] }>,
+    operatorIdentities?: OperatorIdentityMap | null,
+    senderContext?: { senderName: string; senderType: string; channelName: string },
+    validIdPrefixes?: string[],
+    channelContext?: Array<{
+      workItemId: string;
+      workItemTitle: string;
+      senderName: string;
+      text: string;
+      timestamp: string;
+    }>,
+    threadContext?: ThreadContext,
+  ): Promise<Classification> {
+    const llm = this.classifyWithLLM(message, candidateWorkItems, operatorIdentities, senderContext, validIdPrefixes, channelContext, threadContext);
+    if (!this.decisionGate) return llm;
+
+    const identities = operatorIdentities ?? this.operatorIdentities;
+    const decision = this.decisionGate.decide({
+      message,
+      senderName: senderContext?.senderName,
+      senderType: senderContext?.senderType,
+      channelName: senderContext?.channelName,
+      operatorName: identities && identities.size > 0 ? [...identities.values()][0].userName : undefined,
+      operatorContext: this.operatorContext || undefined,
+      threadContext,
+    });
+    const [llmResult, decisionResult] = await Promise.allSettled([llm, decision]);
+    // classifyWithLLM never rejects (it falls back to noise internally)
+    const base = (llmResult as PromiseFulfilledResult<Classification>).value;
+    if (decisionResult.status === "rejected") {
+      log.warn("Decision gate failed — using the LLM classification", decisionResult.reason);
+      return base;
+    }
+    return applyDecision(base, decisionResult.value);
+  }
+
+  private async classifyWithLLM(
     message: string,
     candidateWorkItems?: Array<{ id: string; title: string; reasons?: string[] }>,
     operatorIdentities?: OperatorIdentityMap | null,
