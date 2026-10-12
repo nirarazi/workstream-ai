@@ -11,6 +11,7 @@
 //   --reasoning-effort LEVEL                           e.g. none, to turn off thinking in local models
 //   --typesafe-model NAME                              default jev-latest
 //   --concurrency N (default 4)   --limit N   --dataset PATH
+//   --per-status N               quick run: the first N labeled items of each true status
 //   --no-thread-context          classify each message alone (no work item or earlier thread messages)
 // Writes per-item results to eval-data/runs/ for later comparison.
 
@@ -179,6 +180,15 @@ async function main(): Promise<void> {
   let items = labeled(loadDataset(datasetPath));
   const limit = arg("limit");
   if (limit) items = items.slice(0, Number(limit));
+  const perStatus = arg("per-status");
+  if (perStatus) {
+    const counts = new Map<string, number>();
+    items = items.filter((i) => {
+      const n = counts.get(i.label.status) ?? 0;
+      counts.set(i.label.status, n + 1);
+      return n < Number(perStatus);
+    });
+  }
   if (items.length === 0) {
     console.error(`No labeled items in ${datasetPath}. Run eval:sample, then eval:label.`);
     process.exit(1);
