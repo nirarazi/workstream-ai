@@ -214,12 +214,16 @@ Return false if:
         effectiveSystemPrompt += `\n\n## Valid Work Item ID Prefixes\n\nThe following prefixes are the ONLY valid work item ID patterns: ${validIdPrefixes.join(", ")}. Only return IDs in workItemIds that match one of these prefixes. IDs like "Q-123" or "CRM-456" that don't match a known prefix should NOT be included in workItemIds — they are external reference numbers, not tracked work items.`;
       }
 
+      // Per-message context goes in the user turn, after the few-shot examples, so the system prompt and
+      // examples form an identical prefix on every call — that prefix is what providers cache.
+      const context: string[] = [];
+
       if (candidateWorkItems && candidateWorkItems.length > 0) {
         const itemLines = candidateWorkItems.map((wi, i) => {
           const reasons = wi.reasons?.length ? ` — ${wi.reasons.join(", ")}` : "";
           return `${i + 1}. ${wi.id}: "${wi.title}"${reasons}`;
         }).join("\n");
-        effectiveSystemPrompt += `\n\n## Candidate Work Items (ranked by relevance)\n\nThe following work items are the most likely matches for this message, based on graph signals (same agent, same channel, recency, keyword overlap). If the message is about one of these items, return its ID in workItemIds. If none match, return an empty workItemIds array — do NOT force a match.\n\n${itemLines}`;
+        context.push(`## Candidate Work Items (ranked by relevance)\n\nThe following work items are the most likely matches for this message, based on graph signals (same agent, same channel, recency, keyword overlap). If the message is about one of these items, return its ID in workItemIds. If none match, return an empty workItemIds array — do NOT force a match.\n\n${itemLines}`);
       }
 
       if (channelContext && channelContext.length > 0) {
@@ -227,17 +231,20 @@ Return false if:
           const ago = timeAgoShort(ctx.timestamp);
           return `- [${ctx.senderName}, ${ago}] "${ctx.text}" → work item: ${ctx.workItemId}`;
         }).join("\n");
-        effectiveSystemPrompt += `\n\n## Recent Messages from the Same Channel\n\nThe following recent messages are from the same channel as this new message. If this new message is a continuation of one of these conversations (a reply, follow-up, or related remark), return that conversation's work item ID in workItemIds. If it's a new, unrelated topic, return empty workItemIds as usual.\n\n${contextLines}`;
+        context.push(`## Recent Messages from the Same Channel\n\nThe following recent messages are from the same channel as this new message. If this new message is a continuation of one of these conversations (a reply, follow-up, or related remark), return that conversation's work item ID in workItemIds. If it's a new, unrelated topic, return empty workItemIds as usual.\n\n${contextLines}`);
       }
 
       if (threadContext && (threadContext.workItem || threadContext.messages.length > 0)) {
-        effectiveSystemPrompt += `\n\n${formatThreadContext(threadContext)}`;
+        context.push(formatThreadContext(threadContext));
       }
 
       // Prepend sender context to message if provided
       let effectiveMessage = message;
       if (senderContext) {
         effectiveMessage = `[Sender: ${senderContext.senderName} (${senderContext.senderType}) | Channel: ${senderContext.channelName}]\n${message}`;
+      }
+      if (context.length > 0) {
+        effectiveMessage = `${context.join("\n\n")}\n\n## New Message to Classify\n\n${effectiveMessage}`;
       }
 
       const result = await this.provider.classify(
