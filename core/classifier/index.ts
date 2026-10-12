@@ -200,7 +200,7 @@ export class Classifier {
       log.warn("Decision gate failed — using the LLM classification", decisionResult.reason);
       return base;
     }
-    return applyDecision(base, decisionResult.value);
+    return applyDecision(base, decisionResult.value, senderContext?.senderType);
   }
 
   private async classifyWithLLM(
