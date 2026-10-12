@@ -50,6 +50,8 @@ lookback:
   initialDays: 1             # 1 day — keeps initial LLM calls manageable
   # Max threads to classify per poll cycle (0 = unlimited)
   maxThreadsPerPoll: 50
+  # After a pause, catch up at most this many days of history (defaults to initialDays)
+  # maxCatchUpDays: 1
 
 continuation:
   # Strategy for grouping non-threaded messages into conversations

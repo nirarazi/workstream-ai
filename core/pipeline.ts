@@ -302,11 +302,23 @@ export class Pipeline {
     const globalSince = new Date();
     globalSince.setDate(globalSince.getDate() - lookbackDays);
 
+    // After a long pause (app closed for weeks), don't replay everything since the old cursor: those
+    // messages are stale, and classifying them floods the inbox with long-resolved "blocks".
+    const catchUpDays = this.config?.lookback?.maxCatchUpDays ?? lookbackDays;
+    const catchUpFloor = new Date();
+    catchUpFloor.setDate(catchUpFloor.getDate() - catchUpDays);
+
     const allCursors = this.graph.getAllPollCursors();
     const perChannelSince = new Map<string, Date>();
+    let clamped = 0;
 
     for (const cursor of allCursors) {
-      perChannelSince.set(cursor.channelId, new Date(cursor.lastTimestamp));
+      const since = new Date(cursor.lastTimestamp);
+      if (since < catchUpFloor) clamped++;
+      perChannelSince.set(cursor.channelId, since < catchUpFloor ? catchUpFloor : since);
+    }
+    if (clamped > 0) {
+      log.info(`${clamped} channel cursor(s) older than ${catchUpDays} day(s) — catching up from ${catchUpFloor.toISOString()} only`);
     }
 
     return { globalSince, perChannelSince };

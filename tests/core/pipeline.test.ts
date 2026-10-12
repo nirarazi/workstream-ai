@@ -379,8 +379,9 @@ describe("Pipeline", () => {
     });
 
     it("passes per-channel cursors when available", async () => {
+      const recent = new Date(Date.now() - 2 * 3600_000).toISOString();
       vi.mocked(graph.getAllPollCursors).mockReturnValue([
-        { channelId: "C-1", lastTimestamp: "2026-03-29T08:00:00.000Z", updatedAt: "2026-03-29T08:00:00.000Z" },
+        { channelId: "C-1", lastTimestamp: recent, updatedAt: recent },
       ]);
 
       vi.mocked(adapter.readThreads).mockResolvedValue([]);
@@ -389,7 +390,21 @@ describe("Pipeline", () => {
 
       const perChannelSince = vi.mocked(adapter.readThreads).mock.calls[0][2];
       expect(perChannelSince).toBeDefined();
-      expect(perChannelSince!.get("C-1")!.toISOString()).toBe("2026-03-29T08:00:00.000Z");
+      expect(perChannelSince!.get("C-1")!.toISOString()).toBe(recent);
+    });
+
+    it("caps catch-up after a long pause instead of replaying months of history", async () => {
+      vi.mocked(graph.getAllPollCursors).mockReturnValue([
+        { channelId: "C-old", lastTimestamp: "2026-03-29T08:00:00.000Z", updatedAt: "2026-03-29T08:00:00.000Z" },
+      ]);
+      vi.mocked(adapter.readThreads).mockResolvedValue([]);
+
+      await pipeline.processOnce();
+
+      const since = vi.mocked(adapter.readThreads).mock.calls[0][2]!.get("C-old")!;
+      const days = (Date.now() - since.getTime()) / 86_400_000;
+      expect(days).toBeGreaterThan(0.9);
+      expect(days).toBeLessThan(3.1); // initialDays from the test config, never months
     });
 
     it("falls back to initialDays lookback when no poll cursors exist", async () => {
