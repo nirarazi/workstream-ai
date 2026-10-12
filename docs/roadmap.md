@@ -84,7 +84,13 @@ accuracy on the reference fleet) has never been measured.
    |---|---|---|---|
    | **Current classifier, Haiku 5.5 (what the app runs)** | **73%** (was 65%) | **11 / 0** (was 34 / 5) | 58% |
    | Decision questions, Haiku 5.5 | 75% | 6 / 2 | 68% |
-   | Decision questions, Jev 1.13 | 60% | **3 / 2** | **81%** |
+   | Decision questions, Jev 1.13 | 60% | 3 / 2 | 81% |
+   | **Decision questions, OpenAI Decisions (gpt-6-luna)** | 71% | **0 / 2** | **100%** |
+
+   - OpenAI's Decisions API (public beta since 2026-10-06) is the most precise and best calibrated backend
+     (calibration error 0.07), and it is fast (p50 0.3 s) at about $0.00012 per message (input tokens only).
+     It missed the same 2 items as Jev, both Levy status posts that hide a stuck agent (a ticket waiting,
+     Chess not running). Haiku caught both.
 
    - The app's own classifier gained the most: 8 points of status accuracy, a third of the unnecessary
      interrupts, and it now misses nothing that needed Alex.
