@@ -107,6 +107,31 @@ describe("SlackAdapter", () => {
       expect(threads[0].messages[0].text).toBe("Hello from agent");
     });
 
+    it("skips a channel that no longer exists instead of failing the whole poll", async () => {
+      mockConversationsList.mockResolvedValue({
+        channels: [{ id: "CGONE", name: "deleted" }, { id: "C001", name: "general" }],
+        response_metadata: { next_cursor: "" },
+      });
+      const gone = Object.assign(new Error("An API error occurred: channel_not_found"), {
+        code: "slack_webapi_platform_error",
+        data: { ok: false, error: "channel_not_found" },
+      });
+      mockConversationsHistory.mockImplementation(async ({ channel }: { channel: string }) => {
+        if (channel === "CGONE") throw gone;
+        return { messages: [makeSlackMessage({ ts: "1700000001.000100" })], response_metadata: { next_cursor: "" } };
+      });
+
+      const threads = await adapter.readThreads(new Date("2024-01-01"));
+
+      expect(threads.map((t) => t.channelId)).toEqual(["C001"]);
+    });
+
+    it("still fails the poll on errors that aren't about one channel", async () => {
+      mockConversationsList.mockResolvedValue({ channels: [{ id: "C001", name: "general" }], response_metadata: { next_cursor: "" } });
+      mockConversationsHistory.mockRejectedValue(Object.assign(new Error("invalid_auth"), { data: { ok: false, error: "invalid_auth" } }));
+      await expect(adapter.readThreads(new Date("2024-01-01"))).rejects.toThrow("invalid_auth");
+    });
+
     it("should fetch thread replies for messages with reply_count > 0", async () => {
       mockConversationsList.mockResolvedValue({
         channels: [{ id: "C001", name: "general" }],

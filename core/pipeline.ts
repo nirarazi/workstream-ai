@@ -26,6 +26,7 @@ export interface ProcessResult {
 }
 
 export class Pipeline {
+  private catchUpLogged = false;
   private messagingAdapter: MessagingAdapter;
   private classifier: Classifier;
   private graph: ContextGraph;
@@ -317,7 +318,8 @@ export class Pipeline {
       if (since < catchUpFloor) clamped++;
       perChannelSince.set(cursor.channelId, since < catchUpFloor ? catchUpFloor : since);
     }
-    if (clamped > 0) {
+    if (clamped > 0 && !this.catchUpLogged) {
+      this.catchUpLogged = true;
       log.info(`${clamped} channel cursor(s) older than ${catchUpDays} day(s) — catching up from ${catchUpFloor.toISOString()} only`);
     }
 
