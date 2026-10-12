@@ -281,8 +281,8 @@ describe("Classifier", () => {
 
 describe("action_required_from → targetedAtOperator (with OperatorIdentityMap)", () => {
   const OPERATOR_MAP: OperatorIdentityMap = new Map([
-    ["slack", { userId: "U0ALFEVQ940", userName: "Nir Arazi" }],
-    ["jira", { userId: "nir@insuretax.com", userName: "Nir (CTO)" }],
+    ["slack", { userId: "U0OPERATOR1", userName: "Alex Rivera" }],
+    ["jira", { userId: "operator@example.com", userName: "Alex (CTO)" }],
   ]);
 
   it("action_required_from includes Slack operator ID → targetedAtOperator=true", async () => {
@@ -292,7 +292,7 @@ describe("action_required_from → targetedAtOperator (with OperatorIdentityMap)
       reason: "Needs operator review",
       workItemIds: ["AI-100"],
       title: "Review needed",
-      action_required_from: ["U0ALFEVQ940"],
+      action_required_from: ["U0OPERATOR1"],
       next_action: "Review and approve the PR",
     });
     const classifier = new Classifier(provider, SYSTEM_PROMPT, FEW_SHOT, undefined, undefined, OPERATOR_MAP);
@@ -300,7 +300,7 @@ describe("action_required_from → targetedAtOperator (with OperatorIdentityMap)
     const result = await classifier.classify("Please review this PR");
     expect(result.targetedAtOperator).toBe(true);
     expect(result.nextAction).toBe("Review and approve the PR");
-    expect(result.actionRequiredFrom).toEqual(["U0ALFEVQ940"]);
+    expect(result.actionRequiredFrom).toEqual(["U0OPERATOR1"]);
   });
 
   it("action_required_from includes Jira operator ID → targetedAtOperator=true", async () => {
@@ -310,7 +310,7 @@ describe("action_required_from → targetedAtOperator (with OperatorIdentityMap)
       reason: "Needs operator review",
       workItemIds: ["AI-100"],
       title: "Review needed",
-      action_required_from: ["nir@insuretax.com"],
+      action_required_from: ["operator@example.com"],
       next_action: "Review the ticket",
     });
     const classifier = new Classifier(provider, SYSTEM_PROMPT, FEW_SHOT, undefined, undefined, OPERATOR_MAP);
@@ -323,15 +323,15 @@ describe("action_required_from → targetedAtOperator (with OperatorIdentityMap)
     const provider = mockProvider({
       status: "blocked_on_human",
       confidence: 0.9,
-      reason: "Needs Guy to review",
+      reason: "Needs Dana to review",
       workItemIds: ["AI-100"],
       title: "Review needed",
-      action_required_from: ["UA2V04ZU2"],
-      next_action: "Guy should review",
+      action_required_from: ["U0TEAMMATE1"],
+      next_action: "Dana should review",
     });
     const classifier = new Classifier(provider, SYSTEM_PROMPT, FEW_SHOT, undefined, undefined, OPERATOR_MAP);
 
-    const result = await classifier.classify("Guy please review");
+    const result = await classifier.classify("Dana please review");
     expect(result.targetedAtOperator).toBe(false);
   });
 
@@ -430,7 +430,7 @@ describe("action_required_from → targetedAtOperator (with OperatorIdentityMap)
     });
     const classifier = new Classifier(provider, SYSTEM_PROMPT, FEW_SHOT, undefined, undefined, OPERATOR_MAP);
 
-    const result = await classifier.classify("Guy please review");
+    const result = await classifier.classify("Dana please review");
     // blocked_on_human with no named actor → operator is backstop, even if LLM says false
     expect(result.targetedAtOperator).toBe(true);
   });
@@ -442,7 +442,7 @@ describe("action_required_from → targetedAtOperator (with OperatorIdentityMap)
       reason: "Needs multiple reviewers",
       workItemIds: ["AI-100"],
       title: "Multi-review needed",
-      action_required_from: ["UA2V04ZU2", "U0ALFEVQ940", "UOTHERUSER"],
+      action_required_from: ["U0TEAMMATE1", "U0OPERATOR1", "UOTHERUSER"],
       next_action: "Multiple people need to review",
     });
     const classifier = new Classifier(provider, SYSTEM_PROMPT, FEW_SHOT, undefined, undefined, OPERATOR_MAP);
@@ -450,7 +450,7 @@ describe("action_required_from → targetedAtOperator (with OperatorIdentityMap)
     const result = await classifier.classify("Please everyone review this");
 
     expect(result.targetedAtOperator).toBe(true);
-    expect(result.actionRequiredFrom).toEqual(["UA2V04ZU2", "U0ALFEVQ940", "UOTHERUSER"]);
+    expect(result.actionRequiredFrom).toEqual(["U0TEAMMATE1", "U0OPERATOR1", "UOTHERUSER"]);
   });
 
   it("no action_required_from, no operator identity → falls back to targeted_at_operator boolean", async () => {
@@ -480,7 +480,7 @@ describe("action_required_from → targetedAtOperator (with OperatorIdentityMap)
     });
     const classifier = new Classifier(provider, SYSTEM_PROMPT, FEW_SHOT);
 
-    const result = await classifier.classify("Guy please review this");
+    const result = await classifier.classify("Dana please review this");
     // blocked_on_human without specific actor IDs → operator is backstop
     expect(result.targetedAtOperator).toBe(true);
   });
@@ -490,8 +490,8 @@ describe("action_required_from → targetedAtOperator (with OperatorIdentityMap)
 
 describe("Operator profile and sender context", () => {
   const OPERATOR_MAP: OperatorIdentityMap = new Map([
-    ["slack", { userId: "U0ALFEVQ940", userName: "Nir Arazi" }],
-    ["jira", { userId: "nir@insuretax.com", userName: "Nir (CTO)" }],
+    ["slack", { userId: "U0OPERATOR1", userName: "Alex Rivera" }],
+    ["jira", { userId: "operator@example.com", userName: "Alex (CTO)" }],
   ]);
 
   it("injects operator profile with all platform identities into system prompt", async () => {
@@ -514,8 +514,8 @@ describe("Operator profile and sender context", () => {
     const callArgs = (provider.classify as ReturnType<typeof vi.fn>).mock.calls[0];
     const systemPrompt = callArgs[1] as string;
     expect(systemPrompt).toContain("Operator Profile");
-    expect(systemPrompt).toContain("slack:U0ALFEVQ940");
-    expect(systemPrompt).toContain("jira:nir@insuretax.com");
+    expect(systemPrompt).toContain("slack:U0OPERATOR1");
+    expect(systemPrompt).toContain("jira:operator@example.com");
     expect(systemPrompt).toContain("CTO / Fleet operator");
     expect(systemPrompt).toContain("Manages a fleet of agents");
   });
@@ -883,10 +883,10 @@ describe("OpenAICompatibleProvider", () => {
     const mockResponse = {
       status: "blocked_on_human",
       confidence: 0.9,
-      reason: "Waiting for Guy to review",
+      reason: "Waiting for Dana to review",
       workItemIds: ["AI-100"],
       title: "PR review needed",
-      action_required_from: ["UA2V04ZU2"],
+      action_required_from: ["U0TEAMMATE1"],
       next_action: "Review and approve PR #716",
     };
 
@@ -906,7 +906,7 @@ describe("OpenAICompatibleProvider", () => {
     });
 
     const result = await provider.classify("test", "sys", []);
-    expect(result.action_required_from).toEqual(["UA2V04ZU2"]);
+    expect(result.action_required_from).toEqual(["U0TEAMMATE1"]);
     expect(result.next_action).toBe("Review and approve PR #716");
 
     fetchSpy.mockRestore();
@@ -942,7 +942,7 @@ describe("OpenAICompatibleProvider", () => {
       reason: "test",
       workItemIds: [],
       title: "test",
-      action_required_from: ["UA2V04ZU2", 123, null, "U0ALFEVQ940"],
+      action_required_from: ["U0TEAMMATE1", 123, null, "U0OPERATOR1"],
       next_action: "Fix the flaky test",
     };
 
@@ -962,7 +962,7 @@ describe("OpenAICompatibleProvider", () => {
     });
 
     const result = await provider.classify("test", "sys", []);
-    expect(result.action_required_from).toEqual(["UA2V04ZU2", "U0ALFEVQ940"]);
+    expect(result.action_required_from).toEqual(["U0TEAMMATE1", "U0OPERATOR1"]);
     expect(result.next_action).toBe("Fix the flaky test");
 
     fetchSpy.mockRestore();

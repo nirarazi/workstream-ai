@@ -133,14 +133,14 @@ describe("Stream", () => {
 
       // Work item blocked on someone else (targeted_at_operator = false)
       graph.upsertWorkItem({
-        id: "AI-2", source: "jira", title: "Blocked on Guy",
+        id: "AI-2", source: "jira", title: "Blocked on Dana",
         currentAtcStatus: "blocked_on_human", currentConfidence: 0.85,
       });
       graph.upsertThread({ id: "t2", channelId: "C1", platform: "slack", workItemId: "AI-2" });
       graph.linkThreadWorkItem("t2", "AI-2", "primary");
       graph.insertEvent({
         threadId: "t2", messageId: "m2", workItemId: "AI-2", agentId: "a1",
-        status: "blocked_on_human", confidence: 0.85, reason: "Blocked on Guy's review",
+        status: "blocked_on_human", confidence: 0.85, reason: "Blocked on Dana's review",
         timestamp: "2026-04-15T11:00:00Z", targetedAtOperator: false,
       });
 
@@ -203,7 +203,7 @@ describe("Stream", () => {
         nextAction: "Approve PR #716",
       };
       const operatorIdentities: OperatorIdentityMap = new Map([
-        ["slack", { userId: "U_OPERATOR", userName: "Nir" }],
+        ["slack", { userId: "U_OPERATOR", userName: "Alex" }],
       ]);
       const agentMap = new Map([["a1", "Byte"]]);
       const result = buildUnifiedStatus(workItem, blockEvent, operatorIdentities, agentMap);
@@ -220,19 +220,19 @@ describe("Stream", () => {
       const blockEvent: Event = {
         id: "e1", threadId: "t1", messageId: "m1", workItemId: "AI-100",
         agentId: "a1", status: "blocked_on_human", confidence: 0.9,
-        reason: "Needs Guy's review", rawText: "Waiting for Guy",
+        reason: "Needs Dana's review", rawText: "Waiting for Dana",
         timestamp: new Date(Date.now() - 130 * 60000).toISOString(),
         createdAt: new Date().toISOString(), entryType: "block",
         targetedAtOperator: false,
-        actionRequiredFrom: ["U_GUY123"],
+        actionRequiredFrom: ["U_DANA123"],
         nextAction: "Review PR #716",
       };
       const operatorIdentities: OperatorIdentityMap = new Map([
-        ["slack", { userId: "U_OPERATOR", userName: "Nir" }],
+        ["slack", { userId: "U_OPERATOR", userName: "Alex" }],
       ]);
-      const agentMap = new Map([["U_GUY123", "Guy"]]);
+      const agentMap = new Map([["U_DANA123", "Dana"]]);
       const result = buildUnifiedStatus(workItem, blockEvent, operatorIdentities, agentMap);
-      expect(result).toMatch(/Waiting on Guy · 2h \d+m/);
+      expect(result).toMatch(/Waiting on Dana · 2h \d+m/);
     });
 
     it("shows 'Needs your decision' when operator is action taker for needs_decision", () => {
@@ -253,7 +253,7 @@ describe("Stream", () => {
         nextAction: "Choose between 3 palette options",
       };
       const operatorIdentities: OperatorIdentityMap = new Map([
-        ["slack", { userId: "U_OPERATOR", userName: "Nir" }],
+        ["slack", { userId: "U_OPERATOR", userName: "Alex" }],
       ]);
       const agentMap = new Map<string, string>();
       const result = buildUnifiedStatus(workItem, blockEvent, operatorIdentities, agentMap);
@@ -270,19 +270,19 @@ describe("Stream", () => {
       const blockEvent: Event = {
         id: "e1", threadId: "t1", messageId: "m1", workItemId: "AI-100",
         agentId: "a1", status: "needs_decision", confidence: 0.9,
-        reason: "Guy needs to decide", rawText: "Decision needed",
+        reason: "Dana needs to decide", rawText: "Decision needed",
         timestamp: new Date(Date.now() - 90 * 60000).toISOString(),
         createdAt: new Date().toISOString(), entryType: "block",
         targetedAtOperator: false,
-        actionRequiredFrom: ["U_GUY123"],
+        actionRequiredFrom: ["U_DANA123"],
         nextAction: null,
       };
       const operatorIdentities: OperatorIdentityMap = new Map([
-        ["slack", { userId: "U_OPERATOR", userName: "Nir" }],
+        ["slack", { userId: "U_OPERATOR", userName: "Alex" }],
       ]);
-      const agentMap = new Map([["U_GUY123", "Guy"]]);
+      const agentMap = new Map([["U_DANA123", "Dana"]]);
       const result = buildUnifiedStatus(workItem, blockEvent, operatorIdentities, agentMap);
-      expect(result).toMatch(/Needs Guy's decision · 1h \d+m/);
+      expect(result).toMatch(/Needs Dana's decision · 1h \d+m/);
     });
 
     it("falls back to neutral 'Blocked' label when actionRequiredFrom is null", () => {
@@ -326,7 +326,7 @@ describe("Stream", () => {
         nextAction: null,
       };
       const operatorIdentities: OperatorIdentityMap = new Map([
-        ["slack", { userId: "U_OPERATOR", userName: "Nir" }],
+        ["slack", { userId: "U_OPERATOR", userName: "Alex" }],
       ]);
       const agentMap = new Map<string, string>();
       const result = buildUnifiedStatus(workItem, blockEvent, operatorIdentities, agentMap);

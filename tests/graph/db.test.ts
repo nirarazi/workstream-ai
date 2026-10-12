@@ -686,11 +686,11 @@ describe("Database", () => {
         rawText: "Please approve PR #716",
         timestamp: new Date().toISOString(),
         targetedAtOperator: true,
-        actionRequiredFrom: ["U_GUY123", "U_OPERATOR"],
+        actionRequiredFrom: ["U_DANA123", "U_OPERATOR"],
         nextAction: "Review and approve PR #716",
       });
 
-      expect(event.actionRequiredFrom).toEqual(["U_GUY123", "U_OPERATOR"]);
+      expect(event.actionRequiredFrom).toEqual(["U_DANA123", "U_OPERATOR"]);
       expect(event.nextAction).toBe("Review and approve PR #716");
     });
 
@@ -827,7 +827,7 @@ describe("Database", () => {
     it("classifies conversational bots as agent", () => {
       // Create an AI agent bot: varied messages, participates in threads with others
       graph.upsertAgent({ id: "U-levy", name: "Levy", platform: "slack", platformUserId: "U-levy", isBot: true });
-      graph.upsertAgent({ id: "U-human", name: "Nir", platform: "slack", platformUserId: "U-human", isBot: false });
+      graph.upsertAgent({ id: "U-human", name: "Alex", platform: "slack", platformUserId: "U-human", isBot: false });
       graph.upsertWorkItem({ id: "AI-100", source: "extracted", title: "Deployment task" });
 
       graph.upsertThread({ id: "t-conv1", channelId: "C-ops", channelName: "#ops", platform: "slack", workItemId: "AI-100", lastActivity: new Date().toISOString(), messageCount: 3 });
