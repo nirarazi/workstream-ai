@@ -185,6 +185,19 @@ accuracy on the reference fleet) has never been measured.
      - **Searchable history:** "why did we pick REST for the reports API?"
    - Decisions made by other humans (Dana) are also Catch-up material (6).
 
+8. **Reopen completed work items.** When a work item is `completed`, the pipeline stores every new
+   message on it as noise with confidence 0 and never classifies it (`core/pipeline.ts`, "Work item
+   already completed"). An agent reporting a regression, a failed deploy or a follow-up question on a
+   done ticket never reaches the inbox; in the first live run with the decision gate, 15 of ~200
+   messages were skipped this way. Proposal:
+   - Classify these messages like any other. A cheap pre-check (sender is an agent, or the text matches
+     failure/question patterns) can keep the cost down if needed.
+   - When a message on a completed item comes back `blocked_on_human` or `needs_decision`, reopen the
+     item and show it in the inbox with a "reopened" marker, so the operator knows it was done before.
+   - Only a human (or the task adapter, e.g. Jira moving back to In Progress) reopens without a
+     blocker; agent chatter after completion stays out of the inbox.
+   - Eval: add labelled post-completion messages to the eval set and count missed interrupts on them.
+
 **Local (offline) classification — findings from 2026-10-12, on an M4 with 16 GB:**
 - **Generative local models aren't viable on a typical laptop yet.**
   - Qwen3 8B: about 6 tokens/s; each message timed out.
@@ -202,19 +215,19 @@ accuracy on the reference fleet) has never been measured.
 
 ## Then — strategic
 
-8. **MCP over Streamable HTTP, on spec 2026-07-28.** The reference fleet runs on EC2, so the stdio-only
+9. **MCP over Streamable HTTP, on spec 2026-07-28.** The reference fleet runs on EC2, so the stdio-only
    push path never reaches it. Have `workstream_request_approval` block until the operator answers,
    using the Tasks extension or multi-round-trip requests.
-9. **Runtime sources beyond chat.** Read events from the OpenClaw gateway, Claude Code / Codex sessions
+10. **Runtime sources beyond chat.** Read events from the OpenClaw gateway, Claude Code / Codex sessions
    or OTel GenAI traces, which gives structured status and avoids Slack rate limits. Slack stays the
    channel for replies.
-10. **GitHub/Bitbucket task adapter.** Agent work mostly ends in a PR, so show PR state next to the item.
+11. **GitHub/Bitbucket task adapter.** Agent work mostly ends in a PR, so show PR state next to the item.
 
 ## Before open-sourcing
 
-11. **Self-contained desktop build.** Tauri currently starts the engine with `npx tsx` from the project
+12. **Self-contained desktop build.** Tauri currently starts the engine with `npx tsx` from the project
    root (`src-tauri/src/lib.rs`). Ship the engine as a bundled sidecar instead.
-12. **Update CLAUDE.md to match the product** (Stream view, Sidekick, Fleet Board, settings, folder
+13. **Update CLAUDE.md to match the product** (Stream view, Sidekick, Fleet Board, settings, folder
     layout, default model). Add the README, LICENSE, `docs/adapters.md` and `docs/mcp.md`.
 
 ## Cleanup
