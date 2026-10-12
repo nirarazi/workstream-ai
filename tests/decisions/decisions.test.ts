@@ -4,6 +4,7 @@ import { describe, it, expect, vi } from "vitest";
 import { concentration, normalize, validateQuestions, type QuestionSet } from "../../core/decisions/interface.js";
 import { LLMDecisionProvider, buildDecisionPrompt, parseDecisionResponse } from "../../core/decisions/providers/llm.js";
 import { TypeSafeDecisionProvider, toWireQuestion } from "../../core/decisions/providers/typesafe.js";
+import { OpenAIDecisionProvider, toOpenAIQuestion } from "../../core/decisions/providers/openai.js";
 import {
   NO_MATCH,
   buildClassificationQuestions,
@@ -204,5 +205,49 @@ describe("TypeSafeDecisionProvider via OpenRouter", () => {
     expect(url).toBe("https://openrouter.ai/api/alpha/decisions");
     expect(JSON.parse(init.body).model).toBe("typesafe/jev-1.13");
     expect(init.headers.authorization).toBe("Bearer or-key");
+  });
+});
+
+describe("OpenAIDecisionProvider", () => {
+  it("maps questions to the named-list wire format", () => {
+    expect(toOpenAIQuestion("refund", QUESTIONS.refund)).toEqual({ type: "predicate", name: "refund", instructions: "Wants a refund?" });
+    expect(toOpenAIQuestion("color", QUESTIONS.color)).toMatchObject({
+      type: "choice",
+      choices: [{ value: "red", description: "warm" }, { value: "blue", description: "cool" }],
+    });
+    expect(toOpenAIQuestion("urgency", QUESTIONS.urgency)).toMatchObject({ type: "score", levels: [{ label: "low" }, { label: "medium" }, { label: "high" }] });
+  });
+
+  it("sends the documented request and maps the response", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(jsonResponse({
+      model: "gpt-6-luna",
+      answers: [
+        { type: "choice", name: "color", choice: "red", confidence: 0.9, probabilities: [{ value: "red", probability: 0.95 }, { value: "blue", probability: 0.05 }] },
+        { type: "score", name: "urgency", score: 1.05, confidence: 0.8, probabilities: [{ value: 0, label: "low", probability: 0 }, { value: 1, label: "medium", probability: 0.95 }, { value: 2, label: "high", probability: 0.05 }] },
+        { type: "predicate", name: "refund", probability: 0.99 },
+      ],
+      usage: { input_tokens: 120, output_tokens: 0 },
+    }));
+    const provider = new OpenAIDecisionProvider({ apiKey: "k", fetchImpl });
+    const result = await provider.decide("charged twice", QUESTIONS);
+
+    const [url, init] = fetchImpl.mock.calls[0];
+    expect(url).toBe("https://api.openai.com/v1/decisions");
+    const body = JSON.parse(init.body);
+    expect(body).toMatchObject({ model: "gpt-6-luna", input: "charged twice" });
+    expect(body.questions.map((q: { name: string }) => q.name)).toEqual(["color", "urgency", "refund"]);
+
+    expect(result.answers.color).toMatchObject({ choice: "red", confidence: 0.9 });
+    expect(result.answers.color.probabilities.red).toBeCloseTo(0.95);
+    expect(result.answers.urgency.probabilities).toEqual([0, 0.95, 0.05]);
+    expect(result.answers.refund).toEqual({ type: "yesno", probability: 0.99 });
+    expect(result.usage).toEqual({ inputTokens: 120, outputTokens: 0 });
+  });
+
+  it("surfaces refusals and missing answers as errors", async () => {
+    const refused = new OpenAIDecisionProvider({ apiKey: "k", fetchImpl: vi.fn().mockResolvedValue(jsonResponse({ answers: [{ type: "refusal", name: "refund", refusal: "no" }] })) });
+    await expect(refused.decide("x", { refund: QUESTIONS.refund })).rejects.toThrow(/refused/);
+    const empty = new OpenAIDecisionProvider({ apiKey: "k", fetchImpl: vi.fn().mockResolvedValue(jsonResponse({ answers: [] })) });
+    await expect(empty.decide("x", { refund: QUESTIONS.refund })).rejects.toThrow(/missing answer/);
   });
 });

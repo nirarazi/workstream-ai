@@ -6,6 +6,7 @@
 //   classifier   today's LLM classifier (config/prompts/classify.yaml) on the configured provider
 //   llm          DecisionProvider questions answered by an LLM (configured provider unless overridden)
 //   typesafe     DecisionProvider questions answered by Jev (TYPESAFE_API_KEY, else via OpenRouter)
+//   openai       DecisionProvider questions answered by OpenAI's Decisions API (OPENAI_API_KEY)
 // Options:
 //   --base-url URL  --model NAME  --api-key-env VAR   override the LLM endpoint (classifier, llm)
 //   --reasoning-effort LEVEL                           e.g. none, to turn off thinking in local models
@@ -23,6 +24,7 @@ import { Classifier } from "../classifier/index.js";
 import { classifyWithDecisions, type DecisionClassificationInput } from "../decisions/classification.js";
 import { LLMDecisionProvider } from "../decisions/providers/llm.js";
 import { TypeSafeDecisionProvider } from "../decisions/providers/typesafe.js";
+import { OpenAIDecisionProvider } from "../decisions/providers/openai.js";
 import type { DecisionProvider } from "../decisions/interface.js";
 import type { OperatorIdentityMap, ThreadContext } from "../types.js";
 import { loadItemContext } from "./context.js";
@@ -155,8 +157,14 @@ function makeBackend(name: string, config: Config, root: string): { label: strin
         : TypeSafeDecisionProvider.viaOpenRouter(config.classifier.provider.apiKey ?? "", model);
       return { label: `decisions · typesafe · ${model}${direct ? "" : " (openrouter)"}`, predict: viaDecisions(provider, config, root) };
     }
+    case "openai": {
+      const apiKey = process.env.OPENAI_API_KEY;
+      if (!apiKey) throw new Error("openai backend needs OPENAI_API_KEY");
+      const provider = new OpenAIDecisionProvider({ apiKey });
+      return { label: "decisions · openai · gpt-6-luna", predict: viaDecisions(provider, config, root) };
+    }
     default:
-      throw new Error(`Unknown backend "${name}" (expected production, classifier, llm, typesafe)`);
+      throw new Error(`Unknown backend "${name}" (expected production, classifier, llm, typesafe, openai)`);
   }
 }
 
