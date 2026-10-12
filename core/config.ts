@@ -61,6 +61,8 @@ const ConfigSchema = z.object({
     initialDays: z.number(),
     maxThreadsPerPoll: z.number(),
     maxActiveThreadRepolls: z.number().optional(),
+    /** After a pause, catch up at most this many days, however old a channel's cursor is. Default: initialDays. */
+    maxCatchUpDays: z.number().optional(),
   }).optional(),
   continuation: z.object({
     strategy: z.string(),
