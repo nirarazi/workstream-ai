@@ -61,6 +61,22 @@ accuracy on the reference fleet) has never been measured.
        infra and agent misbehaviour go to Alex.
      - That means filling in the operator's remit in config, and asking the "targeted" question with
        ownership in the state instead of forcing every block into the inbox.
+   **Third run (2026-10-12): with Alex's remit in `operator.context`.** In the decision path, the remit now
+   decides whether a block reaches the operator, instead of every block going to the inbox.
+
+   | Backend | Status acc. | Unnecessary / missed interrupts | Interrupt precision |
+   |---|---|---|---|
+   | Current classifier, Haiku 5.5 | 65% | 34 / 5 | 23% |
+   | Decision questions, Haiku 5.5 | 75% | **6 / 2** (was 28 / 2) | **68%** |
+   | Decision questions, Jev 1.13 | 61% | **5 / 4** (was 52 / 1) | 69% |
+
+   - The remit cut unnecessary interrupts by about 80%. For Haiku that came without missing anything more.
+   - The current classifier barely changed, because its code still sends any block with no named person
+     (`action_required_from: []`) to the operator. **The live app uses this classifier**, so it doesn't get
+     this improvement until that rule changes too.
+   - Haiku's status accuracy fell from 79.3% to 75.2%. The run had one parse error (fixed since), and the
+     wording of the status question changed. The dip is within run-to-run noise on 150 items; check it again
+     with thread context.
    - Nothing reaches the 80% target yet.
    - Splitting the classifier into separate questions helped Haiku a lot (57% → 74%).
    - Jev is the fastest and best calibrated, but weak on `noise` (28% recall).

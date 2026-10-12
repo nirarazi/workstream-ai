@@ -54,6 +54,12 @@ function getBackoffMs(attempt: number): number {
   return Math.min(base + jitter, MAX_BACKOFF_MS);
 }
 
+/** A completion's text plus the token usage the endpoint reported, when it reports any. */
+export interface Completion {
+  text: string;
+  usage?: { inputTokens: number; outputTokens: number };
+}
+
 export class OpenAICompatibleProvider implements ModelProvider {
   readonly name: string;
   private readonly baseUrl: string;
@@ -106,11 +112,20 @@ export class OpenAICompatibleProvider implements ModelProvider {
     systemPrompt: string,
     fewShotExamples: Array<{ role: string; content: string }> = [],
   ): Promise<string> {
+    return (await this.completeWithUsage(message, systemPrompt, fewShotExamples)).text;
+  }
+
+  /** Like complete(), plus the token usage the endpoint reported (if any). */
+  async completeWithUsage(
+    message: string,
+    systemPrompt: string,
+    fewShotExamples: Array<{ role: string; content: string }> = [],
+  ): Promise<Completion> {
     let lastError: unknown;
 
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
       try {
-        const rawText = this.isAnthropic
+        const completion = this.isAnthropic
           ? await this.callAnthropic(message, systemPrompt, fewShotExamples)
           : await this.callOpenAI(message, systemPrompt, fewShotExamples);
 
@@ -119,7 +134,7 @@ export class OpenAICompatibleProvider implements ModelProvider {
           log.info("LLM recovered after backoff");
         }
         this._backoff = { active: false, retryCount: 0, nextRetryAt: null, lastError: null };
-        return rawText;
+        return completion;
       } catch (error) {
         lastError = error;
 
@@ -171,7 +186,7 @@ export class OpenAICompatibleProvider implements ModelProvider {
     message: string,
     systemPrompt: string,
     fewShotExamples: Array<{ role: string; content: string }>,
-  ): Promise<string> {
+  ): Promise<Completion> {
     const url = `${this.baseUrl}/messages`;
     const headers: Record<string, string> = {
       "content-type": "application/json",
@@ -210,15 +225,19 @@ export class OpenAICompatibleProvider implements ModelProvider {
 
     const json = (await response.json()) as {
       content: Array<{ text: string }>;
+      usage?: { input_tokens?: number; output_tokens?: number };
     };
-    return json.content[0].text;
+    return {
+      text: json.content[0].text,
+      usage: json.usage && { inputTokens: json.usage.input_tokens ?? 0, outputTokens: json.usage.output_tokens ?? 0 },
+    };
   }
 
   private async callOpenAI(
     message: string,
     systemPrompt: string,
     fewShotExamples: Array<{ role: string; content: string }>,
-  ): Promise<string> {
+  ): Promise<Completion> {
     const url = `${this.baseUrl}/chat/completions`;
     const headers: Record<string, string> = {
       "content-type": "application/json",
@@ -242,7 +261,7 @@ export class OpenAICompatibleProvider implements ModelProvider {
       ];
     };
 
-    const doCall = async (useSystemRole: boolean): Promise<string> => {
+    const doCall = async (useSystemRole: boolean): Promise<Completion> => {
       const body = {
         model: this.model,
         messages: makeMessages(useSystemRole),
@@ -271,8 +290,12 @@ export class OpenAICompatibleProvider implements ModelProvider {
 
       const json = (await response.json()) as {
         choices: Array<{ message: { content: string } }>;
+        usage?: { prompt_tokens?: number; completion_tokens?: number };
       };
-      return json.choices[0].message.content;
+      return {
+        text: json.choices[0].message.content,
+        usage: json.usage && { inputTokens: json.usage.prompt_tokens ?? 0, outputTokens: json.usage.completion_tokens ?? 0 },
+      };
     };
 
     return doCall(true);

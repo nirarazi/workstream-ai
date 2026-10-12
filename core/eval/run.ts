@@ -12,7 +12,8 @@
 //   --concurrency N (default 4)   --limit N   --dataset PATH
 // Writes per-item results to eval-data/runs/ for later comparison.
 
-import { mkdirSync, writeFileSync } from "node:fs";
+import BetterSqlite3 from "better-sqlite3";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { findProjectRoot, loadConfig, type Config } from "../config.js";
 import { Classifier } from "../classifier/index.js";
@@ -20,6 +21,7 @@ import { classifyWithDecisions, type DecisionClassificationInput } from "../deci
 import { LLMDecisionProvider } from "../decisions/providers/llm.js";
 import { TypeSafeDecisionProvider } from "../decisions/providers/typesafe.js";
 import type { DecisionProvider } from "../decisions/interface.js";
+import type { OperatorIdentityMap } from "../types.js";
 import { defaultDatasetPath, labeled, loadDataset, type EvalItem } from "./dataset.js";
 import { formatReport, scoreRun, type Prediction } from "./metrics.js";
 
@@ -37,6 +39,23 @@ function endpoint(config: Config) {
     model: arg("model") ?? config.classifier.provider.model,
     apiKey: keyEnv ? process.env[keyEnv] : config.classifier.provider.apiKey,
   };
+}
+
+/**
+ * The live app gets the operator's identity from the Slack connection. The eval has none, so look up
+ * the human whose name matches config.operator.name. Without it the classifier skips the operator profile
+ * (and the remit in it) entirely.
+ */
+function operatorIdentities(config: Config, root: string): OperatorIdentityMap | null {
+  const name = config.operator?.name;
+  const dbPath = resolve(root, "workstream.db");
+  if (!name || !existsSync(dbPath)) return null;
+  const db = new BetterSqlite3(dbPath, { readonly: true });
+  const row = db.prepare("SELECT platform, platform_user_id FROM agents WHERE is_bot = 0 AND name = ? LIMIT 1").get(name) as
+    | { platform: string; platform_user_id: string }
+    | undefined;
+  db.close();
+  return row ? new Map([[row.platform, { userId: row.platform_user_id, userName: name }]]) : null;
 }
 
 function decisionInput(item: EvalItem, config: Config): DecisionClassificationInput {
@@ -78,11 +97,13 @@ function makeBackend(name: string, config: Config, root: string): { label: strin
         { ...config, classifier: { ...config.classifier, provider: ep } },
         root,
       );
+      const identities = operatorIdentities(config, root);
+      if (!identities) process.stderr.write("No operator identity found (set operator.name in config/local.yaml) — remit not applied\n");
       return {
         label: `classifier · ${ep.model}`,
         predict: async (item) => {
           const started = Date.now();
-          const c = await classifier.classify(item.message, undefined, undefined, {
+          const c = await classifier.classify(item.message, undefined, identities, {
             senderName: item.senderName,
             senderType: item.senderType,
             channelName: item.channelName,

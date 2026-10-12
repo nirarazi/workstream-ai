@@ -78,7 +78,7 @@ export function buildClassificationQuestions(input: DecisionClassificationInput)
   const status: ChoiceQuestion = {
     type: "choice",
     instructions:
-      "What is the current state of the work this message is about, from the sender's point of view? Choose blocked_on_human when the sender waits for something specific, and needs_decision when the sender presents options.",
+      "What is the current state of the work this message is about, from the sender's point of view? Choose blocked_on_human when a human has to do or inspect something (including approving a draft or reviewing a PR), and needs_decision when a human only has to choose a direction.",
     options: STATUS_OPTIONS,
   };
 
@@ -123,9 +123,10 @@ export async function classifyWithDecisions(
     confidence: answers.status.confidence,
     statusProbabilities: answers.status.probabilities as Record<StatusCategory, number>,
     targetedProbability: answers.targeted.probability,
-    // Mirror the LLM classifier's rule: the operator is the backstop for every block.
+    // Without a remit, the operator is the backstop for every block. With one, the remit decides:
+    // a block another person owns shouldn't interrupt the operator.
     targetedAtOperator:
-      status === "blocked_on_human" || status === "needs_decision"
+      !input.operatorContext && (status === "blocked_on_human" || status === "needs_decision")
         ? true
         : answers.targeted.probability >= targetedThreshold,
     usage: result.usage,

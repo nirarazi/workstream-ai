@@ -16,7 +16,11 @@ import {
 } from "../interface.js";
 
 /** Sends one prompt and returns the raw text reply. */
-export type CompleteFn = (message: string, systemPrompt: string) => Promise<string>;
+/** Returns the raw text, or the text plus token usage when the transport reports it. */
+export type CompleteFn = (
+  message: string,
+  systemPrompt: string,
+) => Promise<string | { text: string; usage?: { inputTokens: number; outputTokens: number } }>;
 
 export function buildDecisionPrompt(questions: QuestionSet): string {
   const lines: string[] = [
@@ -56,8 +60,26 @@ function stripFences(text: string): string {
   return t.replace(/^```(?:json)?\s*\n?/, "").replace(/\n?```\s*$/, "");
 }
 
+/** Parses the first top-level JSON object, ignoring any text the model adds after it. */
+function parseFirstObject(text: string): unknown {
+  const start = text.indexOf("{");
+  if (start < 0) return JSON.parse(text);
+  let depth = 0;
+  let inString = false;
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i];
+    if (inString) {
+      if (ch === "\\") i++;
+      else if (ch === '"') inString = false;
+    } else if (ch === '"') inString = true;
+    else if (ch === "{") depth++;
+    else if (ch === "}" && --depth === 0) return JSON.parse(text.slice(start, i + 1));
+  }
+  return JSON.parse(text);
+}
+
 export function parseDecisionResponse<Qs extends QuestionSet>(questions: Qs, rawText: string): Answers<Qs> {
-  const parsed = JSON.parse(stripFences(rawText)) as Record<string, { probabilities?: unknown; probability?: unknown }>;
+  const parsed = parseFirstObject(stripFences(rawText)) as Record<string, { probabilities?: unknown; probability?: unknown }>;
   const out: Record<string, unknown> = {};
 
   for (const [key, q] of Object.entries(questions)) {
@@ -105,7 +127,7 @@ export class LLMDecisionProvider implements DecisionProvider {
   static fromEndpoint(config: { baseUrl: string; model: string; apiKey?: string }): LLMDecisionProvider {
     const transport = new OpenAICompatibleProvider({ name: "decisions-llm", ...config });
     return new LLMDecisionProvider(
-      (message, system) => transport.complete(message, system),
+      (message, system) => transport.completeWithUsage(message, system),
       config.model,
       `llm:${config.model}`,
     );
@@ -114,9 +136,11 @@ export class LLMDecisionProvider implements DecisionProvider {
   async decide<Qs extends QuestionSet>(state: string, questions: Qs): Promise<DecisionResult<Qs>> {
     validateQuestions(questions);
     const started = Date.now();
-    const raw = await this.complete(`<state>\n${state}\n</state>`, buildDecisionPrompt(questions));
+    const completion = await this.complete(`<state>\n${state}\n</state>`, buildDecisionPrompt(questions));
+    const { text, usage } = typeof completion === "string" ? { text: completion, usage: undefined } : completion;
     return {
-      answers: parseDecisionResponse(questions, raw),
+      answers: parseDecisionResponse(questions, text),
+      usage,
       latencyMs: Date.now() - started,
       model: this.model,
     };
