@@ -67,6 +67,16 @@ describe("applyDecision", () => {
     expect(out.reason).toContain("status set by decision model");
   });
 
+  it("never lets the gate turn a notification bot's message into a block the LLM didn't see", () => {
+    const noise = { ...LLM_RESULT, status: "noise" as const, entryType: "noise" as const };
+    const block = { status: "blocked_on_human" as const, confidence: 0.4, targetedAtOperator: true, statusProbabilities: {} as never, targetedProbability: 0.9, latencyMs: 1 };
+    expect(applyDecision(noise, block, "notification").status).toBe("noise");
+    // Agents are unaffected, and the gate can still veto a notification block.
+    expect(applyDecision(noise, block, "agent").status).toBe("blocked_on_human");
+    const vetoed = applyDecision({ ...LLM_RESULT, status: "blocked_on_human", entryType: "block" }, { ...block, status: "noise", targetedAtOperator: false }, "notification");
+    expect(vetoed.status).toBe("noise");
+  });
+
   it("drops next action and actors when the decision says nothing is needed", () => {
     const out = applyDecision({ ...LLM_RESULT, status: "blocked_on_human", entryType: "block", actionRequiredFrom: ["U1"] }, {
       status: "noise", confidence: 0.9, targetedAtOperator: false,
