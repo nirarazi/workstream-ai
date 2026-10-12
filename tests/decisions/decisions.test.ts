@@ -65,10 +65,16 @@ describe("LLMDecisionProvider", () => {
     expect(answers.refund.probability).toBe(0.3);
   });
 
-  it("falls back safely on missing or malformed answers", () => {
-    const answers = parseDecisionResponse(QUESTIONS, "{}");
-    expect(answers.color.confidence).toBeCloseTo(0); // uniform
-    expect(answers.refund.probability).toBe(0.5);
+  it("throws instead of guessing when an answer is missing or unreadable", () => {
+    expect(() => parseDecisionResponse(QUESTIONS, "{}")).toThrow(/color, urgency, refund/);
+    expect(() => parseDecisionResponse({ refund: QUESTIONS.refund }, '{"refund":{"probability":"maybe"}}')).toThrow(/refund/);
+  });
+
+  it("accepts the shapes small models drift into", () => {
+    const answers = parseDecisionResponse(QUESTIONS, '{"color":{"red":"0.0","blue":"1.0"},"urgency":[0,0,1],"refund":"0.8"}');
+    expect(answers.color.choice).toBe("blue");
+    expect(answers.urgency.score).toBeCloseTo(2);
+    expect(answers.refund.probability).toBeCloseTo(0.8);
   });
 
   it("wraps state in tags and passes the decision prompt", async () => {

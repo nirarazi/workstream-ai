@@ -78,16 +78,25 @@ function parseFirstObject(text: string): unknown {
   return JSON.parse(text);
 }
 
+/**
+ * Parses the model's answers. Tolerates the shapes small models drift into — the distribution without
+ * the "probabilities" wrapper, numbers written as strings, a bare number for yes/no — but throws when an
+ * answer is missing or unreadable, so a failed call is never mistaken for a uniform guess.
+ */
 export function parseDecisionResponse<Qs extends QuestionSet>(questions: Qs, rawText: string): Answers<Qs> {
-  const parsed = parseFirstObject(stripFences(rawText)) as Record<string, { probabilities?: unknown; probability?: unknown }>;
+  const parsed = parseFirstObject(stripFences(rawText)) as Record<string, unknown>;
   const out: Record<string, unknown> = {};
+  const unreadable: string[] = [];
 
   for (const [key, q] of Object.entries(questions)) {
-    const a = parsed[key] ?? {};
+    const a = parsed?.[key];
+    const wrapped = a && typeof a === "object" && !Array.isArray(a) ? (a as Record<string, unknown>) : undefined;
     if (q.type === "choice") {
       const keys = Object.keys(q.options);
-      const raw = (a.probabilities ?? {}) as Record<string, unknown>;
-      const probs = normalize(keys.map((k) => Number(raw[k] ?? 0)));
+      const raw = (wrapped?.probabilities ?? wrapped ?? {}) as Record<string, unknown>;
+      const values = keys.map((k) => Number(raw[k]));
+      if (!values.some((v) => Number.isFinite(v) && v > 0)) { unreadable.push(key); continue; }
+      const probs = normalize(values.map((v) => (Number.isFinite(v) ? v : 0)));
       let best = 0;
       probs.forEach((p, i) => { if (p > probs[best]) best = i; });
       out[key] = {
@@ -97,8 +106,10 @@ export function parseDecisionResponse<Qs extends QuestionSet>(questions: Qs, raw
         probabilities: Object.fromEntries(keys.map((k, i) => [k, probs[i]])),
       };
     } else if (q.type === "score") {
-      const raw = Array.isArray(a.probabilities) ? a.probabilities : [];
-      const probs = normalize(q.levels.map((_, i) => Number(raw[i] ?? 0)));
+      const raw = Array.isArray(wrapped?.probabilities) ? wrapped.probabilities : Array.isArray(a) ? a : [];
+      const values = q.levels.map((_, i) => Number(raw[i]));
+      if (!values.some((v) => Number.isFinite(v) && v > 0)) { unreadable.push(key); continue; }
+      const probs = normalize(values.map((v) => (Number.isFinite(v) ? v : 0)));
       out[key] = {
         type: "score",
         score: probs.reduce((acc, p, i) => acc + p * i, 0),
@@ -106,10 +117,12 @@ export function parseDecisionResponse<Qs extends QuestionSet>(questions: Qs, raw
         probabilities: probs,
       };
     } else {
-      const p = Number(a.probability);
-      out[key] = { type: "yesno", probability: Number.isFinite(p) ? Math.max(0, Math.min(1, p)) : 0.5 };
+      const p = Number(wrapped ? wrapped.probability : a);
+      if (a === undefined || a === null || !Number.isFinite(p)) { unreadable.push(key); continue; }
+      out[key] = { type: "yesno", probability: Math.max(0, Math.min(1, p)) };
     }
   }
+  if (unreadable.length > 0) throw new Error(`Unreadable decision answer for: ${unreadable.join(", ")}`);
   return out as Answers<Qs>;
 }
 
