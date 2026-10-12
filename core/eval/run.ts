@@ -8,6 +8,7 @@
 //   typesafe     DecisionProvider questions answered by Jev (TYPESAFE_API_KEY, else via OpenRouter)
 // Options:
 //   --base-url URL  --model NAME  --api-key-env VAR   override the LLM endpoint (classifier, llm)
+//   --reasoning-effort LEVEL                           e.g. none, to turn off thinking in local models
 //   --typesafe-model NAME                              default jev-latest
 //   --concurrency N (default 4)   --limit N   --dataset PATH
 //   --no-thread-context          classify each message alone (no work item or earlier thread messages)
@@ -39,7 +40,9 @@ function endpoint(config: Config) {
   return {
     baseUrl: arg("base-url") ?? config.classifier.provider.baseUrl,
     model: arg("model") ?? config.classifier.provider.model,
-    apiKey: keyEnv ? process.env[keyEnv] : config.classifier.provider.apiKey,
+    // A --base-url override points somewhere else, so don't send the configured key there.
+    apiKey: keyEnv ? process.env[keyEnv] : arg("base-url") ? undefined : config.classifier.provider.apiKey,
+    reasoningEffort: arg("reasoning-effort") ?? config.classifier.provider.reasoningEffort,
   };
 }
 
