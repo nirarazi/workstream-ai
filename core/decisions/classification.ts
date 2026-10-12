@@ -118,11 +118,24 @@ export function buildClassificationQuestions(input: DecisionClassificationInput)
   return { status, targeted, workItem };
 }
 
+export interface DecisionThresholds {
+  /** Inbox membership when a remit is set: P(targeted) at or above this. Default 0.5. */
+  targetedThreshold?: number;
+  /**
+   * Treat the message as actionable when P(blocked_on_human) + P(needs_decision) reaches this, even if a
+   * non-actionable status is individually more likely. Default: plain argmax.
+   */
+  interruptThreshold?: number;
+}
+
+const ACTIONABLE_STATUSES: StatusCategory[] = ["blocked_on_human", "needs_decision"];
+
 export async function classifyWithDecisions(
   provider: DecisionProvider,
   input: DecisionClassificationInput,
-  targetedThreshold = 0.5,
+  thresholds: DecisionThresholds = {},
 ): Promise<DecisionClassification> {
+  const targetedThreshold = thresholds.targetedThreshold ?? 0.5;
   const { workItem, ...base } = buildClassificationQuestions(input);
   const questions: QuestionSet = workItem ? { ...base, workItem } : base;
   const result = await provider.decide(buildState(input), questions);
@@ -132,7 +145,15 @@ export async function classifyWithDecisions(
     workItem?: ChoiceAnswer;
   };
 
-  const status = answers.status.choice as StatusCategory;
+  const probs = answers.status.probabilities as Record<StatusCategory, number>;
+  let status = answers.status.choice as StatusCategory;
+  if (thresholds.interruptThreshold != null) {
+    const actionableMass = ACTIONABLE_STATUSES.reduce((sum, s) => sum + (probs[s] ?? 0), 0);
+    const pool = actionableMass >= thresholds.interruptThreshold
+      ? ACTIONABLE_STATUSES
+      : (Object.keys(probs) as StatusCategory[]).filter((s) => !ACTIONABLE_STATUSES.includes(s));
+    status = pool.reduce((best, s) => ((probs[s] ?? 0) > (probs[best] ?? 0) ? s : best), pool[0]);
+  }
   const out: DecisionClassification = {
     status,
     confidence: answers.status.confidence,

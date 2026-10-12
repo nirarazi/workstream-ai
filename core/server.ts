@@ -7,6 +7,7 @@ import { loadConfig, findProjectRoot, resetConfig, type Config } from "./config.
 import { Database } from "./graph/db.js";
 import { ContextGraph } from "./graph/index.js";
 import { Classifier, createProvider, loadPrompt, buildFewShotMessages, buildOperatorContext } from "./classifier/index.js";
+import { createDecisionGate } from "./decisions/gate.js";
 import { UsageTracker } from "./usage/tracker.js";
 import { DefaultExtractor } from "./graph/extractors/default.js";
 import { WorkItemLinker } from "./graph/linker.js";
@@ -982,8 +983,12 @@ export function createApp(state: EngineState): Hono {
       // --- LLM ---
       if (body.llm) {
         if (body.llm.baseUrl || body.llm.model) {
+          // Merge, so settings the UI doesn't manage (mode, decisions, reasoningEffort) survive a save
+          const existingClassifier = (localConfig.classifier ?? {}) as Record<string, unknown>;
           localConfig.classifier = {
+            ...existingClassifier,
             provider: {
+              ...((existingClassifier.provider ?? {}) as Record<string, unknown>),
               baseUrl: body.llm.baseUrl ?? state.config.classifier.provider.baseUrl,
               model: body.llm.model ?? state.config.classifier.provider.model,
             },
@@ -1074,7 +1079,16 @@ export function createApp(state: EngineState): Hono {
 
       // Write .env (secrets only — not watched by Vite, see vite.config.ts envDir)
       if (envLines.length > 0) {
-        writeFileSync(resolve(projectRoot, ".env"), envLines.join("\n") + "\n", "utf-8");
+        // Update only the keys this form manages; keep every other line (other secrets, comments)
+        const envPath = resolve(projectRoot, ".env");
+        const updated = new Map(envLines.map((l) => [l.slice(0, l.indexOf("=")), l]));
+        const kept = existsSync(envPath)
+          ? readFileSync(envPath, "utf-8").split("\n").filter((l) => {
+              const key = l.slice(0, l.indexOf("=")).trim();
+              return l.trim() !== "" && !(l.includes("=") && updated.has(key));
+            })
+          : [];
+        writeFileSync(envPath, [...kept, ...updated.values()].join("\n") + "\n", "utf-8");
         log.info("Wrote .env");
 
         // Set env vars in current process
@@ -1183,6 +1197,7 @@ export function createApp(state: EngineState): Hono {
       const operatorRole = state.config.operator?.role ?? "";
       state.classifier = new Classifier(newUsageTracker, newPrompt.system, newFewShot, undefined, operatorRole, state.operatorIdentities, buildOperatorContext(state.config));
       if (newLimiters.llm) state.classifier.setRateLimiter(newLimiters.llm);
+      state.classifier.setDecisionGate(createDecisionGate(state.config, newUsageTracker));
 
       // Restart pipeline if we have a messaging adapter
       if (state.messagingAdapter) {
@@ -1372,6 +1387,7 @@ async function main(): Promise<void> {
   const operatorRole = config.operator?.role ?? "";
   const classifier = new Classifier(usageTracker, prompt.system, fewShot, undefined, operatorRole, null, buildOperatorContext(config));
   classifier.setRateLimiter(rateLimiters.llm);
+  classifier.setDecisionGate(createDecisionGate(config, usageTracker));
   const extractor = new DefaultExtractor({
     ticketPatterns: config.extractors.ticketPatterns,
     prPatterns: config.extractors.prPatterns,

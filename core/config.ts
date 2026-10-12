@@ -28,6 +28,22 @@ const ConfigSchema = z.object({
       reasoningEffort: z.string().optional(),
     }),
     confidenceThreshold: z.number(),
+    /**
+     * "llm" (default): the LLM classifier decides everything.
+     * "decisions": a decision model decides status and inbox membership; the LLM still writes titles,
+     * next actions and work item links. Runs both in parallel.
+     */
+    mode: z.enum(["llm", "decisions"]).optional().default("llm"),
+    decisions: z.object({
+      /** openai = OpenAI Decisions API; typesafe = Jev (direct, or via OpenRouter); llm = decision questions on the classifier's own endpoint */
+      provider: z.enum(["openai", "typesafe", "llm"]),
+      model: z.string().optional(),
+      apiKey: z.string().optional(),
+      /** Surface an item when P(blocked_on_human) + P(needs_decision) reaches this. Lower = fewer misses, more interrupts. */
+      interruptThreshold: z.number().min(0).max(1).optional().default(0.5),
+      inputCostPerMillion: z.number().nullable().optional(),
+      outputCostPerMillion: z.number().nullable().optional(),
+    }).optional(),
   }),
   taskAdapter: z.object({
     enabled: z.boolean(),

@@ -94,6 +94,11 @@ accuracy on the reference fleet) has never been measured.
    - After adding "an agent reported as stuck, waiting or not running is mine, even inside a routine status
      post" to the remit, the result was 1 unnecessary / 1 missed. With the status threshold lowered to 0.3
      it was 4 unnecessary / 0 missed, against Haiku's 11 / 0.
+   - **Shipped as `classifier.mode: decisions`** (2026-10-12). The decision model decides status and inbox
+     membership, while the LLM runs in parallel for titles, next actions, links and breakdowns. If the
+     decision call fails, the LLM result stands. Usage is recorded under caller "decisions".
+     Measured end to end through the app's own classifier path (Haiku + Luna @0.3): 4 unnecessary /
+     0 missed, calibration error 0.04, p50 3.0 s (bounded by Haiku).
 
    - The app's own classifier gained the most: 8 points of status accuracy, a third of the unnecessary
      interrupts, and it now misses nothing that needed Alex.

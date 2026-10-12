@@ -211,3 +211,49 @@ describe("GET /api/status — llmUsage", () => {
     state.db.close();
   });
 });
+
+describe("POST /api/setup preserves what the form doesn't manage", () => {
+  afterEach(() => {
+    vi.doUnmock("node:fs");
+  });
+
+  it("keeps other .env keys and the classifier's decision settings", async () => {
+    const files = new Map<string, string>();
+    const at = (suffix: string) => [...files.keys()].find((k) => k.endsWith(suffix))!;
+    vi.doMock("node:fs", async (importOriginal) => {
+      const real = await importOriginal<typeof import("node:fs")>();
+      return {
+        ...real,
+        existsSync: (p: string) => files.has(String(p)) || (!String(p).endsWith(".env") && !String(p).endsWith("local.yaml") && real.existsSync(p)),
+        readFileSync: (p: string, enc?: BufferEncoding) => files.get(String(p)) ?? real.readFileSync(p, enc),
+        writeFileSync: (p: string, data: string) => { files.set(String(p), data); },
+        mkdirSync: () => undefined,
+      };
+    });
+    const { resolve } = await import("node:path");
+    const { findProjectRoot } = await import("../../core/config.js");
+    const root = findProjectRoot();
+    files.set(resolve(root, ".env"), "OPENAI_API_KEY=sk-keep\nWORKSTREAM_LLM_API_KEY=old\n");
+    files.set(resolve(root, "config", "local.yaml"),
+      "classifier:\n  provider:\n    baseUrl: https://openrouter.ai/api/v1\n    model: old\n  mode: decisions\n  decisions:\n    provider: openai\n    interruptThreshold: 0.3\noperator:\n  name: Alex\n  role: CTO\n  context: remit\n");
+
+    const state = makeState();
+    const app = createApp(state);
+    await app.request("/api/setup", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ llm: { apiKey: "new", baseUrl: "https://openrouter.ai/api/v1", model: "anthropic/claude-haiku-5.5" } }),
+    });
+    state.db.close();
+
+    const env = files.get(at(".env"))!;
+    expect(env).toContain("OPENAI_API_KEY=sk-keep");
+    expect(env).toContain("WORKSTREAM_LLM_API_KEY=new");
+    expect(env).not.toContain("WORKSTREAM_LLM_API_KEY=old");
+    const yaml = files.get(at("local.yaml"))!;
+    expect(yaml).toContain("mode: decisions");
+    expect(yaml).toContain("interruptThreshold: 0.3");
+    expect(yaml).toContain("model: anthropic/claude-haiku-5.5");
+    expect(yaml).toContain("context: remit");
+  });
+});

@@ -124,7 +124,7 @@ function makeBackend(name: string, config: Config, root: string): { label: strin
       const identities = operatorIdentities(config, root);
       if (!identities) process.stderr.write("No operator identity found (set operator.name in config/local.yaml) — remit not applied\n");
       return {
-        label: `classifier · ${ep.model}`,
+        label: `classifier · ${ep.model}${config.classifier.mode === "decisions" && config.classifier.decisions ? ` + ${config.classifier.decisions.provider} gate @${config.classifier.decisions.interruptThreshold}` : ""}`,
         predict: async (item) => {
           const started = Date.now();
           const c = await classifier.classify(item.message, undefined, identities, {
