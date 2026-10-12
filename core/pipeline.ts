@@ -35,6 +35,7 @@ export class Pipeline {
   private config?: Config;
   private intervalHandle: ReturnType<typeof setInterval> | null = null;
   private running = false;
+  private polling = false;
   private recentContentHashes = new Map<string, Classification>();
   private readonly MAX_CONTENT_HASHES = 1000;
   private operatorIdentities: OperatorIdentityMap | null = null;
@@ -73,12 +74,17 @@ export class Pipeline {
 
     // Set up the polling interval
     const intervalSeconds = this.config?.messaging?.pollInterval ?? DEFAULT_POLL_INTERVAL;
+    // A catch-up poll can outlast the interval; overlapping polls multiply Slack calls into rate limits.
     this.intervalHandle = setInterval(async () => {
+      if (this.polling) return;
+      this.polling = true;
       try {
         const r = await this.processOnce();
         log.info("Poll complete", r);
       } catch (err) {
         log.error("Poll cycle failed", err);
+      } finally {
+        this.polling = false;
       }
     }, intervalSeconds * 1000);
 
