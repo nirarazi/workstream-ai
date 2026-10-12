@@ -663,6 +663,28 @@ describe("Pipeline", () => {
 
       pipeline.stop();
     });
+
+    it("skips interval ticks while a poll is still running", async () => {
+      vi.useFakeTimers();
+      try {
+        vi.mocked(adapter.readThreads).mockResolvedValueOnce([]);
+        await pipeline.start();
+
+        // The next poll hangs (e.g. a long catch-up); later ticks must not start more polls
+        let release!: (t: Thread[]) => void;
+        vi.mocked(adapter.readThreads).mockReturnValueOnce(new Promise((r) => (release = r)));
+        await vi.advanceTimersByTimeAsync(30_000 * 4);
+        expect(adapter.readThreads).toHaveBeenCalledTimes(2);
+
+        vi.mocked(adapter.readThreads).mockResolvedValue([]);
+        release([]);
+        await vi.advanceTimersByTimeAsync(30_000);
+        expect(adapter.readThreads).toHaveBeenCalledTimes(3);
+      } finally {
+        pipeline.stop();
+        vi.useRealTimers();
+      }
+    });
   });
 
   describe("thread-to-work-item inheritance", () => {
