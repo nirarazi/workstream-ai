@@ -73,8 +73,35 @@ accuracy on the reference fleet) has never been measured.
        "unnecessary" interrupts. The "operator is the backstop for every block" rule doesn't fit a fleet
        with two humans. This needs per-channel or per-person ownership.
 
-5. **Operator persona** (plan `2026-04-17-operator-persona.md`): add "Not for me" and correction capture.
+5. **Operator persona and remit** (plan `docs/superpowers/plans/2026-04-17-operator-persona.md`): add "Not for me" and correction capture.
    Every correction becomes a new labeled eval item and a live count of unnecessary interrupts.
+   - **The remit is written by each person and never hardcoded.** The 2026-10-11 eval shows why it matters:
+     21 of 28 unnecessary interrupts were blocks owned by another human.
+   - **Who owns an item depends on what kind of problem it is, not only the channel.** Alex owns agent and
+     infra failures even inside #partners, so a channel rule alone misses items.
+   - **Helpers for writing it:**
+     - **A first draft from usage:** channels the person posts in, items they acted on, items they dismissed.
+     - **A fixed structure:** *I own… / not mine… / escalate to me anyway when…*
+     - **Plain-language remit plus optional hard rules** ("#partners → Dana"), so the model only
+       handles what the rules can't.
+     - **Edits suggested from "not for me" corrections**, as in the existing plan.
+     - **A score against the person's own answers:** "this remit agrees with 26 of your 30 past
+       answers; here are the 4 it gets wrong."
+   - **When a remit changes:**
+     - **Only targeting is re-decided; statuses stay**, since whether something is a block doesn't
+       depend on who owns it. "Is this for me?" is its own question, so a change re-asks only that,
+       or runs only the hard rules.
+     - **Re-decide open items, never history.** Re-evaluate open blocks and decisions (and recent
+       Catch-up). Past events keep their targeting and record the remit version that produced it.
+     - **Preview before saving:** "6 items would leave your inbox and go to Dana, 1 would join it",
+       with a "this is wrong" link on each.
+     - **Version the eval labels too.** Labels encode the remit in mind at labeling time, so a big
+       remit change shows up as stale labels rather than as model errors.
+   - **Several humans:** each has their own remit. Items nobody owns fall back to the main operator,
+     marked "unowned". A run of unowned items shows a remit gap, and the app suggests whose remit
+     should cover it.
+   - **Replaces** the decision code's rule that every block goes to the operator's inbox
+     (`classifyWithDecisions`).
 6. **Catch-up (FYI news that needs no action).** The inbox covers what needs action; nothing covers
    *what happened*, so the operator still opens Slack to check whether the deploy went out or what
    happened overnight. "Noise" is ~65% of classified events (2,274 of ~3,500), and the app shows none of it.
