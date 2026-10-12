@@ -91,6 +91,9 @@ accuracy on the reference fleet) has never been measured.
      (calibration error 0.07), and it is fast (p50 0.3 s) at about $0.00012 per message (input tokens only).
      It missed the same 2 items as Jev, both Atlas status posts that hide a stuck agent (a ticket waiting,
      Quill not running). Haiku caught both.
+   - After adding "an agent reported as stuck, waiting or not running is mine, even inside a routine status
+     post" to the remit, the result was 1 unnecessary / 1 missed. With the status threshold lowered to 0.3
+     it was 4 unnecessary / 0 missed, against Haiku's 11 / 0.
 
    - The app's own classifier gained the most: 8 points of status accuracy, a third of the unnecessary
      interrupts, and it now misses nothing that needed Alex.
