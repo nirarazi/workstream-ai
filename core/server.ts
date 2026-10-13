@@ -6,7 +6,7 @@ import { createLogger } from "./logger.js";
 import { loadConfig, findProjectRoot, resetConfig, type Config } from "./config.js";
 import { Database } from "./graph/db.js";
 import { ContextGraph } from "./graph/index.js";
-import { Classifier, createProvider, loadPrompt, buildFewShotMessages, buildOperatorContext } from "./classifier/index.js";
+import { Classifier, createProvider, loadPrompt, buildFewShotMessages, buildOperatorContext, hasRemit } from "./classifier/index.js";
 import { createDecisionGate } from "./decisions/gate.js";
 import { UsageTracker } from "./usage/tracker.js";
 import { DefaultExtractor } from "./graph/extractors/default.js";
@@ -963,7 +963,7 @@ export function createApp(state: EngineState): Hono {
 
     try {
       const projectRoot = findProjectRoot();
-      const { writeFileSync, mkdirSync } = await import("node:fs");
+      const { writeFileSync, mkdirSync, chmodSync } = await import("node:fs");
       const { resolve } = await import("node:path");
       const { stringify: toYaml } = await import("yaml");
 
@@ -985,13 +985,18 @@ export function createApp(state: EngineState): Hono {
         if (body.llm.baseUrl || body.llm.model) {
           // Merge, so settings the UI doesn't manage (mode, decisions, reasoningEffort) survive a save
           const existingClassifier = (localConfig.classifier ?? {}) as Record<string, unknown>;
+          const existingProvider = { ...((existingClassifier.provider ?? {}) as Record<string, unknown>) };
+          const baseUrl = body.llm.baseUrl ?? state.config.classifier.provider.baseUrl;
+          const model = body.llm.model ?? state.config.classifier.provider.model;
+          // A key entered here goes to .env; a literal key left in local.yaml would override it
+          if (body.llm.apiKey) delete existingProvider.apiKey;
+          // Tuning for one endpoint or model doesn't carry over to another
+          if (baseUrl !== state.config.classifier.provider.baseUrl || model !== state.config.classifier.provider.model) {
+            delete existingProvider.reasoningEffort;
+          }
           localConfig.classifier = {
             ...existingClassifier,
-            provider: {
-              ...((existingClassifier.provider ?? {}) as Record<string, unknown>),
-              baseUrl: body.llm.baseUrl ?? state.config.classifier.provider.baseUrl,
-              model: body.llm.model ?? state.config.classifier.provider.model,
-            },
+            provider: { ...existingProvider, baseUrl, model },
           };
         }
         if (body.llm.apiKey) envLines.push(`WORKSTREAM_LLM_API_KEY=${body.llm.apiKey}`);
@@ -1073,6 +1078,11 @@ export function createApp(state: EngineState): Hono {
         }
       }
 
+      // A line break in a value would write extra lines into .env
+      if (envLines.some((l) => /[\r\n]/.test(l))) {
+        return c.json({ error: "Setup values can't contain line breaks" }, 400);
+      }
+
       // Write config/local.yaml
       writeFileSync(resolve(configDir, "local.yaml"), toYaml(localConfig), "utf-8");
       log.info("Wrote config/local.yaml", { model: (localConfig as any)?.classifier?.provider?.model, projectRoot });
@@ -1088,7 +1098,8 @@ export function createApp(state: EngineState): Hono {
               return l.trim() !== "" && !(l.includes("=") && updated.has(key));
             })
           : [];
-        writeFileSync(envPath, [...kept, ...updated.values()].join("\n") + "\n", "utf-8");
+        writeFileSync(envPath, [...kept, ...updated.values()].join("\n") + "\n", { encoding: "utf-8", mode: 0o600 });
+        chmodSync(envPath, 0o600); // secrets: readable by the operator only, even if the file already existed
         log.info("Wrote .env");
 
         // Set env vars in current process
@@ -1195,7 +1206,7 @@ export function createApp(state: EngineState): Hono {
       const newPrompt = loadPrompt(findProjectRoot());
       const newFewShot = buildFewShotMessages(newPrompt.few_shot_examples);
       const operatorRole = state.config.operator?.role ?? "";
-      state.classifier = new Classifier(newUsageTracker, newPrompt.system, newFewShot, undefined, operatorRole, state.operatorIdentities, buildOperatorContext(state.config));
+      state.classifier = new Classifier(newUsageTracker, newPrompt.system, newFewShot, undefined, operatorRole, state.operatorIdentities, buildOperatorContext(state.config), hasRemit(state.config));
       if (newLimiters.llm) state.classifier.setRateLimiter(newLimiters.llm);
       state.classifier.setDecisionGate(createDecisionGate(state.config, newUsageTracker));
 
@@ -1385,7 +1396,7 @@ async function main(): Promise<void> {
   const prompt = loadPrompt(projectRoot);
   const fewShot = buildFewShotMessages(prompt.few_shot_examples);
   const operatorRole = config.operator?.role ?? "";
-  const classifier = new Classifier(usageTracker, prompt.system, fewShot, undefined, operatorRole, null, buildOperatorContext(config));
+  const classifier = new Classifier(usageTracker, prompt.system, fewShot, undefined, operatorRole, null, buildOperatorContext(config), hasRemit(config));
   classifier.setRateLimiter(rateLimiters.llm);
   classifier.setDecisionGate(createDecisionGate(config, usageTracker));
   const extractor = new DefaultExtractor({

@@ -58,9 +58,14 @@ const DIM = "\x1b[2m";
 const BOLD = "\x1b[1m";
 const RESET = "\x1b[0m";
 
+/** Slack text is untrusted: drop control characters so a message can't send terminal escape codes. */
+function clean(text: string | null | undefined): string {
+  return (text ?? "").replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, "");
+}
+
 function oneLine(m: ContextMessage, max = 220): string {
-  const text = m.text.replace(/\s+/g, " ").trim();
-  return `${m.sender}: ${text.length > max ? text.slice(0, max) + "…" : text}`;
+  const text = clean(m.text).replace(/\s+/g, " ").trim();
+  return `${clean(m.sender)}: ${text.length > max ? text.slice(0, max) + "…" : text}`;
 }
 
 /** Prints the work item and earlier thread messages; returns the messages that came after. */
@@ -73,8 +78,8 @@ function renderContext(eventId: string): ContextMessage[] {
   if (ctx.workItems.length === 0) console.log(`${BOLD}work item:${RESET} none linked`);
   for (const w of ctx.workItems) {
     const meta = [w.status, w.assignee && `assignee ${w.assignee}`].filter(Boolean).join(" · ");
-    console.log(`${BOLD}work item:${RESET} ${w.id.startsWith("thread:") ? "(no ticket)" : w.id}  ${w.title}${meta ? `  ${DIM}[${meta}]${RESET}` : ""}`);
-    if (w.url) console.log(`           ${DIM}${w.url}${RESET}`);
+    console.log(`${BOLD}work item:${RESET} ${w.id.startsWith("thread:") ? "(no ticket)" : clean(w.id)}  ${clean(w.title)}${meta ? `  ${DIM}[${clean(meta)}]${RESET}` : ""}`);
+    if (w.url) console.log(`           ${DIM}${clean(w.url)}${RESET}`);
   }
   console.log("");
   if (ctx.root) console.log(`${DIM}  thread start  ${oneLine(ctx.root)}\n  …${RESET}`);
@@ -87,14 +92,15 @@ function render(): void {
   const item = queue[idx];
   const done = items.filter((i) => i.label?.source === "human" || (i.label && !i.label.source)).length;
   console.clear();
-  console.log(`[${idx + 1}/${queue.length} in queue · ${done}/${items.length} human-labeled]  ${item.senderName} (${item.senderType}) in #${item.channelName}  ${item.timestamp}\n`);
+  console.log(`[${idx + 1}/${queue.length} in queue · ${done}/${items.length} human-labeled]  ${clean(item.senderName)} (${item.senderType}) in #${clean(item.channelName)}  ${item.timestamp}\n`);
   const after = renderContext(item.id);
-  console.log(item.message.length > 2500 ? item.message.slice(0, 2500) + "\n…(truncated)" : item.message);
+  const message = clean(item.message);
+  console.log(message.length > 2500 ? message.slice(0, 2500) + "\n…(truncated)" : message);
   for (const m of after) console.log(`${DIM}  after   ${oneLine(m)}${RESET}`);
   console.log("\n" + "─".repeat(60));
   console.log(`live classifier: ${item.production.status} (${item.production.confidence.toFixed(2)}), inbox=${item.production.targetedAtOperator}`);
   if (item.label?.source === "draft") {
-    console.log(`draft label:     ${item.label.status}, inbox=${item.label.targetedAtOperator}${item.label.note ? `  (${item.label.note})` : ""}`);
+    console.log(`draft label:     ${item.label.status}, inbox=${item.label.targetedAtOperator}${item.label.note ? `  (${clean(item.label.note)})` : ""}`);
   }
   console.log("");
   STATUSES.forEach((s, i) => console.log(`  ${i + 1}  ${s === status ? "●" : "○"} ${s}`));
