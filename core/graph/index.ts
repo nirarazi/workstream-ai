@@ -1208,6 +1208,7 @@ export class ContextGraph {
     windowMinutes?: number;  // default 30
     limit?: number;          // default 5
     excludeThreadId?: string; // exclude the current message's thread
+    before?: string;         // the message's timestamp; the window ends here (default: now)
   }): Array<{
     workItemId: string;
     workItemTitle: string;
@@ -1217,7 +1218,10 @@ export class ContextGraph {
   }> {
     const windowMinutes = params.windowMinutes ?? 30;
     const limit = params.limit ?? 5;
-    const windowStart = new Date(Date.now() - windowMinutes * 60 * 1000).toISOString();
+    // Measured from the message, not the clock: during a catch-up, "the last 30 minutes" of now is empty.
+    const windowEndMs = params.before ? new Date(params.before).getTime() : Date.now();
+    const windowStart = new Date(windowEndMs - windowMinutes * 60 * 1000).toISOString();
+    const windowEnd = new Date(windowEndMs).toISOString();
 
     const baseSQL = `
       SELECT
@@ -1232,7 +1236,7 @@ export class ContextGraph {
       LEFT JOIN agents a ON e.agent_id = a.id
       WHERE t.channel_id = ?
         AND t.message_count <= 1
-        AND e.timestamp > ?
+        AND e.timestamp > ? AND e.timestamp <= ?
         AND e.work_item_id IS NOT NULL
         AND wi.merged_into IS NULL
     `;
@@ -1246,13 +1250,13 @@ export class ContextGraph {
         ORDER BY e.timestamp DESC
         LIMIT ?
       `;
-      args = [params.channelId, windowStart, params.excludeThreadId, limit];
+      args = [params.channelId, windowStart, windowEnd, params.excludeThreadId, limit];
     } else {
       sql = baseSQL + `
         ORDER BY e.timestamp DESC
         LIMIT ?
       `;
-      args = [params.channelId, windowStart, limit];
+      args = [params.channelId, windowStart, windowEnd, limit];
     }
 
     const rows = this.db.db.prepare(sql).all(...args) as Array<{
