@@ -74,11 +74,12 @@ export default function StreamView({
       const [inbox, allActive, dismissed] = await Promise.all([
         fetchInbox(),
         fetchAllActive(),
-        fetchDismissed(),
+        // The Dismissed tab is secondary: if it fails, keep the last list rather than stall the inbox
+        fetchDismissed().catch(() => null),
       ]);
       setNeedsMeItems(inbox.items);
       setAllActiveItems(allActive.items);
-      setDismissedItems(dismissed.items);
+      if (dismissed) setDismissedItems(dismissed.items);
       setError(null);
       setLastSyncAt(new Date());
       setSyncError(false);
@@ -149,7 +150,7 @@ export default function StreamView({
 
       const res = await mergeWorkItems(targetId, sourceId);
       setUndoState({
-        message: `Merged into "${[...needsMeItems, ...allActiveItems].find((i) => i.workItem.id === targetId)?.workItem.title ?? targetId}"`,
+        message: `Merged into "${[...needsMeItems, ...allActiveItems, ...dismissedItems].find((i) => i.workItem.id === targetId)?.workItem.title ?? targetId}"`,
         sourceId: res.record.sourceId,
       });
 
@@ -161,7 +162,7 @@ export default function StreamView({
       console.error("Merge failed", err);
       setMergingId(null);
     }
-  }, [needsMeItems, allActiveItems, poll]);
+  }, [needsMeItems, allActiveItems, dismissedItems, poll]);
 
   // Undo handler
   const handleUndo = useCallback(async () => {

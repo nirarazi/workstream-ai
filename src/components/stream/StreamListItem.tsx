@@ -113,10 +113,11 @@ export default function StreamListItem({ item, selected, actionState, resolving,
       <div className="text-[10px] text-gray-600 mt-0.5">
         {showDismissal && workItem.dismissedAt && (
           <span className="mr-1 text-gray-500">
-            {workItem.dismissReason === "expired" ? "Expired" : "Dismissed"}{" "}
             {(() => {
               const rel = formatRelativeTime(new Date(workItem.dismissedAt));
-              return rel === "now" ? "just now" : `${rel} ago`;
+              // An expired item's dismissedAt is its last message, so say how long it has been quiet
+              if (workItem.dismissReason === "expired") return `Expired · quiet ${rel === "now" ? "briefly" : rel}`;
+              return `Dismissed ${rel === "now" ? "just now" : `${rel} ago`}`;
             })()} ·
           </span>
         )}

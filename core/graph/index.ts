@@ -424,12 +424,19 @@ export class ContextGraph {
    * Auto-dismisses Needs-me items with no new message for `days` (reason "expired"). Pinned and currently
    * snoozed items are left alone. Like an operator dismissal, a new message aimed at the operator brings
    * the item back. Returns the number of items expired.
+   *
+   * dismissed_at is the item's last message time, not now: a backlog is ingested over several polls, and
+   * a message sent after that time must still bring the item back even if it's ingested after expiry.
    */
   expireInactiveItems(days: number, now: Date = new Date()): number {
     const cutoff = new Date(now.getTime() - days * 24 * 60 * 60 * 1000).toISOString();
     const result = this.db.db
       .prepare(`
-        UPDATE work_items SET dismissed_at = ?, dismiss_reason = 'expired'
+        UPDATE work_items SET dismissed_at = (
+          SELECT MAX(e.timestamp) FROM events e
+          WHERE e.work_item_id = work_items.id
+             OR e.thread_id IN (SELECT thread_id FROM thread_work_items WHERE work_item_id = work_items.id)
+        ), dismiss_reason = 'expired'
         WHERE id IN (
           SELECT wi.id FROM work_items wi
           WHERE wi.current_atc_status IN ('blocked_on_human', 'needs_decision')
@@ -450,7 +457,7 @@ export class ContextGraph {
             ))
         )
       `)
-      .run(now.toISOString(), now.toISOString(), cutoff);
+      .run(now.toISOString(), cutoff);
     return result.changes;
   }
 
@@ -1292,6 +1299,8 @@ export class ContextGraph {
       LEFT JOIN threads t ON e.thread_id = t.id
       WHERE wi.dismissed_at IS NOT NULL
         AND wi.merged_into IS NULL
+        -- finished since (approved, closed, marked noise): nothing left to set aside
+        AND (wi.current_atc_status IS NULL OR wi.current_atc_status NOT IN ('completed', 'noise'))
         AND NOT EXISTS (
           SELECT 1 FROM events e3
           WHERE (e3.work_item_id = wi.id
@@ -1300,6 +1309,7 @@ export class ContextGraph {
             AND e3.timestamp > wi.dismissed_at
         )
       ORDER BY wi.dismissed_at DESC
+      LIMIT 200
     `,
       )
       .all() as Array<Record<string, unknown>>;

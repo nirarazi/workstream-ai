@@ -404,6 +404,7 @@ export function createApp(state: EngineState): Hono {
               rawText: body.message,
               timestamp: new Date().toISOString(),
               entryType: "decision",
+              targetedAtOperator: false, // the operator's own reply never waits on the operator
             });
           }
         }
@@ -1087,8 +1088,11 @@ export function createApp(state: EngineState): Hono {
 
       // --- Inbox ---
       if (body.inbox) {
-        const days = body.inbox.expireAfterDays;
-        localConfig.inbox = { expireAfterDays: typeof days === "number" && days > 0 ? days : null };
+        const days = body.inbox.expireAfterDays ?? null;
+        if (days !== null && !(Number.isInteger(days) && days >= 1 && days <= 3650)) {
+          return c.json({ error: "inbox.expireAfterDays must be a whole number of days from 1 to 3650, or null" }, 400);
+        }
+        localConfig.inbox = { expireAfterDays: days };
       }
 
       // A line break in a value would write extra lines into .env

@@ -78,6 +78,7 @@ export class ActionHandler {
       rawText: message ?? "",
       timestamp: new Date().toISOString(),
       entryType: "decision",
+      targetedAtOperator: false,
     });
   }
 

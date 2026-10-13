@@ -10,6 +10,8 @@ import {
 } from "../lib/api";
 import AdapterFieldGroup from "./AdapterFieldGroup";
 
+const MAX_EXPIRE_DAYS = 3650;
+
 interface SetupProps {
   onComplete: () => void;
 }
@@ -101,6 +103,8 @@ export default function Setup({ onComplete }: SetupProps): JSX.Element {
 
   // Inbox: auto-dismiss after N days of no activity ("" = never)
   const [expireAfterDays, setExpireAfterDays] = useState<string>("");
+  // Only send the setting once it's known (loaded or typed), so a failed load can't save over it
+  const [inboxKnown, setInboxKnown] = useState(false);
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -174,6 +178,7 @@ export default function Setup({ onComplete }: SetupProps): JSX.Element {
         if (prefill.inbox?.expireAfterDays != null) {
           setExpireAfterDays(String(prefill.inbox.expireAfterDays));
         }
+        setInboxKnown(true);
       })
       .catch(() => {});
   }, []);
@@ -279,8 +284,13 @@ export default function Setup({ onComplete }: SetupProps): JSX.Element {
         payload.rateLimits = rl;
       }
 
-      const days = parseFloat(expireAfterDays);
-      payload.inbox = { expireAfterDays: Number.isFinite(days) && days > 0 ? days : null };
+      if (inboxKnown) {
+        const days = expireAfterDays.trim() === "" ? null : Number(expireAfterDays);
+        if (days !== null && !(Number.isInteger(days) && days >= 1 && days <= MAX_EXPIRE_DAYS)) {
+          throw new Error(`Auto-dismiss must be a whole number of days from 1 to ${MAX_EXPIRE_DAYS}, or empty`);
+        }
+        payload.inbox = { expireAfterDays: days };
+      }
 
       await postSetup(payload);
       onComplete();
@@ -652,10 +662,14 @@ export default function Setup({ onComplete }: SetupProps): JSX.Element {
               id="expire-after-days"
               type="number"
               min={1}
+              max={MAX_EXPIRE_DAYS}
               step={1}
               placeholder="Never"
               value={expireAfterDays}
-              onChange={(e) => setExpireAfterDays(e.target.value)}
+              onChange={(e) => {
+                setExpireAfterDays(e.target.value);
+                setInboxKnown(true);
+              }}
               className={inputClass}
             />
           </div>

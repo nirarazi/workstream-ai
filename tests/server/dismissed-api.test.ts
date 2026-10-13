@@ -131,6 +131,42 @@ describe("dismissed items and expiry", () => {
     expect(inboxIds()).toEqual(["NAP"]);
   });
 
+  it("brings an expired item back for a message sent after its last one, even if ingested after expiry", () => {
+    seed("LATE", "blocked_on_human", daysAgo(20));
+    graph.expireInactiveItems(14, NOW);
+    expect(dismissedIds()).toEqual(["LATE"]);
+
+    // A backlog poll ingests yesterday's request only now, after expiry ran
+    message("LATE", daysAgo(1));
+
+    expect(inboxIds()).toEqual(["LATE"]);
+    expect(dismissedIds()).toEqual([]);
+  });
+
+  it("leaves finished items out of Dismissed", () => {
+    seed("DONE", "blocked_on_human", daysAgo(3));
+    graph.dismissWorkItem("DONE");
+    graph.upsertWorkItem({ id: "DONE", source: "jira", currentAtcStatus: "completed" });
+    expect(dismissedIds()).toEqual([]);
+  });
+
+  it("keeps an item dismissed when the operator replies to it", async () => {
+    seed("REPLY", "blocked_on_human", daysAgo(3));
+    graph.dismissWorkItem("REPLY");
+    const state = makeState(graph, db);
+    state.messagingAdapter = { replyToThread: vi.fn().mockResolvedValue(undefined) };
+
+    const res = await createApp(state).request("/api/reply", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ threadId: "T-REPLY", channelId: "C001", message: "on it", workItemId: "REPLY" }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(inboxIds()).toEqual([]);
+    expect(dismissedIds()).toEqual(["REPLY"]);
+  });
+
   it("GET /api/stream/dismissed lists dismissed items, newest dismissal first, with the reason", async () => {
     seed("A", "blocked_on_human", daysAgo(20));
     seed("B", "blocked_on_human", daysAgo(1));
