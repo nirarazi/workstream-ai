@@ -266,6 +266,25 @@ describe("POST /api/setup preserves what the form doesn't manage", () => {
     expect(yaml).not.toContain("reasoningEffort");
   });
 
+  it("rejects an auto-dismiss period that isn't 1 to 3650 whole days", async () => {
+    const writes: string[] = [];
+    vi.doMock("node:fs", async (importOriginal) => {
+      const real = await importOriginal<typeof import("node:fs")>();
+      return { ...real, existsSync: () => false, writeFileSync: (p: string) => { writes.push(String(p)); }, mkdirSync: () => undefined, chmodSync: () => undefined };
+    });
+    for (const expireAfterDays of [0.0001, 0, -3, 1e308, "14"]) {
+      const state = makeState();
+      const res = await createApp(state).request("/api/setup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ inbox: { expireAfterDays } }),
+      });
+      state.db.close();
+      expect(res.status, String(expireAfterDays)).toBe(400);
+    }
+    expect(writes).toEqual([]);
+  });
+
   it("rejects values with line breaks instead of writing extra .env lines", async () => {
     const writes: string[] = [];
     vi.doMock("node:fs", async (importOriginal) => {

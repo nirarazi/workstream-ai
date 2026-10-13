@@ -115,7 +115,7 @@ const ConfigSchema = z.object({
   }),
   inbox: z.object({
     /** Auto-dismiss Needs-me items with no new message for this many days. null = never (default). */
-    expireAfterDays: z.number().positive().nullable(),
+    expireAfterDays: z.preprocess((v) => (v === 0 ? null : v), z.number().int().min(1).max(3650).nullable()),
   }).optional().default({ expireAfterDays: null }),
   llmBudget: z.object({
     dailyBudget: z.number().nullable(),
