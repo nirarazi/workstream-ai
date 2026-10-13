@@ -129,14 +129,17 @@ export class Pipeline {
     // Oldest first, then cap: adapters return newest first, and capping before sorting dropped the oldest
     // threads behind a cursor that had already moved past them.
     const threadStart = (t: Thread) => t.messages[0]?.timestamp ?? t.lastActivity;
-    const sortedThreads = [...threads].sort((a, b) => threadStart(a).localeCompare(threadStart(b)));
+    // Threads with every message already classified (re-read at a cursor boundary) don't take a slot.
+    const sortedThreads = threads
+      .filter((t) => t.messages.some((m) => !this.graph.hasEvent(m.id, t.id)))
+      .sort((a, b) => threadStart(a).localeCompare(threadStart(b)));
     const cappedThreads = maxThreads > 0 ? sortedThreads.slice(0, maxThreads) : sortedThreads;
 
     // Channels with threads left for a later poll: their cursor must stay before the first one skipped.
     const deferredChannels = new Set(sortedThreads.slice(cappedThreads.length).map((t) => t.channelId));
 
-    if (threads.length > cappedThreads.length) {
-      log.info(`Capped threads from ${threads.length} to ${cappedThreads.length} (maxThreadsPerPoll=${maxThreads})`);
+    if (sortedThreads.length > cappedThreads.length) {
+      log.info(`Capped threads with new messages from ${sortedThreads.length} to ${cappedThreads.length} (maxThreadsPerPoll=${maxThreads})`);
     }
 
     // Track thread IDs covered by this channel history poll
@@ -293,6 +296,31 @@ export class Pipeline {
       this.validPrefixes = (this.config?.taskAdapter?.ticketPrefixes ?? []).map(p => p.toUpperCase());
     }
     return this.validPrefixes;
+  }
+
+  /**
+   * The operator's own message is never something the operator has to act on: they just acted, so the
+   * next move is someone else's. Without this, "any news on this?" came back blocked and targeted, and
+   * kept the item in the operator's inbox with their own message as the reason.
+   */
+  private fromOperator(message: Message, classification: Classification): Classification {
+    const operatorIds = new Set([...(this.operatorIdentities?.values() ?? [])].map((id) => id.userId));
+    if (!operatorIds.has(message.userId)) return classification;
+    // "@Dana please approve X" from the operator is still blocked — on Dana. Keep that status; just untarget it.
+    const namesSomeoneElse = (classification.actionRequiredFrom ?? []).some((id) => !operatorIds.has(id));
+    const waitingOnOperator =
+      (classification.status === "blocked_on_human" || classification.status === "needs_decision") && !namesSomeoneElse;
+    return {
+      ...classification,
+      targetedAtOperator: false,
+      ...(waitingOnOperator
+        ? {
+            status: "in_progress" as const,
+            entryType: classification.entryType === "block" ? "progress" as const : classification.entryType,
+            reason: `${classification.reason} [operator's own message: not waiting on the operator]`,
+          }
+        : {}),
+    };
   }
 
   private isValidWorkItemId(id: string): boolean {
@@ -516,7 +544,10 @@ export class Pipeline {
         .slice(-THREAD_CONTEXT_MESSAGES)
         .map((m) => ({ senderName: m.userName, text: m.text })),
     };
-    const classification = await this.classifier.classify(message.text, candidateContext, this.operatorIdentities, senderContext, this.getValidPrefixes(), channelContext, threadContext);
+    const classification = this.fromOperator(
+      message,
+      await this.classifier.classify(message.text, candidateContext, this.operatorIdentities, senderContext, this.getValidPrefixes(), channelContext, threadContext),
+    );
 
     // Separate LLM-suggested IDs into verified (match an extracted ID) and unverified
     const extractedSet = new Set(extractedIds);

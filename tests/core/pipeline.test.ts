@@ -446,6 +446,20 @@ describe("Pipeline", () => {
       expect(graph.setPollCursor).toHaveBeenCalledWith("C-1", "2026-03-30T12:00:00.000Z");
     });
 
+    it("doesn't spend the per-poll cap on threads that are already fully classified", async () => {
+      const done = makeThread({ id: "t-done" }, [makeMessage({ id: "m-done", threadId: "t-done", timestamp: "2026-03-30T09:00:00.000Z" })]);
+      const fresh = makeThread({ id: "t-new" }, [makeMessage({ id: "m-new", text: "m-new", threadId: "t-new" })]);
+      vi.mocked(graph.hasEvent).mockImplementation((id: string) => id === "m-done");
+      vi.mocked(adapter.readThreads).mockResolvedValue([fresh, done]);
+      pipeline = new Pipeline(adapter, classifier, graph, linker, undefined, makeConfig({
+        lookback: { ...config.lookback, maxThreadsPerPoll: 1 },
+      } as Partial<Config>));
+
+      await pipeline.processOnce();
+
+      expect(vi.mocked(classifier.classify).mock.calls.map((c) => c[0])).toEqual(["m-new"]);
+    });
+
     it("caps to the oldest threads and keeps the cursor before the ones it deferred", async () => {
       const at = (h: number) => `2026-03-30T${String(h).padStart(2, "0")}:00:00.000Z`;
       const thread = (h: number, replyH?: number) =>
@@ -974,6 +988,34 @@ describe("Pipeline", () => {
       // Mentioned item gets its own breakdown status (blocked_on_human)
       const itUpdate = upsertCalls.find((c) => c[0].id === "IT-100" && c[0].currentAtcStatus === "blocked_on_human");
       expect(itUpdate).toBeDefined();
+    });
+  });
+
+  describe("operator's own messages", () => {
+    const operatorIdentities = new Map([["slack", { userId: "U-operator", userName: "Alex" }]]);
+    const run = async (classification: Partial<Classification>, userId = "U-operator") => {
+      vi.mocked(adapter.readThreads).mockResolvedValue([makeThread({}, [makeMessage({ userId, userName: "Alex" })])]);
+      vi.mocked(classifier.classify).mockResolvedValue(makeClassification(classification));
+      await new Pipeline(adapter, classifier, graph, linker, undefined, config, operatorIdentities).processOnce();
+      return vi.mocked(graph.insertEvent).mock.calls.at(-1)![0];
+    };
+
+    it("are never targeted at the operator, and don't leave the item waiting on them", async () => {
+      const event = await run({ status: "blocked_on_human", targetedAtOperator: true, actionRequiredFrom: [] });
+      expect(event.targetedAtOperator).toBe(false);
+      expect(event.status).toBe("in_progress");
+    });
+
+    it("keep a block the operator hands to someone else, untargeted", async () => {
+      const event = await run({ status: "blocked_on_human", targetedAtOperator: true, actionRequiredFrom: ["U-dana"] });
+      expect(event.targetedAtOperator).toBe(false);
+      expect(event.status).toBe("blocked_on_human");
+    });
+
+    it("leave other senders' classifications alone", async () => {
+      const event = await run({ status: "blocked_on_human", targetedAtOperator: true }, "U-agent1");
+      expect(event.targetedAtOperator).toBe(true);
+      expect(event.status).toBe("blocked_on_human");
     });
   });
 
