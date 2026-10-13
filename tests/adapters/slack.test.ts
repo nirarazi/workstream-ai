@@ -126,6 +126,38 @@ describe("SlackAdapter", () => {
       expect(threads.map((t) => t.channelId)).toEqual(["C001"]);
     });
 
+    it("reads a channel quiet for a day only every 5 minutes, and an active one every poll", async () => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      try {
+        vi.setSystemTime(new Date("2026-10-13T12:00:00Z"));
+        mockConversationsList.mockResolvedValue({
+          channels: [{ id: "CBUSY", name: "busy" }, { id: "CQUIET", name: "quiet" }],
+          response_metadata: { next_cursor: "" },
+        });
+        const recentTs = String(new Date("2026-10-13T11:00:00Z").getTime() / 1000);
+        mockConversationsHistory.mockImplementation(async ({ channel }: { channel: string }) => ({
+          messages: channel === "CBUSY" ? [makeSlackMessage({ ts: recentTs })] : [],
+          response_metadata: { next_cursor: "" },
+        }));
+        const readChannels = () => mockConversationsHistory.mock.calls.map((c) => c[0].channel);
+
+        await adapter.readThreads(new Date("2026-10-10T00:00:00Z"));
+        expect(readChannels()).toEqual(["CBUSY", "CQUIET"]);
+
+        mockConversationsHistory.mockClear();
+        vi.setSystemTime(new Date("2026-10-13T12:01:00Z"));
+        await adapter.readThreads(new Date("2026-10-10T00:00:00Z"));
+        expect(readChannels()).toEqual(["CBUSY"]);
+
+        mockConversationsHistory.mockClear();
+        vi.setSystemTime(new Date("2026-10-13T12:06:00Z"));
+        await adapter.readThreads(new Date("2026-10-10T00:00:00Z"));
+        expect(readChannels()).toEqual(["CBUSY", "CQUIET"]);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
     it("still fails the poll on errors that aren't about one channel", async () => {
       mockConversationsList.mockResolvedValue({ channels: [{ id: "C001", name: "general" }], response_metadata: { next_cursor: "" } });
       mockConversationsHistory.mockRejectedValue(Object.assign(new Error("invalid_auth"), { data: { ok: false, error: "invalid_auth" } }));
