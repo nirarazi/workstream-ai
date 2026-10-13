@@ -470,6 +470,7 @@ export class Pipeline {
           windowMinutes: continuationConfig?.channelContextWindow ?? 30,
           limit: continuationConfig?.maxContextMessages ?? 5,
           excludeThreadId: thread.id,
+          before: message.timestamp,
         })
       : [];
 
