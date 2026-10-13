@@ -46,6 +46,9 @@ type DotStatus = "ok" | "degraded" | "disconnected";
 
 const DEFAULT_SERVICES: ServiceStatuses = {};
 
+// The desktop window draws macOS window buttons over the header's left edge; a browser tab does not
+const IN_TAURI = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+
 const DOT_CLASSES: Record<DotStatus, string> = {
   ok: "bg-green-500 animate-[pulse_3s_ease-in-out_infinite]",
   degraded: "bg-amber-500 animate-pulse",
@@ -209,7 +212,7 @@ function App(): JSX.Element {
         <header
           data-tauri-drag-region
           className="border-b border-gray-800 flex items-center justify-between"
-          style={{ paddingLeft: 78, paddingRight: 16, paddingTop: 8, paddingBottom: 7 }}
+          style={{ paddingLeft: IN_TAURI ? 78 : 16, paddingRight: 16, paddingTop: 8, paddingBottom: 7 }}
         >
           <div data-tauri-drag-region className="flex items-center gap-3">
             <h1 data-tauri-drag-region className="text-sm font-semibold tracking-tight text-gray-300">

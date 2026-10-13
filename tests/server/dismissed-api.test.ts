@@ -106,6 +106,31 @@ describe("dismissed items and expiry", () => {
     expect(dismissedIds()).toEqual([]);
   });
 
+  it("keeps dismissed items out of All active until a new message brings them back", () => {
+    seed("GONE", "blocked_on_human", daysAgo(20));
+    seed("KEPT", "in_progress", daysAgo(1));
+    graph.dismissWorkItem("GONE");
+    const allActiveIds = () => graph.getAllActiveItems().map((i) => i.workItem.id);
+    expect(allActiveIds()).toEqual(["KEPT"]);
+
+    message("GONE", new Date(Date.now() + 60_000).toISOString());
+
+    expect(allActiveIds().sort()).toEqual(["GONE", "KEPT"]);
+  });
+
+  it("returns a snoozed item to Needs me once its snooze has passed, even earlier the same day", () => {
+    seed("NAP", "blocked_on_human", daysAgo(1));
+    const setSnooze = (at: string) =>
+      db.db.prepare("UPDATE work_items SET snoozed_until = ? WHERE id = 'NAP'").run(at);
+
+    setSnooze(new Date(Date.now() + 60 * 60 * 1000).toISOString());
+    expect(inboxIds()).toEqual([]);
+
+    // ISO timestamps ("…T…Z") sort after SQLite's "YYYY-MM-DD HH:MM:SS" on the same date
+    setSnooze(new Date(Date.now() - 60 * 1000).toISOString());
+    expect(inboxIds()).toEqual(["NAP"]);
+  });
+
   it("GET /api/stream/dismissed lists dismissed items, newest dismissal first, with the reason", async () => {
     seed("A", "blocked_on_human", daysAgo(20));
     seed("B", "blocked_on_human", daysAgo(1));

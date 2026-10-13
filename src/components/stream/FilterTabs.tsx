@@ -8,8 +8,8 @@ interface FilterTabsProps {
 
 const TABS: { id: StreamFilter; label: string; countKey: keyof FilterTabsProps["counts"] }[] = [
   { id: "needs-me", label: "Needs me", countKey: "needsMe" },
-  { id: "all-active", label: "All active", countKey: "allActive" },
   { id: "snoozed", label: "Snoozed", countKey: "snoozed" },
+  { id: "all-active", label: "All active", countKey: "allActive" },
   { id: "dismissed", label: "Dismissed", countKey: "dismissed" },
 ];
 

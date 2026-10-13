@@ -1180,7 +1180,7 @@ export class ContextGraph {
       LEFT JOIN agents a ON e.agent_id = a.id
       LEFT JOIN threads t ON e.thread_id = t.id
       WHERE wi.current_atc_status IN ('blocked_on_human', 'needs_decision')
-        AND (wi.snoozed_until IS NULL OR wi.snoozed_until <= datetime('now'))
+        AND (wi.snoozed_until IS NULL OR datetime(wi.snoozed_until) <= datetime('now'))
         AND (wi.dismissed_at IS NULL OR e.timestamp > wi.dismissed_at)
         AND (wi.merged_into IS NULL)
       ORDER BY
@@ -1231,6 +1231,13 @@ export class ContextGraph {
       WHERE wi.current_atc_status IS NOT NULL
         AND wi.current_atc_status NOT IN ('completed', 'noise')
         AND (wi.merged_into IS NULL)
+        AND (wi.dismissed_at IS NULL OR EXISTS (
+          SELECT 1 FROM events e3
+          WHERE (e3.work_item_id = wi.id
+             OR e3.thread_id IN (SELECT thread_id FROM thread_work_items WHERE work_item_id = wi.id))
+            AND e3.targeted_at_operator = 1
+            AND e3.timestamp > wi.dismissed_at
+        ))
       ORDER BY
         CASE wi.current_atc_status
           WHEN 'blocked_on_human' THEN 0

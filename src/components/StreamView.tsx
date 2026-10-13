@@ -115,21 +115,24 @@ export default function StreamView({
     });
   }, [selectedWorkItemId, needsMeItems, allActiveItems, dismissedItems]);
 
+  // Needs me already leaves out snoozed items, so the Snoozed tab is drawn from All active
+  const snoozedItems = allActiveItems.filter(
+    (i) => i.workItem.snoozedUntil && new Date(i.workItem.snoozedUntil).getTime() > Date.now(),
+  );
   const tabItems = (() => {
     switch (filter) {
       case "needs-me": return needsMeItems;
+      case "snoozed": return snoozedItems;
       case "all-active": return allActiveItems;
-      case "snoozed": return needsMeItems.filter(i => i.workItem.snoozedUntil);
       case "dismissed": return dismissedItems;
     }
   })();
   const currentItems = tabItems.filter((i) => matchesSearch(i, search));
 
-  const snoozedCount = needsMeItems.filter(i => i.workItem.snoozedUntil).length;
   const counts = {
-    needsMe: needsMeItems.filter(i => !i.workItem.snoozedUntil).length,
+    needsMe: needsMeItems.length,
+    snoozed: snoozedItems.length,
     allActive: allActiveItems.length,
-    snoozed: snoozedCount,
     dismissed: dismissedItems.length,
   };
 
