@@ -161,6 +161,7 @@ function createMockGraph(): ContextGraph {
     upsertEnrichment: vi.fn(),
     getActiveThreads: vi.fn().mockReturnValue([]),
     getRecentChannelContext: vi.fn().mockReturnValue([]),
+    findRecurringWorkItem: vi.fn().mockReturnValue(null),
     linkThreadWorkItem: vi.fn(),
   } as unknown as ContextGraph;
 }
@@ -1259,6 +1260,35 @@ describe("Pipeline", () => {
       const upsertWorkItemCalls = vi.mocked(graph.upsertWorkItem).mock.calls;
       const syntheticIds = upsertWorkItemCalls.map((c: any[]) => c[0].id);
       expect(syntheticIds).not.toContain("thread:t-new");
+    });
+
+    it("joins a bot's re-posted alert to the open item without relying on the LLM", async () => {
+      const msg = makeMessage({ id: "alert-2", threadId: "t-alert-2", senderType: "agent", text: "Credential expired on lane 7" });
+      vi.mocked(adapter.readThreads).mockResolvedValue([makeThread({ id: "t-alert-2" }, [msg])]);
+      vi.mocked(classifier.classify).mockResolvedValue(makeClassification({ status: "blocked_on_human", workItemIds: [] }));
+      vi.mocked(graph.findRecurringWorkItem).mockReturnValue("thread:alert-1");
+
+      await pipeline.processOnce();
+
+      const upsertThreadCalls = vi.mocked(graph.upsertThread).mock.calls;
+      expect(upsertThreadCalls[upsertThreadCalls.length - 1][0].workItemId).toBe("thread:alert-1");
+      const createdIds = vi.mocked(graph.upsertWorkItem).mock.calls.map((c: any[]) => c[0].id);
+      expect(createdIds).not.toContain("thread:t-alert-2");
+    });
+
+    it("doesn't look for recurring alerts from humans or for replies", async () => {
+      const human = makeMessage({ id: "h-1", threadId: "t-h", senderType: "human" });
+      const root = makeMessage({ id: "root", threadId: "t-r", senderType: "agent", timestamp: "2026-03-30T09:00:00.000Z" });
+      const reply = makeMessage({ id: "reply", threadId: "t-r", senderType: "agent" });
+      vi.mocked(graph.hasEvent).mockImplementation((id: string) => id === "root");
+      vi.mocked(adapter.readThreads).mockResolvedValue([
+        makeThread({ id: "t-h" }, [human]),
+        makeThread({ id: "t-r" }, [root, reply]),
+      ]);
+
+      await pipeline.processOnce();
+
+      expect(graph.findRecurringWorkItem).not.toHaveBeenCalled();
     });
   });
 
