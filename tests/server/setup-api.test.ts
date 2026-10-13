@@ -244,7 +244,10 @@ describe("POST /api/setup preserves what the form doesn't manage", () => {
     await app.request("/api/setup", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ llm: { apiKey: "new", baseUrl: "https://openrouter.ai/api/v1", model: "anthropic/claude-haiku-5.5" } }),
+      body: JSON.stringify({
+        llm: { apiKey: "new", baseUrl: "https://openrouter.ai/api/v1", model: "anthropic/claude-haiku-5.5" },
+        inbox: { expireAfterDays: 14 },
+      }),
     });
     state.db.close();
 
@@ -257,6 +260,7 @@ describe("POST /api/setup preserves what the form doesn't manage", () => {
     expect(yaml).toContain("interruptThreshold: 0.3");
     expect(yaml).toContain("model: anthropic/claude-haiku-5.5");
     expect(yaml).toContain("context: remit");
+    expect(yaml).toContain("expireAfterDays: 14");
     // The new key in .env must win, and tuning for the old model doesn't carry over
     expect(yaml).not.toContain("stale-literal");
     expect(yaml).not.toContain("reasoningEffort");

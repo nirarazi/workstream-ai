@@ -280,6 +280,15 @@ export class Database {
       log.info("Migration: added dismissed_at column to work_items");
     }
 
+    // Why an item was dismissed: "operator" (a judgment: not relevant / false positive) or "expired"
+    // (no activity for inbox.expireAfterDays). Expired items must not count as classifier corrections.
+    const wiColsDismiss = this.db.pragma("table_info(work_items)") as Array<{ name: string }>;
+    if (!wiColsDismiss.some((c) => c.name === "dismiss_reason")) {
+      this.db.exec("ALTER TABLE work_items ADD COLUMN dismiss_reason TEXT DEFAULT NULL");
+      this.db.exec("UPDATE work_items SET dismiss_reason = 'operator' WHERE dismissed_at IS NOT NULL");
+      log.info("Migration: added dismiss_reason column to work_items");
+    }
+
     // Add merged_into column to work_items table (for work item merge support)
     const wiColsMerge = this.db.pragma("table_info(work_items)") as Array<{ name: string }>;
     if (!wiColsMerge.some((c) => c.name === "merged_into")) {

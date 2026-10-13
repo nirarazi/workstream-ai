@@ -290,6 +290,12 @@ export function createApp(state: EngineState): Hono {
     return c.json({ items });
   });
 
+  // --- GET /api/stream/dismissed ---
+  app.get("/api/stream/dismissed", (c) => {
+    const items = state.graph.getDismissedItems();
+    return c.json({ items });
+  });
+
   // --- GET /api/fleet ---
   app.get("/api/fleet", (c) => {
     const items = state.graph.getFleetItems();
@@ -959,6 +965,7 @@ export function createApp(state: EngineState): Hono {
         outputCostPerMillion?: number | null;
       };
       rateLimits?: Record<string, number>;
+      inbox?: { expireAfterDays: number | null };
     }>();
 
     try {
@@ -1076,6 +1083,12 @@ export function createApp(state: EngineState): Hono {
         if (Object.keys(rlConfig).length > 0) {
           localConfig.rateLimits = rlConfig;
         }
+      }
+
+      // --- Inbox ---
+      if (body.inbox) {
+        const days = body.inbox.expireAfterDays;
+        localConfig.inbox = { expireAfterDays: typeof days === "number" && days > 0 ? days : null };
       }
 
       // A line break in a value would write extra lines into .env
@@ -1294,6 +1307,8 @@ export function createApp(state: EngineState): Hono {
       rateLimits[name] = { maxPerMinute: limiter.limit, displayName: limiter.displayName };
     }
     result.rateLimits = rateLimits;
+
+    result.inbox = { expireAfterDays: state.config.inbox?.expireAfterDays ?? null };
 
     return c.json(result);
   });

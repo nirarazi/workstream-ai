@@ -99,6 +99,9 @@ export default function Setup({ onComplete }: SetupProps): JSX.Element {
   // Rate limits
   const [rateLimits, setRateLimits] = useState<Record<string, RateLimitInfo>>({});
 
+  // Inbox: auto-dismiss after N days of no activity ("" = never)
+  const [expireAfterDays, setExpireAfterDays] = useState<string>("");
+
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -167,6 +170,9 @@ export default function Setup({ onComplete }: SetupProps): JSX.Element {
 
         if (prefill.rateLimits) {
           setRateLimits(prefill.rateLimits);
+        }
+        if (prefill.inbox?.expireAfterDays != null) {
+          setExpireAfterDays(String(prefill.inbox.expireAfterDays));
         }
       })
       .catch(() => {});
@@ -272,6 +278,9 @@ export default function Setup({ onComplete }: SetupProps): JSX.Element {
         }
         payload.rateLimits = rl;
       }
+
+      const days = parseFloat(expireAfterDays);
+      payload.inbox = { expireAfterDays: Number.isFinite(days) && days > 0 ? days : null };
 
       await postSetup(payload);
       onComplete();
@@ -631,6 +640,30 @@ export default function Setup({ onComplete }: SetupProps): JSX.Element {
             </p>
           </fieldset>
         )}
+
+        {/* ── Inbox ─────────────────────────────────────────── */}
+        <fieldset className="space-y-3">
+          <legend className="text-xs font-semibold uppercase tracking-widest text-gray-500 mb-1">Inbox</legend>
+          <div>
+            <label htmlFor="expire-after-days" className="text-xs text-gray-400 mb-1 block">
+              Auto-dismiss items with no activity after (days)
+            </label>
+            <input
+              id="expire-after-days"
+              type="number"
+              min={1}
+              step={1}
+              placeholder="Never"
+              value={expireAfterDays}
+              onChange={(e) => setExpireAfterDays(e.target.value)}
+              className={inputClass}
+            />
+          </div>
+          <p className="text-[11px] text-gray-600">
+            Leave empty to keep items until you act on them. Auto-dismissed items move to Stream → Dismissed,
+            and come back if someone writes to you about them again.
+          </p>
+        </fieldset>
 
         {error && <p className="text-xs text-red-400">{error}</p>}
 
