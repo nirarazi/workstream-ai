@@ -71,6 +71,11 @@ export function buildFewShotMessages(
   return messages;
 }
 
+/** The remit (operator.context) is what lets the model decide targeting instead of the backstop rule. */
+export function hasRemit(config: Config): boolean {
+  return Boolean(config.operator?.context?.trim());
+}
+
 export function buildOperatorContext(config: Config): string {
   const name = config.operator?.name ?? "";
   const context = config.operator?.context ?? "";
@@ -116,6 +121,8 @@ export class Classifier {
   private readonly operatorRole: string;
   private readonly operatorIdentities: OperatorIdentityMap | null;
   private readonly operatorContext: string;
+  /** Whether the operator wrote a remit; a name alone doesn't say who owns what */
+  private readonly hasRemit: boolean;
   private decisionGate: DecisionGate | null = null;
   private rateLimiter?: RateLimiter;
 
@@ -127,6 +134,7 @@ export class Classifier {
     operatorRole?: string,
     operatorIdentities?: OperatorIdentityMap | null,
     operatorContext?: string,
+    hasRemit?: boolean,
   ) {
     this.provider = provider;
     this.systemPrompt = systemPrompt;
@@ -135,6 +143,7 @@ export class Classifier {
     this.operatorRole = operatorRole ?? "";
     this.operatorIdentities = operatorIdentities ?? null;
     this.operatorContext = operatorContext ?? "";
+    this.hasRemit = hasRemit ?? Boolean(operatorContext);
   }
 
   setRateLimiter(limiter: RateLimiter): void {
@@ -155,7 +164,7 @@ export class Classifier {
     const fewShot = buildFewShotMessages(prompt.few_shot_examples);
     const operatorContext = buildOperatorContext(config);
     const operatorRole = config.operator?.role ?? "";
-    const classifier = new Classifier(provider, prompt.system, fewShot, undefined, operatorRole, null, operatorContext);
+    const classifier = new Classifier(provider, prompt.system, fewShot, undefined, operatorRole, null, operatorContext, hasRemit(config));
     classifier.setDecisionGate(createDecisionGate(config));
     return classifier;
   }
@@ -190,7 +199,7 @@ export class Classifier {
       senderType: senderContext?.senderType,
       channelName: senderContext?.channelName,
       operatorName: identities && identities.size > 0 ? [...identities.values()][0].userName : undefined,
-      operatorContext: this.operatorContext || undefined,
+      operatorContext: this.hasRemit ? this.operatorContext : undefined,
       threadContext,
     });
     const [llmResult, decisionResult] = await Promise.allSettled([llm, decision]);
@@ -364,7 +373,7 @@ Return false if:
 
     // With a remit, the model has been told who owns what, so its targeted_at_operator answer decides
     // instead of the backstop rule. Being named in action_required_from still always counts.
-    if (this.operatorContext) {
+    if (this.hasRemit) {
       const operatorIds = new Set([...(operatorIdentities?.values() ?? [])].map((id) => id.userId));
       if (result.action_required_from?.some((id) => operatorIds.has(id))) return true;
       return result.targeted_at_operator ?? isActionable;
