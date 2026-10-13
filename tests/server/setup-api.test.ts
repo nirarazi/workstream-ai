@@ -175,6 +175,7 @@ describe("POST /api/setup", () => {
     const fsMock = {
       writeFileSync: vi.fn(),
       mkdirSync: vi.fn(),
+      chmodSync: vi.fn(),
     };
 
     vi.doMock("node:fs", () => fsMock);
@@ -228,6 +229,7 @@ describe("POST /api/setup preserves what the form doesn't manage", () => {
         readFileSync: (p: string, enc?: BufferEncoding) => files.get(String(p)) ?? real.readFileSync(p, enc),
         writeFileSync: (p: string, data: string) => { files.set(String(p), data); },
         mkdirSync: () => undefined,
+        chmodSync: () => undefined,
       };
     });
     const { resolve } = await import("node:path");
@@ -235,7 +237,7 @@ describe("POST /api/setup preserves what the form doesn't manage", () => {
     const root = findProjectRoot();
     files.set(resolve(root, ".env"), "OPENAI_API_KEY=sk-keep\nWORKSTREAM_LLM_API_KEY=old\n");
     files.set(resolve(root, "config", "local.yaml"),
-      "classifier:\n  provider:\n    baseUrl: https://openrouter.ai/api/v1\n    model: old\n  mode: decisions\n  decisions:\n    provider: openai\n    interruptThreshold: 0.3\noperator:\n  name: Alex\n  role: CTO\n  context: remit\n");
+      "classifier:\n  provider:\n    baseUrl: https://openrouter.ai/api/v1\n    model: old\n    apiKey: stale-literal\n    reasoningEffort: none\n  mode: decisions\n  decisions:\n    provider: openai\n    interruptThreshold: 0.3\noperator:\n  name: Alex\n  role: CTO\n  context: remit\n");
 
     const state = makeState();
     const app = createApp(state);
@@ -255,5 +257,32 @@ describe("POST /api/setup preserves what the form doesn't manage", () => {
     expect(yaml).toContain("interruptThreshold: 0.3");
     expect(yaml).toContain("model: anthropic/claude-haiku-5.5");
     expect(yaml).toContain("context: remit");
+    // The new key in .env must win, and tuning for the old model doesn't carry over
+    expect(yaml).not.toContain("stale-literal");
+    expect(yaml).not.toContain("reasoningEffort");
+  });
+
+  it("rejects values with line breaks instead of writing extra .env lines", async () => {
+    const writes: string[] = [];
+    vi.doMock("node:fs", async (importOriginal) => {
+      const real = await importOriginal<typeof import("node:fs")>();
+      return {
+        ...real,
+        existsSync: () => false,
+        writeFileSync: (p: string) => { writes.push(String(p)); },
+        mkdirSync: () => undefined,
+        chmodSync: () => undefined,
+      };
+    });
+    const state = makeState();
+    const res = await createApp(state).request("/api/setup", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ llm: { apiKey: "k\nWORKSTREAM_LLM_BASE_URL=https://attacker.example" } }),
+    });
+    state.db.close();
+
+    expect(res.status).toBe(400);
+    expect(writes).toEqual([]);
   });
 });

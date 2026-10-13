@@ -55,8 +55,8 @@ accuracy on the reference fleet) has never been measured.
    - On the 77 reviewed items alone, the hard ones, the scores are 62%, 40% and 47%.
    - **21 of Haiku's 28 unnecessary interrupts are real blocks that Dana owns.**
      - A channel rule (Dana's channels never reach Alex) cuts unnecessary interrupts to 4.
-     - But it also misses 4 items that Alex needs: agent and infra failures inside #partners
-       (an integration erroring, an agent sending outreach without approval).
+     - But it also misses 4 items that Alex needs: agent and infra failures inside a business
+       channel (for example an integration failing).
      - So ownership depends on channel *and* the kind of problem: business approvals go to Dana;
        infra and agent misbehaviour go to Alex.
      - That means filling in the operator's remit in config, and asking the "targeted" question with
@@ -114,7 +114,7 @@ accuracy on the reference fleet) has never been measured.
    - **Two failure sources dominate every backend, and both are product problems, not model problems:**
      - **Messages from humans** (34 of 150, mostly Dana instructing agents) score 18–47%. They should probably
        be routed by sender in code rather than classified.
-     - **Blocks owned by a second human** (Dana approving Echo's drafts) account for 10–22 of the
+     - **Blocks owned by a second human** (Dana approving an agent's drafts) account for 10–22 of the
        "unnecessary" interrupts. The "operator is the backstop for every block" rule doesn't fit a fleet
        with two humans. This needs per-channel or per-person ownership.
 
@@ -123,11 +123,11 @@ accuracy on the reference fleet) has never been measured.
    - **The remit is written by each person and never hardcoded.** The 2026-10-11 eval shows why it matters:
      21 of 28 unnecessary interrupts were blocks owned by another human.
    - **Who owns an item depends on what kind of problem it is, not only the channel.** Alex owns agent and
-     infra failures even inside #partners, so a channel rule alone misses items.
+     infra failures even inside business channels, so a channel rule alone misses items.
    - **Helpers for writing it:**
      - **A first draft from usage:** channels the person posts in, items they acted on, items they dismissed.
      - **A fixed structure:** *I own… / not mine… / escalate to me anyway when…*
-     - **Plain-language remit plus optional hard rules** ("#partners → Dana"), so the model only
+     - **Plain-language remit plus optional hard rules** ("#business → Dana"), so the model only
        handles what the rules can't.
      - **Edits suggested from "not for me" corrections**, as in the existing plan.
      - **A score against the person's own answers:** "this remit agrees with 26 of your 30 past
@@ -157,7 +157,7 @@ accuracy on the reference fleet) has never been measured.
      Use it for a week before building more.
    - **Full version:** add a decision question ("does this report a change of state?") and filter
      per person, using the same ownership model as the inbox (engineering news to Alex,
-     partners news to Dana).
+     business news to Dana).
    - **Guardrails:** it ends with an "all caught up" state, has no unread badge or notifications, and
      groups by work item rather than by message. The inbox stays the only thing that interrupts you.
    - Depends on the label review (3) and per-person ownership (see the second failure source in 4).
