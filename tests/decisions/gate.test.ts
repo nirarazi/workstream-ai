@@ -4,7 +4,7 @@ import { describe, it, expect, vi } from "vitest";
 import { Classifier } from "../../core/classifier/index.js";
 import type { ModelProvider } from "../../core/classifier/providers/interface.js";
 import { classifyWithDecisions } from "../../core/decisions/classification.js";
-import { DecisionGate, applyDecision, createDecisionGate } from "../../core/decisions/gate.js";
+import { DecisionGate, applyDecision, createDecisionGate, isOpenRouter } from "../../core/decisions/gate.js";
 import type { DecisionProvider } from "../../core/decisions/interface.js";
 import type { Config } from "../../core/config.js";
 import type { Classification } from "../../core/types.js";
@@ -107,6 +107,24 @@ describe("Classifier with a decision gate", () => {
     c.setDecisionGate(new DecisionGate(stubDecisions({}, 0, true), 0.5));
     const r = await c.classify("anything");
     expect(r.status).toBe("in_progress");
+  });
+
+  it("skips the decision call once the daily budget is spent", async () => {
+    const decisions = stubDecisions({ blocked_on_human: 0.9, in_progress: 0.1 }, 0.9);
+    const c = new Classifier(llmProvider(), "sys", []);
+    c.setDecisionGate(new DecisionGate(decisions, 0.5, undefined, () => true));
+    const r = await c.classify("Need S3 creds");
+    expect(decisions.decide).not.toHaveBeenCalled();
+    expect(r.status).toBe("in_progress");
+  });
+});
+
+describe("isOpenRouter", () => {
+  it("matches the host, not text anywhere in the URL", () => {
+    expect(isOpenRouter("https://openrouter.ai/api/v1")).toBe(true);
+    expect(isOpenRouter("http://my-proxy.local/openrouter.ai/v1")).toBe(false);
+    expect(isOpenRouter("https://openrouter.ai.evil.example/v1")).toBe(false);
+    expect(isOpenRouter("not a url")).toBe(false);
   });
 });
 

@@ -147,16 +147,22 @@ export async function classifyWithDecisions(
 
   const probs = answers.status.probabilities as Record<StatusCategory, number>;
   let status = answers.status.choice as StatusCategory;
+  // The pipeline compares this with the LLM's confidence before letting a message change an item's
+  // status, so report a probability (the LLM's scale), not the provider's concentration score. When
+  // the interrupt threshold picks the status, the evidence is the whole pool's probability.
+  let confidence = probs[status] ?? answers.status.confidence;
   if (thresholds.interruptThreshold != null) {
     const actionableMass = ACTIONABLE_STATUSES.reduce((sum, s) => sum + (probs[s] ?? 0), 0);
-    const pool = actionableMass >= thresholds.interruptThreshold
+    const actionable = actionableMass >= thresholds.interruptThreshold;
+    const pool = actionable
       ? ACTIONABLE_STATUSES
       : (Object.keys(probs) as StatusCategory[]).filter((s) => !ACTIONABLE_STATUSES.includes(s));
     status = pool.reduce((best, s) => ((probs[s] ?? 0) > (probs[best] ?? 0) ? s : best), pool[0]);
+    if (Object.keys(probs).length > 0) confidence = actionable ? actionableMass : 1 - actionableMass;
   }
   const out: DecisionClassification = {
     status,
-    confidence: answers.status.confidence,
+    confidence,
     statusProbabilities: answers.status.probabilities as Record<StatusCategory, number>,
     targetedProbability: answers.targeted.probability,
     // Without a remit, the operator is the backstop for every block. With one, the remit decides:

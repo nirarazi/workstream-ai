@@ -15,6 +15,8 @@ classifier:
   # "llm": the LLM above classifies everything (default).
   # "decisions": a decision model decides status and whether the operator should see each message;
   #   the LLM still writes titles, next actions and work item links. Both run in parallel per message.
+  #   Each message, up to 4 earlier thread messages, the operator's name and remit are sent to the
+  #   decision provider below, in addition to the LLM provider.
   mode: llm
   # decisions:
   #   provider: openai            # openai (OpenAI Decisions API) | typesafe (Jev; uses OpenRouter if no key) | llm

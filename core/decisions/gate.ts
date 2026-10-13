@@ -33,6 +33,7 @@ export class DecisionGate {
     private readonly provider: DecisionProvider,
     private readonly interruptThreshold: number,
     private readonly onUsage?: (model: string, inputTokens: number, outputTokens: number) => void,
+    private readonly budgetExhausted?: () => boolean,
   ) {}
 
   get name(): string {
@@ -40,6 +41,8 @@ export class DecisionGate {
   }
 
   async decide(input: DecisionClassificationInput): Promise<DecisionClassification> {
+    // The daily budget covers decision calls too; the classifier falls back to the LLM's result
+    if (this.budgetExhausted?.()) throw new Error("Daily LLM budget exhausted. Resets at midnight UTC.");
     const result = await classifyWithDecisions(this.provider, input, { interruptThreshold: this.interruptThreshold });
     if (result.usage) this.onUsage?.(this.provider.name, result.usage.inputTokens, result.usage.outputTokens);
     return result;
@@ -110,7 +113,8 @@ export function createDecisionGate(config: Config, usageTracker?: UsageTracker):
     : undefined;
 
   log.info(`Decision gate on: ${d.provider} (${model}), interrupt threshold ${d.interruptThreshold}`);
-  return new DecisionGate(provider, d.interruptThreshold, onUsage);
+  const budgetExhausted = usageTracker ? () => usageTracker.getBudgetStatus().exhausted : undefined;
+  return new DecisionGate(provider, d.interruptThreshold, onUsage, budgetExhausted);
 }
 
 function buildProvider(config: Config, d: NonNullable<Config["classifier"]["decisions"]>): DecisionProvider {
@@ -121,9 +125,19 @@ function buildProvider(config: Config, d: NonNullable<Config["classifier"]["deci
       return new OpenAIDecisionProvider({ apiKey: d.apiKey, model: d.model });
     case "typesafe":
       if (d.apiKey) return new TypeSafeDecisionProvider({ apiKey: d.apiKey, model: d.model });
-      if (llm.baseUrl.includes("openrouter.ai") && llm.apiKey) return TypeSafeDecisionProvider.viaOpenRouter(llm.apiKey, d.model);
+      if (isOpenRouter(llm.baseUrl) && llm.apiKey) return TypeSafeDecisionProvider.viaOpenRouter(llm.apiKey, d.model);
       throw new Error("classifier.decisions.apiKey is required for typesafe unless the classifier uses OpenRouter");
     case "llm":
       return LLMDecisionProvider.fromEndpoint({ ...llm, model: d.model ?? llm.model });
+  }
+}
+
+/** True only when the URL's host is OpenRouter, so a key is never sent there because a path mentions it. */
+export function isOpenRouter(baseUrl: string): boolean {
+  try {
+    const host = new URL(baseUrl).hostname;
+    return host === "openrouter.ai" || host.endsWith(".openrouter.ai");
+  } catch {
+    return false;
   }
 }

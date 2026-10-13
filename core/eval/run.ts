@@ -14,6 +14,7 @@
 //   --concurrency N (default 4)   --limit N   --dataset PATH
 //   --per-status N               quick run: the first N labeled items of each true status
 //   --no-thread-context          classify each message alone (no work item or earlier thread messages)
+//   --human-only                 score only operator-reviewed labels, not unreviewed drafts
 // Writes per-item results to eval-data/runs/ for later comparison.
 
 import BetterSqlite3 from "better-sqlite3";
@@ -26,6 +27,7 @@ import { LLMDecisionProvider } from "../decisions/providers/llm.js";
 import { TypeSafeDecisionProvider } from "../decisions/providers/typesafe.js";
 import { OpenAIDecisionProvider } from "../decisions/providers/openai.js";
 import type { DecisionProvider } from "../decisions/interface.js";
+import { isOpenRouter } from "../decisions/gate.js";
 import type { OperatorIdentityMap, ThreadContext } from "../types.js";
 import { loadItemContext } from "./context.js";
 import { defaultDatasetPath, labeled, loadDataset, type EvalItem } from "./dataset.js";
@@ -74,9 +76,11 @@ function threadContext(item: EvalItem, root: string): ThreadContext | undefined 
   if (!contextDb && existsSync(dbPath)) contextDb = new BetterSqlite3(dbPath, { readonly: true });
   const ctx = contextDb && loadItemContext(contextDb, item.id, { before: 4, after: 0 });
   if (!ctx) return undefined;
-  const wi = ctx.workItems[0];
+  // Live, a thread only has a work item once an earlier message linked it, and its status is the one
+  // before this message. The stored status is today's (possibly "Done"), so leave it out.
+  const wi = ctx.before.length > 0 ? ctx.workItems[0] : undefined;
   return {
-    workItem: wi ? { id: wi.id, title: wi.title, status: wi.status } : undefined,
+    workItem: wi ? { id: wi.id, title: wi.title } : undefined,
     messages: ctx.before.map((m) => ({ senderName: m.sender, text: m.text })),
   };
 }
@@ -147,7 +151,7 @@ function makeBackend(name: string, config: Config, root: string): { label: strin
     case "typesafe": {
       // Direct TypeSafe key if present, otherwise Jev through OpenRouter on the configured key.
       const direct = process.env.TYPESAFE_API_KEY;
-      const viaOpenRouter = !direct && config.classifier.provider.baseUrl.includes("openrouter.ai");
+      const viaOpenRouter = !direct && isOpenRouter(config.classifier.provider.baseUrl);
       if (!direct && !viaOpenRouter) {
         throw new Error("typesafe backend needs TYPESAFE_API_KEY, or an OpenRouter classifier provider");
       }
@@ -186,6 +190,11 @@ async function main(): Promise<void> {
   const config = loadConfig();
   const datasetPath = arg("dataset") ?? defaultDatasetPath(root);
   let items = labeled(loadDataset(datasetPath));
+  const drafts = items.filter((i) => i.label.source === "draft").length;
+  if (process.argv.includes("--human-only")) items = items.filter((i) => i.label.source !== "draft");
+  else if (drafts > 0) {
+    process.stderr.write(`Note: ${drafts} of ${items.length} labels are unreviewed drafts; scores include them (--human-only to exclude)\n`);
+  }
   const limit = arg("limit");
   if (limit) items = items.slice(0, Number(limit));
   const perStatus = arg("per-status");

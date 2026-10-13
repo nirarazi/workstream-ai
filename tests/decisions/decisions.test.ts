@@ -165,6 +165,19 @@ describe("classification questions", () => {
     expect(result.targetedAtOperator).toBe(true);
   });
 
+  it("reports confidence as a probability, the scale the pipeline compares with the LLM's", async () => {
+    const answers = {
+      status: { type: "choice", choice: "in_progress", confidence: 0.37, probabilities: { in_progress: 0.6, blocked_on_human: 0.25, needs_decision: 0.1, noise: 0.05 } },
+      targeted: { type: "yesno", probability: 0.9 },
+    };
+    const argmax = await classifyWithDecisions(stubProvider(answers), { message: "x" });
+    expect(argmax.confidence).toBe(0.6);
+
+    const flipped = await classifyWithDecisions(stubProvider(answers), { message: "x" }, { interruptThreshold: 0.3 });
+    expect(flipped.status).toBe("blocked_on_human");
+    expect(flipped.confidence).toBeCloseTo(0.35);
+  });
+
   it("puts the thread's work item and earlier messages in the state", () => {
     const state = buildState({
       message: "go ahead",
