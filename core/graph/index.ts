@@ -165,6 +165,17 @@ function toSummary(row: SummaryRow): { workItemId: string; summaryText: string; 
   };
 }
 
+/** Ticket-style IDs ("OPS-101", "OPS-7") in a message, upper-cased. */
+function ticketIds(text: string): Set<string> {
+  return new Set((text.match(/\b[A-Z][A-Z0-9]+-\d+\b/g) ?? []).map((id) => id.toUpperCase()));
+}
+
+function sameSet(a: Set<string>, b: Set<string>): boolean {
+  if (a.size !== b.size) return false;
+  for (const x of a) if (!b.has(x)) return false;
+  return true;
+}
+
 export class ContextGraph {
   private db: Database;
 
@@ -1314,7 +1325,10 @@ export class ContextGraph {
       `)
       .all(params.agentId, params.channelId, since, params.before) as Array<{ work_item_id: string; text: string }>;
 
+    const tickets = ticketIds(params.text);
     for (const row of rows) {
+      // A template alert about a different ticket is a different problem, however similar the wording
+      if (!sameSet(tickets, ticketIds(row.text))) continue;
       const other = extractSignificantWords(row.text.replace(/<@[^>]+>/g, " "));
       let shared = 0;
       for (const w of words) if (other.has(w)) shared++;

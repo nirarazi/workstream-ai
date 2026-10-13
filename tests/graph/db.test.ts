@@ -933,6 +933,18 @@ describe("Database", () => {
       expect(find(ALERT, "2026-10-14T20:30:00.000Z")).toBeNull();
     });
 
+    it("doesn't join the same template about a different ticket", () => {
+      setup();
+      const ci = (ticket: string) =>
+        `CI failed for ${ticket} on the main branch: unit tests in the billing service timed out after retries, please take a look.`;
+      graph.insertEvent({
+        threadId: "1", messageId: "m2", workItemId: "thread:1", agentId: "bot", status: "blocked_on_human",
+        confidence: 0.9, reason: "", rawText: ci("OPS-101"), timestamp: "2026-10-12T20:10:00.000Z",
+      });
+      expect(find(ci("OPS-101"))).toBe("thread:1");
+      expect(find(ci("OPS-202"))).toBeNull();
+    });
+
     it("doesn't join an item the operator dismissed", () => {
       setup({ dismissed: true });
       expect(find(ALERT)).toBeNull();
