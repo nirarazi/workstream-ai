@@ -255,6 +255,17 @@ export class Pipeline {
       this.graph.computeBotTypes();
     }
 
+    // Optional: auto-dismiss Needs-me items nobody has written about for inbox.expireAfterDays
+    const expireAfterDays = this.config?.inbox?.expireAfterDays;
+    if (expireAfterDays) {
+      try {
+        const expired = this.graph.expireInactiveItems(expireAfterDays);
+        if (expired > 0) log.info(`Auto-dismissed ${expired} item(s) with no activity for ${expireAfterDays} day(s)`);
+      } catch (err) {
+        log.error("Failed to expire inactive items", err);
+      }
+    }
+
     return { processed, classified, errors };
   }
 

@@ -15,6 +15,9 @@ export type EntryType =
   | "escalation"
   | "noise";
 
+/** Why a work item was dismissed: by the operator, or auto-dismissed after inbox.expireAfterDays. */
+export type DismissReason = "operator" | "expired";
+
 export interface OperatorIdentity {
   userId: string;
   userName: string;
@@ -95,6 +98,7 @@ export interface WorkItem {
   snoozedUntil: string | null;
   pinned: boolean;
   dismissedAt: string | null;
+  dismissReason: DismissReason | null;
   mergedInto: string | null;
   createdAt: string;
   updatedAt: string;

@@ -55,6 +55,11 @@ lookback:
   # After a pause, catch up at most this many days of history (defaults to initialDays)
   # maxCatchUpDays: 1
 
+inbox:
+  # Auto-dismiss Needs-me items with no new message for this many days (null = never).
+  # They move to Stream > Dismissed and come back if someone writes to you about them again.
+  expireAfterDays: null
+
 continuation:
   # Strategy for grouping non-threaded messages into conversations
   strategy: "classifier-inline"   # enriches classifier prompt with channel context
