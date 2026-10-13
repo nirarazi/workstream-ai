@@ -258,7 +258,7 @@ Return false if:
       }
 
       if (validIdPrefixes && validIdPrefixes.length > 0) {
-        effectiveSystemPrompt += `\n\n## Valid Work Item ID Prefixes\n\nThe following prefixes are the ONLY valid work item ID patterns: ${validIdPrefixes.join(", ")}. Only return IDs in workItemIds that match one of these prefixes. IDs like "Q-123" or "CRM-456" that don't match a known prefix should NOT be included in workItemIds — they are external reference numbers, not tracked work items.`;
+        effectiveSystemPrompt += `\n\n## Valid Work Item ID Prefixes\n\nThe following prefixes are the ONLY valid work item ID patterns: ${validIdPrefixes.join(", ")}. Only return IDs in workItemIds that match one of these prefixes, or the exact ID of a candidate work item listed below (including "thread:…" IDs, which track items that have no ticket). IDs like "Q-123" or "CRM-456" that don't match a known prefix should NOT be included in workItemIds — they are external reference numbers, not tracked work items.`;
       }
 
       // Per-message context goes in the user turn, after the few-shot examples, so the system prompt and

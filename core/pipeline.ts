@@ -362,6 +362,18 @@ export class Pipeline {
     const allWorkItemIds = new Set<string>();
     if (inheritedWorkItemId) {
       allWorkItemIds.add(inheritedWorkItemId);
+    } else if (message.senderType !== "human" && thread.messages[0]?.id === message.id) {
+      // Step 0b': a bot re-posting the same alert as a new top-level message joins the open item
+      const recurringId = this.graph.findRecurringWorkItem({
+        agentId: message.userId,
+        channelId: thread.channelId,
+        text: message.text,
+        before: message.timestamp,
+      });
+      if (recurringId) {
+        log.debug("Recurring alert joins existing work item", recurringId, thread.id);
+        allWorkItemIds.add(recurringId);
+      }
     }
 
     // Step 0c: Skip classification if the work item is already completed

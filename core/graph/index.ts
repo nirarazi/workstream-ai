@@ -1272,6 +1272,54 @@ export class ContextGraph {
     }));
   }
 
+  /**
+   * Finds the open work item a recurring bot alert belongs to: the same sender posted near-identical text
+   * in the same channel within the window before this message. Alert bots re-post as new top-level
+   * messages, so Slack threading can't group them. Dismissed, completed and merged items don't match:
+   * a repeat after the operator handled it is news.
+   */
+  findRecurringWorkItem(params: {
+    agentId: string;
+    channelId: string;
+    text: string;
+    before: string;           // the new message's timestamp
+    windowHours?: number;     // default 24
+    minSimilarity?: number;   // Jaccard over significant words, default 0.75
+  }): string | null {
+    const windowHours = params.windowHours ?? 24;
+    const minSimilarity = params.minSimilarity ?? 0.75;
+    const words = extractSignificantWords(params.text.replace(/<@[^>]+>/g, " "));
+    if (words.size < 5) return null; // too short to tell a repeat from a coincidence
+
+    const since = new Date(new Date(params.before).getTime() - windowHours * 3600 * 1000).toISOString();
+    const rows = this.db.db
+      .prepare(`
+        SELECT e.work_item_id AS work_item_id, e.raw_text AS text
+        FROM events e
+        JOIN threads t ON e.thread_id = t.id
+        JOIN work_items wi ON e.work_item_id = wi.id
+        WHERE e.agent_id = ?
+          AND t.channel_id = ?
+          AND e.timestamp >= ? AND e.timestamp < ?
+          AND e.raw_text IS NOT NULL
+          AND wi.dismissed_at IS NULL
+          AND wi.merged_into IS NULL
+          AND (wi.current_atc_status IS NULL OR wi.current_atc_status NOT IN ('completed', 'noise'))
+        ORDER BY e.timestamp DESC
+        LIMIT 50
+      `)
+      .all(params.agentId, params.channelId, since, params.before) as Array<{ work_item_id: string; text: string }>;
+
+    for (const row of rows) {
+      const other = extractSignificantWords(row.text.replace(/<@[^>]+>/g, " "));
+      let shared = 0;
+      for (const w of words) if (other.has(w)) shared++;
+      const union = words.size + other.size - shared;
+      if (union > 0 && shared / union >= minSimilarity) return row.work_item_id;
+    }
+    return null;
+  }
+
   // --- Merge / Unmerge ---
 
   mergeWorkItems(sourceId: string, targetId: string): {
