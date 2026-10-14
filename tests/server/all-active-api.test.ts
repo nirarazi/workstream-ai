@@ -10,6 +10,7 @@ function makeState(graph: ContextGraph, db: Database) {
       lookback: { initialDays: 3, maxThreadsPerPoll: 100 },
       rateLimits: {},
       operator: { name: "Test", role: "", context: "" },
+      server: { port: 9847, host: "127.0.0.1" },
     },
     db,
     graph,
