@@ -1153,7 +1153,13 @@ export class ContextGraph {
     return rows.map(mapActionableRow);
   }
 
-  getActionableItems(): ActionableItem[] {
+  /**
+   * Needs me: blocked or waiting on a decision, and the latest blocking message the model was sure enough
+   * about says it's the operator's. A later block aimed at someone else at handoffMinConfidence or above
+   * ("it's with Dana now") takes the item out; progress and chatter don't, and neither does an unsure one,
+   * nor one that still names the operator (any of operatorNames: IDs or names, matched case-insensitively).
+   */
+  getActionableItems(handoffMinConfidence = 0.6, operatorNames: string[] = []): ActionableItem[] {
     const rows = this.db.db
       .prepare(
         `
@@ -1190,6 +1196,19 @@ export class ContextGraph {
         AND (wi.snoozed_until IS NULL OR datetime(wi.snoozed_until) <= datetime('now'))
         AND (wi.dismissed_at IS NULL OR e.timestamp > wi.dismissed_at)
         AND (wi.merged_into IS NULL)
+        AND NOT EXISTS (
+          SELECT 1 FROM events e4
+          WHERE (e4.work_item_id = wi.id
+             OR e4.thread_id IN (SELECT thread_id FROM thread_work_items WHERE work_item_id = wi.id))
+            AND e4.targeted_at_operator = 0
+            AND e4.status IN ('blocked_on_human', 'needs_decision')
+            AND e4.confidence >= ?
+            AND e4.timestamp > e.timestamp
+            AND NOT EXISTS (
+              SELECT 1 FROM json_each(CASE WHEN json_valid(e4.action_required_from) THEN e4.action_required_from ELSE '[]' END) j
+              WHERE lower(j.value) IN (SELECT lower(value) FROM json_each(?))
+            )
+        )
       ORDER BY
         CASE wi.current_atc_status
           WHEN 'blocked_on_human' THEN 0
@@ -1198,7 +1217,7 @@ export class ContextGraph {
         e.timestamp DESC
     `,
       )
-      .all() as Array<Record<string, unknown>>;
+      .all(handoffMinConfidence, JSON.stringify(operatorNames)) as Array<Record<string, unknown>>;
 
     return rows.map(mapActionableRow);
   }
