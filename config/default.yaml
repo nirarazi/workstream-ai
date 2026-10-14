@@ -59,6 +59,9 @@ inbox:
   # Auto-dismiss Needs-me items with no new message for this many days (null = never).
   # They move to Stream > Dismissed and come back if someone writes to you about them again.
   expireAfterDays: null
+  # A later message saying a block is now waiting on someone else takes it out of Needs me
+  # (it stays in All active) when the model is at least this sure of it. Lower = drops sooner.
+  handoffMinConfidence: 0.6
 
 continuation:
   # Strategy for grouping non-threaded messages into conversations
