@@ -8,7 +8,7 @@ import { findProjectRoot, type Config } from "../config.js";
 import type { Classification, EntryType, OperatorIdentityMap, StatusCategory, ThreadContext } from "../types.js";
 import { applyDecision, createDecisionGate, type DecisionGate } from "../decisions/gate.js";
 import { OpenAICompatibleProvider, type BackoffState } from "./providers/openai-compatible.js";
-import { InvalidReplyError, type ModelProvider } from "./providers/interface.js";
+import { InvalidReplyError, ProviderAuthError, type ModelProvider } from "./providers/interface.js";
 import type { RateLimiter } from "../rate-limiter.js";
 import { BudgetExhaustedError } from "../usage/tracker.js";
 
@@ -365,7 +365,11 @@ Return false if:
         targetedAtOperator: true,
         actionRequiredFrom: null,
         nextAction: null,
-        failed: budget ? "budget" : error instanceof InvalidReplyError ? "invalid" : "unreachable",
+        failed: budget
+          ? "budget"
+          : error instanceof ProviderAuthError
+            ? "auth"
+            : error instanceof InvalidReplyError && error.messageSpecific ? "invalid" : "unreachable",
       };
     }
   }

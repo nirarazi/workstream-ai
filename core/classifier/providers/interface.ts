@@ -26,14 +26,19 @@ export interface ClassificationResult {
 }
 
 /**
- * The model can't classify this message: its reply came back but wasn't a usable classification (`billed`), or
- * the provider rejected the request itself as invalid. Unlike an outage, trying the same message again won't help.
+ * The model didn't produce a usable classification even though the provider was reached: its reply came back
+ * but couldn't be used (`billed`), or the provider refused the request. `messageSpecific` says whether this
+ * message is the cause (an unusable reply, a message too long, a moderation refusal), so retrying it won't help,
+ * or the request was refused for a reason that affects every message (credit balance, an unsupported setting).
  */
 export class InvalidReplyError extends Error {
-  constructor(message: string, readonly billed: boolean) {
+  constructor(message: string, readonly billed: boolean, readonly messageSpecific: boolean) {
     super(message);
   }
 }
+
+/** The provider rejected the API key or account (401/403): nothing will classify until settings change. */
+export class ProviderAuthError extends Error {}
 
 export interface ModelProvider {
   name: string;

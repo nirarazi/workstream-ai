@@ -115,7 +115,8 @@ export function createApp(state: EngineState): Hono {
     const llmThrottled = state.rateLimiters.llm?.isThrottling ?? false;
     // A spent daily budget pauses classification, so the inbox isn't keeping up: show it
     const budgetSpent = Boolean(state.usageTracker?.getBudgetStatus().exhausted);
-    const llmDegraded = llmBackoff?.active || llmThrottled || budgetSpent;
+    // Also when the provider refused the API key: nothing is being classified
+    const llmDegraded = llmBackoff?.active || llmThrottled || budgetSpent || state.pipeline?.pauseReason() === "auth";
 
     // Check messaging adapter's own throttling state
     const platformThrottled = state.messagingAdapter?.isThrottling ?? false;

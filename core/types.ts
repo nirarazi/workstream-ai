@@ -52,11 +52,13 @@ export interface Classification {
   breakdown?: ClassificationBreakdown[];
   /**
    * Set when no model answer was obtained. The other fields are then a noise placeholder, not a classification.
-   * - "invalid": the model replied but the reply wasn't usable, or the request was rejected (this message's fault)
-   * - "unreachable": the model couldn't be reached (network, timeout, rate limit, server or auth error)
+   * - "invalid": this message is the problem (an unusable reply, too long, refused by moderation)
+   * - "unreachable": the model couldn't be used right now (network, timeout, rate limit, server error, or a
+   *   refusal that affects every message, such as a spent credit balance)
+   * - "auth": the provider refused the API key or account
    * - "budget": the daily LLM budget is spent
    */
-  failed?: "invalid" | "unreachable" | "budget";
+  failed?: "invalid" | "unreachable" | "auth" | "budget";
 }
 
 export interface Message {

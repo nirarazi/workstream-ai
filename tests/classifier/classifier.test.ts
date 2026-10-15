@@ -625,15 +625,25 @@ describe("OpenAICompatibleProvider", () => {
     vi.restoreAllMocks();
   });
 
-  it("reports a rejected request as unusable but not billed, and an auth error as neither", async () => {
-    const { InvalidReplyError } = await import("../../core/classifier/providers/interface.js");
+  it.each([
+    [413, "Request too large", "message"],
+    [400, "This model's maximum context length is 8192 tokens", "message"],
+    [403, "Input was flagged by moderation", "message"],
+    [400, "Your credit balance is too low to access the API", "account"],
+    [400, "Unsupported parameter: 'response_format'", "account"],
+    [401, "invalid x-api-key", "auth"],
+    [403, "Key not allowed", "auth"],
+  ])("tells whether HTTP %i (%s) is about this message, the account, or the credentials", async (status, body, expected) => {
+    const { InvalidReplyError, ProviderAuthError } = await import("../../core/classifier/providers/interface.js");
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(new Response(body, { status }));
     const provider = new OpenAICompatibleProvider({ name: "test", baseUrl: "http://localhost:11434/v1", model: "m" });
-    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(reply(null, 413) as Response);
-    const rejected = await provider.classify("x".repeat(10), "sys", []).catch((e) => e);
-    expect(rejected).toBeInstanceOf(InvalidReplyError);
-    expect(rejected.billed).toBe(false);
-    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(reply(null, 401) as Response);
-    expect(await provider.classify("x", "sys", []).catch((e) => e)).not.toBeInstanceOf(InvalidReplyError);
+    const err = await provider.classify("OPS-100 is done", "sys", []).catch((e) => e);
+    if (expected === "auth") expect(err).toBeInstanceOf(ProviderAuthError);
+    else {
+      expect(err).toBeInstanceOf(InvalidReplyError);
+      expect(err.billed).toBe(false);
+      expect(err.messageSpecific).toBe(expected === "message");
+    }
     vi.restoreAllMocks();
   });
 
@@ -1107,8 +1117,16 @@ describe("Classifier: marking a missing answer", () => {
 
   it("marks an unusable reply separately, since retrying the same message is unlikely to help", async () => {
     const { InvalidReplyError } = await import("../../core/classifier/providers/interface.js");
-    const classifier = new Classifier(failingProvider(new InvalidReplyError("not JSON", true)), SYSTEM_PROMPT, FEW_SHOT);
+    const classifier = new Classifier(failingProvider(new InvalidReplyError("not JSON", true, true)), SYSTEM_PROMPT, FEW_SHOT);
     expect((await classifier.classify("OPS-100 is done")).failed).toBe("invalid");
+  });
+
+  it("treats a refusal that affects every message (e.g. no credit left) like an outage, and a refused key as auth", async () => {
+    const { InvalidReplyError, ProviderAuthError } = await import("../../core/classifier/providers/interface.js");
+    const account = new Classifier(failingProvider(new InvalidReplyError("credit balance too low", false, false)), SYSTEM_PROMPT, FEW_SHOT);
+    expect((await account.classify("OPS-100 is done")).failed).toBe("unreachable");
+    const auth = new Classifier(failingProvider(new ProviderAuthError("401")), SYSTEM_PROMPT, FEW_SHOT);
+    expect((await auth.classify("OPS-100 is done")).failed).toBe("auth");
   });
 
   it("marks a spent budget separately, since that waits for the reset rather than a retry", async () => {

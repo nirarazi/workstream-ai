@@ -103,8 +103,12 @@ export class UsageTracker implements ModelProvider {
     try {
       result = await this.provider.classify(message, systemPrompt, fewShotExamples);
     } catch (err) {
-      // A reply that came back but couldn't be used was still billed, so it counts toward the budget
-      if (err instanceof InvalidReplyError && err.billed) this.recordUsage(caller, inputTokens, MIN_OUTPUT_TOKEN_OVERHEAD, "estimated");
+      // A reply that came back but couldn't be used was still billed, and so, usually, is a generation cut off by
+      // the timeout: both count toward the budget
+      const timedOut = err instanceof Error && err.name === "TimeoutError";
+      if ((err instanceof InvalidReplyError && err.billed) || timedOut) {
+        this.recordUsage(caller, inputTokens, MIN_OUTPUT_TOKEN_OVERHEAD, "estimated");
+      }
       throw err;
     }
 
