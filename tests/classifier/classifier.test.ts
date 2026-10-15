@@ -608,6 +608,15 @@ describe("Operator profile and sender context", () => {
 // --- OpenAICompatibleProvider response parsing tests ---
 
 describe("OpenAICompatibleProvider", () => {
+  it("sends nothing once disposed", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const provider = new OpenAICompatibleProvider({ name: "test", baseUrl: "http://localhost:11434/v1", model: "llama3" });
+    provider.dispose(); // replaced by new settings
+    await expect(provider.classify("Blocked on OPS-101", "sys", [])).rejects.toThrow(/replaced/);
+    expect(fetchSpy).not.toHaveBeenCalled();
+    fetchSpy.mockRestore();
+  });
+
   it("constructs with correct name and strips trailing slash from baseUrl", () => {
     const provider = new OpenAICompatibleProvider({
       name: "test",

@@ -117,6 +117,14 @@ describe("Classifier with a decision gate", () => {
     expect(decisions.decide).not.toHaveBeenCalled();
     expect(r.status).toBe("in_progress");
   });
+
+  it("makes no decision call once new settings have replaced it", async () => {
+    const decisions = stubDecisions({ blocked_on_human: 0.9, in_progress: 0.1 }, 0.9);
+    const c = new Classifier(llmProvider(), "sys", []);
+    c.setDecisionGate(new DecisionGate(decisions, 0.5, undefined, () => false, () => true));
+    await c.classify("Need S3 creds");
+    expect(decisions.decide).not.toHaveBeenCalled();
+  });
 });
 
 describe("isOpenRouter", () => {

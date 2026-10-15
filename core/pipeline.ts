@@ -12,6 +12,9 @@ import type { WorkItemLinker } from "./graph/linker.js";
 
 const log = createLogger("pipeline");
 
+/** Thrown inside a poll that stop() has superseded, so it unwinds without storing anything. */
+class PipelineStopped extends Error {}
+
 const DEFAULT_POLL_INTERVAL = 30;
 const DEFAULT_LOOKBACK_DAYS = 1;
 const DEFAULT_MAX_THREADS_PER_POLL = 50;
@@ -40,6 +43,8 @@ export class Pipeline {
   private readonly MAX_CONTENT_HASHES = 1000;
   private operatorIdentities: OperatorIdentityMap | null = null;
   private validPrefixes: string[] | null = null;
+  /** Advanced by start() and stop(); a poll that sees it change has been superseded and stops. */
+  private runId = 0;
 
   constructor(
     messagingAdapter: MessagingAdapter,
@@ -75,12 +80,15 @@ export class Pipeline {
       return;
     }
     this.running = true;
+    const run = ++this.runId;
 
     log.info("Pipeline starting");
 
     // Run once immediately
     const result = await this.processOnce();
     log.info("Initial poll complete", result);
+    // stop() during that first poll (a settings save restarts the pipeline) means no polling timer
+    if (run !== this.runId) return;
 
     // Set up the polling interval
     const intervalSeconds = this.config?.messaging?.pollInterval ?? DEFAULT_POLL_INTERVAL;
@@ -107,6 +115,7 @@ export class Pipeline {
       this.intervalHandle = null;
     }
     this.running = false;
+    this.runId++;
     log.info("Pipeline stopped");
   }
 
@@ -115,6 +124,10 @@ export class Pipeline {
     let processed = 0;
     let classified = 0;
     let errors = 0;
+    // After stop(), make no more platform or model calls and write nothing more: a settings save may have
+    // just rotated the credentials or moved the model endpoint this poll was started with
+    const run = this.runId;
+    const stopped = () => run !== this.runId;
 
     // Build per-channel cursors from the database
     const { globalSince, perChannelSince } = this.getPerChannelSince();
@@ -130,6 +143,7 @@ export class Pipeline {
       log.error("Failed to read threads from messaging adapter", err);
       return { processed: 0, classified: 0, errors: 1 };
     }
+    if (stopped()) return { processed, classified, errors };
 
     // Track latest timestamp per channel for cursor updates
     const latestTimestamps = new Map<string, string>();
@@ -156,6 +170,7 @@ export class Pipeline {
     const polledThreadIds = new Set<string>();
 
     for (const thread of cappedThreads) {
+      if (stopped()) break;
       if (!thread.messages || thread.messages.length === 0) {
         continue;
       }
@@ -168,18 +183,22 @@ export class Pipeline {
       // LLM call.  Processing every message ensures intermediate work-item
       // references and status transitions are captured.
       for (const message of thread.messages) {
+        if (stopped()) break;
         if (this.graph.hasEvent(message.id, thread.id)) {
           continue; // already classified — skip cheaply
         }
         processed++;
         try {
-          await this.processMessageInternal(message, thread);
+          await this.processMessageInternal(message, thread, stopped);
           classified++;
         } catch (err) {
+          if (err instanceof PipelineStopped) break;
           log.error("Failed to process message", message.id, err);
           errors++;
         }
       }
+      // A thread cut short doesn't move its channel's cursor; the next pipeline reads it again
+      if (stopped()) break;
 
       // Track the latest timestamp for poll cursor updates
       // (a deferred channel advances only to this thread's start; later replies come back via re-polls)
@@ -192,6 +211,8 @@ export class Pipeline {
         latestTimestamps.set(channelId, cursorTs);
       }
     }
+
+    if (stopped()) return { processed, classified, errors };
 
     // Update poll cursors
     for (const [channelId, timestamp] of latestTimestamps) {
@@ -212,6 +233,7 @@ export class Pipeline {
       let repolled = 0;
 
       for (const activeThread of activeThreads) {
+        if (stopped()) break;
         if (polledThreadIds.has(activeThread.id)) continue; // already covered
 
         try {
@@ -236,13 +258,15 @@ export class Pipeline {
           // Process only unprocessed messages
           let hadNew = false;
           for (const msg of messages) {
+            if (stopped()) break;
             if (this.graph.hasEvent(msg.id, activeThread.id)) continue;
             hadNew = true;
             processed++;
             try {
-              await this.processMessageInternal(msg, threadObj);
+              await this.processMessageInternal(msg, threadObj, stopped);
               classified++;
             } catch (err) {
+              if (err instanceof PipelineStopped) break;
               log.error("Failed to process re-polled message", msg.id, err);
               errors++;
             }
@@ -259,6 +283,8 @@ export class Pipeline {
         log.info(`Re-polled ${repolled} active threads with new messages`);
       }
     }
+
+    if (stopped()) return { processed, classified, errors };
 
     // Recompute bot types after processing — more data may refine classifications
     if (processed > 0) {
@@ -387,7 +413,7 @@ export class Pipeline {
     return { globalSince, perChannelSince };
   }
 
-  private async processMessageInternal(message: Message, thread: Thread): Promise<Classification> {
+  private async processMessageInternal(message: Message, thread: Thread, stopped: () => boolean = () => false): Promise<Classification> {
     // Step 0: Skip if we've already processed this message (avoids duplicate LLM calls)
     if (this.graph.hasEvent(message.id, thread.id)) {
       log.debug("Skipping already-processed message", message.id);
@@ -569,6 +595,9 @@ export class Pipeline {
       message,
       await this.classifier.classify(message.text, candidateContext, this.operatorIdentities, senderContext, this.getValidPrefixes(), channelContext, threadContext),
     );
+    // Stopped while classifying: the call may have been cut off and come back as a fallback, so store
+    // nothing and leave the message for the next pipeline to classify
+    if (stopped()) throw new PipelineStopped();
 
     // Separate LLM-suggested IDs into verified (match an extracted ID) and unverified
     const extractedSet = new Set(extractedIds);
@@ -707,8 +736,11 @@ export class Pipeline {
     // Step 7: Enrich from task adapter if available
     if (this.taskAdapter) {
       for (const workItemId of allWorkItemIds) {
+        // Enrichment is best-effort and the event is already stored: after stop() just skip the rest
+        if (stopped()) break;
         try {
           const detail = await this.taskAdapter.getWorkItem(workItemId);
+          if (stopped()) break;
           if (detail) {
             this.graph.upsertEnrichment({
               workItemId,
