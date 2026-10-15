@@ -76,8 +76,8 @@ describe("Pipeline: when the model gives no answer", () => {
     await pipeline.processOnce(); // the first retry is on the very next poll
 
     expect(graph.getEventByMessageId("T1-m1", "T1")!.reason).toBe("working on it");
-    // Past T1 now (T2, already classified, is skipped and re-read cheaply)
-    expect(graph.getPollCursor("C1")!.lastTimestamp).toBe(T1);
+    // Past both now: T2 was already classified, so it moves the cursor too
+    expect(graph.getPollCursor("C1")!.lastTimestamp).toBe(T2);
   });
 
   it("gives up after three unusable replies, even when nothing else is posted", async () => {
@@ -427,6 +427,32 @@ describe("Pipeline: what counts as newer state", () => {
     await pipeline.processOnce(); // A (started earlier) goes first, then B
 
     expect(graph.getWorkItemById("OPS-1")!.currentAtcStatus).toBe("blocked_on_human");
+    db.close();
+  });
+});
+
+describe("Pipeline: poll cursors", () => {
+  it("move past threads that are already fully classified, but not past a held one", async () => {
+    const db = new Database(":memory:");
+    const graph = new ContextGraph(db);
+    // C1 has an old thread, already classified (e.g. via the re-poll), with a recent reply; C2 also has a held thread
+    const done = thread("D1", "2026-10-12T05:00:00.000Z", "C1", "2026-10-15T07:00:00.000Z");
+    const doneC2 = thread("D2", "2026-10-15T06:00:00.000Z", "C2");
+    const heldC2 = thread("H2", "2026-10-15T05:00:00.000Z", "C2");
+    for (const t of [done, doneC2]) {
+      graph.upsertThread({ id: t.id, channelId: t.channelId, channelName: "fleet-ops", platform: "slack" });
+      for (const m of t.messages) {
+        graph.insertEvent({ threadId: t.id, messageId: m.id, workItemId: null, agentId: null, status: "noise", confidence: 0.9, reason: "", rawText: "", timestamp: m.timestamp, targetedAtOperator: false });
+      }
+    }
+    const pipeline = new Pipeline({ name: "fake", readThreads: vi.fn(async () => [done, doneC2, heldC2]), getThreadMessages: vi.fn(async () => []) } as any,
+      { classify: vi.fn().mockResolvedValue(UNREACHABLE) } as any, graph,
+      new WorkItemLinker(graph, [new DefaultExtractor({ ticketPatterns: [], prPatterns: [] })]), undefined, CONFIG);
+
+    await pipeline.processOnce();
+
+    expect(graph.getPollCursor("C1")!.lastTimestamp).toBe("2026-10-15T07:00:00.000Z"); // past the classified thread
+    expect(graph.getPollCursor("C2")!.lastTimestamp).toBe("2026-10-15T04:59:59.999Z"); // still before the held one
     db.close();
   });
 });

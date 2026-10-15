@@ -337,6 +337,16 @@ export class Pipeline {
 
     if (stopped()) return { processed, classified, errors };
 
+    // Threads already fully classified (often picked up by the active-thread re-poll) move their channel's cursor
+    // too. Otherwise a quiet channel's cursor stays days old, and every quiet-channel read re-fetches that whole
+    // window and its replies. Held and deferred threads still win below.
+    for (const t of threads) {
+      if (pendingKey.has(t) || t.messages.length === 0) continue;
+      const last = t.messages[t.messages.length - 1].timestamp;
+      const existing = latestTimestamps.get(t.channelId);
+      if (!existing || last > existing) latestTimestamps.set(t.channelId, last);
+    }
+
     // A channel with a thread to retry doesn't move past it (null: its start time is unknown, so don't move)
     for (const [channelId, at] of heldBack) {
       const latest = latestTimestamps.get(channelId);
