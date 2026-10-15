@@ -165,6 +165,17 @@ function toSummary(row: SummaryRow): { workItemId: string; summaryText: string; 
   };
 }
 
+/** Ticket-style IDs ("AI-101", "OPS-7") in a message, upper-cased. */
+function ticketIds(text: string): Set<string> {
+  return new Set((text.match(/\b[A-Z][A-Z0-9]+-\d+\b/g) ?? []).map((id) => id.toUpperCase()));
+}
+
+function sameSet(a: Set<string>, b: Set<string>): boolean {
+  if (a.size !== b.size) return false;
+  for (const x of a) if (!b.has(x)) return false;
+  return true;
+}
+
 export class ContextGraph {
   private db: Database;
 
@@ -1208,6 +1219,7 @@ export class ContextGraph {
     windowMinutes?: number;  // default 30
     limit?: number;          // default 5
     excludeThreadId?: string; // exclude the current message's thread
+    before?: string;         // the message's timestamp; the window ends here (default: now)
   }): Array<{
     workItemId: string;
     workItemTitle: string;
@@ -1217,7 +1229,10 @@ export class ContextGraph {
   }> {
     const windowMinutes = params.windowMinutes ?? 30;
     const limit = params.limit ?? 5;
-    const windowStart = new Date(Date.now() - windowMinutes * 60 * 1000).toISOString();
+    // Measured from the message, not the clock: during a catch-up, "the last 30 minutes" of now is empty.
+    const windowEndMs = params.before ? new Date(params.before).getTime() : Date.now();
+    const windowStart = new Date(windowEndMs - windowMinutes * 60 * 1000).toISOString();
+    const windowEnd = new Date(windowEndMs).toISOString();
 
     const baseSQL = `
       SELECT
@@ -1232,7 +1247,7 @@ export class ContextGraph {
       LEFT JOIN agents a ON e.agent_id = a.id
       WHERE t.channel_id = ?
         AND t.message_count <= 1
-        AND e.timestamp > ?
+        AND e.timestamp > ? AND e.timestamp <= ?
         AND e.work_item_id IS NOT NULL
         AND wi.merged_into IS NULL
     `;
@@ -1246,13 +1261,13 @@ export class ContextGraph {
         ORDER BY e.timestamp DESC
         LIMIT ?
       `;
-      args = [params.channelId, windowStart, params.excludeThreadId, limit];
+      args = [params.channelId, windowStart, windowEnd, params.excludeThreadId, limit];
     } else {
       sql = baseSQL + `
         ORDER BY e.timestamp DESC
         LIMIT ?
       `;
-      args = [params.channelId, windowStart, limit];
+      args = [params.channelId, windowStart, windowEnd, limit];
     }
 
     const rows = this.db.db.prepare(sql).all(...args) as Array<{
@@ -1270,6 +1285,57 @@ export class ContextGraph {
       text: row.text.length > 200 ? row.text.slice(0, 200) + "…" : row.text,
       timestamp: row.timestamp,
     }));
+  }
+
+  /**
+   * Finds the open work item a recurring bot alert belongs to: the same sender posted near-identical text
+   * in the same channel within the window before this message. Alert bots re-post as new top-level
+   * messages, so Slack threading can't group them. Dismissed, completed and merged items don't match:
+   * a repeat after the operator handled it is news.
+   */
+  findRecurringWorkItem(params: {
+    agentId: string;
+    channelId: string;
+    text: string;
+    before: string;           // the new message's timestamp
+    windowHours?: number;     // default 24
+    minSimilarity?: number;   // Jaccard over significant words, default 0.75
+  }): string | null {
+    const windowHours = params.windowHours ?? 24;
+    const minSimilarity = params.minSimilarity ?? 0.75;
+    const words = extractSignificantWords(params.text.replace(/<@[^>]+>/g, " "));
+    if (words.size < 5) return null; // too short to tell a repeat from a coincidence
+
+    const since = new Date(new Date(params.before).getTime() - windowHours * 3600 * 1000).toISOString();
+    const rows = this.db.db
+      .prepare(`
+        SELECT e.work_item_id AS work_item_id, e.raw_text AS text
+        FROM events e
+        JOIN threads t ON e.thread_id = t.id
+        JOIN work_items wi ON e.work_item_id = wi.id
+        WHERE e.agent_id = ?
+          AND t.channel_id = ?
+          AND e.timestamp >= ? AND e.timestamp < ?
+          AND e.raw_text IS NOT NULL
+          AND wi.dismissed_at IS NULL
+          AND wi.merged_into IS NULL
+          AND (wi.current_atc_status IS NULL OR wi.current_atc_status NOT IN ('completed', 'noise'))
+        ORDER BY e.timestamp DESC
+        LIMIT 50
+      `)
+      .all(params.agentId, params.channelId, since, params.before) as Array<{ work_item_id: string; text: string }>;
+
+    const tickets = ticketIds(params.text);
+    for (const row of rows) {
+      // A template alert about a different ticket is a different problem, however similar the wording
+      if (!sameSet(tickets, ticketIds(row.text))) continue;
+      const other = extractSignificantWords(row.text.replace(/<@[^>]+>/g, " "));
+      let shared = 0;
+      for (const w of words) if (other.has(w)) shared++;
+      const union = words.size + other.size - shared;
+      if (union > 0 && shared / union >= minSimilarity) return row.work_item_id;
+    }
+    return null;
   }
 
   // --- Merge / Unmerge ---
