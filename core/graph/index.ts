@@ -5,6 +5,7 @@ import { createLogger } from "../logger.js";
 import type {
   ActionableItem,
   Agent,
+  DismissReason,
   Enrichment,
   EntryType,
   Event,
@@ -73,6 +74,7 @@ function toWorkItem(row: WorkItemRow): WorkItem {
     snoozedUntil: row.snoozed_until,
     pinned: Boolean(row.pinned),
     dismissedAt: row.dismissed_at,
+    dismissReason: (row.dismiss_reason as DismissReason | null) ?? null,
     mergedInto: row.merged_into ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -411,9 +413,52 @@ export class ContextGraph {
     return Boolean(newValue);
   }
 
-  dismissWorkItem(workItemId: string): void {
-    this.db.db.prepare("UPDATE work_items SET dismissed_at = ? WHERE id = ?").run(new Date().toISOString(), workItemId);
-    log.debug("Dismissed work item", workItemId);
+  dismissWorkItem(workItemId: string, reason: DismissReason = "operator"): void {
+    this.db.db
+      .prepare("UPDATE work_items SET dismissed_at = ?, dismiss_reason = ? WHERE id = ?")
+      .run(new Date().toISOString(), reason, workItemId);
+    log.debug("Dismissed work item", workItemId, reason);
+  }
+
+  /**
+   * Auto-dismisses Needs-me items with no new message for `days` (reason "expired"). Pinned and currently
+   * snoozed items are left alone. Like an operator dismissal, a new message aimed at the operator brings
+   * the item back. Returns the number of items expired.
+   *
+   * dismissed_at is the item's last message time, not now: a backlog is ingested over several polls, and
+   * a message sent after that time must still bring the item back even if it's ingested after expiry.
+   */
+  expireInactiveItems(days: number, now: Date = new Date()): number {
+    const cutoff = new Date(now.getTime() - days * 24 * 60 * 60 * 1000).toISOString();
+    const result = this.db.db
+      .prepare(`
+        UPDATE work_items SET dismissed_at = (
+          SELECT MAX(e.timestamp) FROM events e
+          WHERE e.work_item_id = work_items.id
+             OR e.thread_id IN (SELECT thread_id FROM thread_work_items WHERE work_item_id = work_items.id)
+        ), dismiss_reason = 'expired'
+        WHERE id IN (
+          SELECT wi.id FROM work_items wi
+          WHERE wi.current_atc_status IN ('blocked_on_human', 'needs_decision')
+            AND wi.merged_into IS NULL
+            AND COALESCE(wi.pinned, 0) = 0
+            AND (wi.snoozed_until IS NULL OR wi.snoozed_until <= ?)
+            AND (
+              SELECT MAX(e.timestamp) FROM events e
+              WHERE e.work_item_id = wi.id
+                 OR e.thread_id IN (SELECT thread_id FROM thread_work_items WHERE work_item_id = wi.id)
+            ) < ?
+            -- not dismissed, or brought back by a later message aimed at the operator (as the inbox does)
+            AND (wi.dismissed_at IS NULL OR wi.dismissed_at < (
+              SELECT MAX(e.timestamp) FROM events e
+              WHERE (e.work_item_id = wi.id
+                 OR e.thread_id IN (SELECT thread_id FROM thread_work_items WHERE work_item_id = wi.id))
+                AND e.targeted_at_operator = 1
+            ))
+        )
+      `)
+      .run(now.toISOString(), cutoff);
+    return result.changes;
   }
 
   // --- Threads ---
@@ -1142,7 +1187,7 @@ export class ContextGraph {
       LEFT JOIN agents a ON e.agent_id = a.id
       LEFT JOIN threads t ON e.thread_id = t.id
       WHERE wi.current_atc_status IN ('blocked_on_human', 'needs_decision')
-        AND (wi.snoozed_until IS NULL OR wi.snoozed_until <= datetime('now'))
+        AND (wi.snoozed_until IS NULL OR datetime(wi.snoozed_until) <= datetime('now'))
         AND (wi.dismissed_at IS NULL OR e.timestamp > wi.dismissed_at)
         AND (wi.merged_into IS NULL)
       ORDER BY
@@ -1193,6 +1238,13 @@ export class ContextGraph {
       WHERE wi.current_atc_status IS NOT NULL
         AND wi.current_atc_status NOT IN ('completed', 'noise')
         AND (wi.merged_into IS NULL)
+        AND (wi.dismissed_at IS NULL OR EXISTS (
+          SELECT 1 FROM events e3
+          WHERE (e3.work_item_id = wi.id
+             OR e3.thread_id IN (SELECT thread_id FROM thread_work_items WHERE work_item_id = wi.id))
+            AND e3.targeted_at_operator = 1
+            AND e3.timestamp > wi.dismissed_at
+        ))
       ORDER BY
         CASE wi.current_atc_status
           WHEN 'blocked_on_human' THEN 0
@@ -1201,6 +1253,63 @@ export class ContextGraph {
           ELSE 3
         END,
         wi.updated_at DESC
+    `,
+      )
+      .all() as Array<Record<string, unknown>>;
+
+    return rows.map(mapActionableRow);
+  }
+
+  /**
+   * Dismissed items that are still dismissed (no message aimed at the operator since), newest dismissal
+   * first, each with its latest event. Items a new message brought back are in Needs me instead.
+   */
+  getDismissedItems(): ActionableItem[] {
+    const rows = this.db.db
+      .prepare(
+        `
+      SELECT
+        wi.*,
+        e.id AS e_id, e.thread_id AS e_thread_id, e.message_id AS e_message_id,
+        e.work_item_id AS e_work_item_id, e.agent_id AS e_agent_id,
+        e.status AS e_status, e.confidence AS e_confidence, e.reason AS e_reason,
+        e.raw_text AS e_raw_text, e.timestamp AS e_timestamp, e.created_at AS e_created_at,
+        e.entry_type AS e_entry_type,
+        e.targeted_at_operator AS e_targeted_at_operator,
+        e.action_required_from AS e_action_required_from,
+        e.next_action AS e_next_action,
+        a.id AS a_id, a.name AS a_name, a.platform AS a_platform,
+        a.platform_user_id AS a_platform_user_id, a.role AS a_role,
+        a.avatar_url AS a_avatar_url, a.is_bot AS a_is_bot,
+        a.first_seen AS a_first_seen, a.last_seen AS a_last_seen,
+        t.id AS t_id, t.channel_id AS t_channel_id, t.channel_name AS t_channel_name,
+        t.platform_meta AS t_platform_meta,
+        t.platform AS t_platform, t.work_item_id AS t_work_item_id,
+        t.last_activity AS t_last_activity, t.message_count AS t_message_count
+      FROM work_items wi
+      LEFT JOIN events e ON e.id = (
+          SELECT e2.id FROM events e2
+          WHERE (e2.work_item_id = wi.id
+             OR e2.thread_id IN (SELECT thread_id FROM thread_work_items WHERE work_item_id = wi.id))
+            AND e2.agent_id IS NOT NULL -- the message that surfaced it, not the dismissal record
+          ORDER BY e2.timestamp DESC
+          LIMIT 1
+        )
+      LEFT JOIN agents a ON e.agent_id = a.id
+      LEFT JOIN threads t ON e.thread_id = t.id
+      WHERE wi.dismissed_at IS NOT NULL
+        AND wi.merged_into IS NULL
+        -- finished since (approved, closed, marked noise): nothing left to set aside
+        AND (wi.current_atc_status IS NULL OR wi.current_atc_status NOT IN ('completed', 'noise'))
+        AND NOT EXISTS (
+          SELECT 1 FROM events e3
+          WHERE (e3.work_item_id = wi.id
+             OR e3.thread_id IN (SELECT thread_id FROM thread_work_items WHERE work_item_id = wi.id))
+            AND e3.targeted_at_operator = 1
+            AND e3.timestamp > wi.dismissed_at
+        )
+      ORDER BY wi.dismissed_at DESC
+      LIMIT 200
     `,
       )
       .all() as Array<Record<string, unknown>>;
@@ -1464,6 +1573,7 @@ function mapActionableRow(row: Record<string, unknown>): ActionableItem {
     snoozedUntil: row.snoozed_until as string | null,
     pinned: Boolean(row.pinned),
     dismissedAt: (row.dismissed_at as string | null) ?? null,
+    dismissReason: (row.dismiss_reason as DismissReason | null) ?? null,
     createdAt: row.created_at as string,
     updatedAt: row.updated_at as string,
   };

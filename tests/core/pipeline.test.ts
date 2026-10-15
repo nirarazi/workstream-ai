@@ -161,6 +161,7 @@ function createMockGraph(): ContextGraph {
     upsertEnrichment: vi.fn(),
     getActiveThreads: vi.fn().mockReturnValue([]),
     getRecentChannelContext: vi.fn().mockReturnValue([]),
+    expireInactiveItems: vi.fn().mockReturnValue(0),
     findRecurringWorkItem: vi.fn().mockReturnValue(null),
     linkThreadWorkItem: vi.fn(),
   } as unknown as ContextGraph;
@@ -988,6 +989,20 @@ describe("Pipeline", () => {
       // Mentioned item gets its own breakdown status (blocked_on_human)
       const itUpdate = upsertCalls.find((c) => c[0].id === "ENG-100" && c[0].currentAtcStatus === "blocked_on_human");
       expect(itUpdate).toBeDefined();
+    });
+  });
+
+  describe("inbox expiry", () => {
+    it("auto-dismisses inactive items after each poll when inbox.expireAfterDays is set", async () => {
+      vi.mocked(adapter.readThreads).mockResolvedValue([]);
+      await new Pipeline(adapter, classifier, graph, linker, undefined, makeConfig({ inbox: { expireAfterDays: 14 } } as Partial<Config>)).processOnce();
+      expect(graph.expireInactiveItems).toHaveBeenCalledWith(14);
+    });
+
+    it("never expires anything when it isn't set", async () => {
+      vi.mocked(adapter.readThreads).mockResolvedValue([]);
+      await pipeline.processOnce();
+      expect(graph.expireInactiveItems).not.toHaveBeenCalled();
     });
   });
 
