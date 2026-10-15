@@ -14,7 +14,11 @@ export interface MessagingAdapter {
 
   /** Transform raw form values before connect(). If not implemented, fields are passed as-is. */
   prepareCredentials?(fields: Record<string, string>): Record<string, string>;
-  connect(credentials: Credentials): Promise<void>;
+  /**
+   * Connect and load what the adapter needs. When `signal` aborts (a newer settings save replaced this one), stop
+   * making platform calls and reject; the engine never uses an adapter whose connect didn't finish.
+   */
+  connect(credentials: Credentials, signal?: AbortSignal): Promise<void>;
   readThreads(since: Date, channels?: string[], perChannelSince?: Map<string, Date>): Promise<Thread[]>;
   replyToThread(threadId: string, channelId: string, message: string): Promise<void>;
   /** Post a new top-level message in a channel (not a reply) */

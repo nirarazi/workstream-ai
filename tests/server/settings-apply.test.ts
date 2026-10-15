@@ -104,7 +104,7 @@ describe("saving inbox settings", () => {
 
     expect(res.status).toBe(200);
     expect(pipeline.stop).toHaveBeenCalled();
-    expect(connect).toHaveBeenCalledWith(expect.objectContaining({ token: "token-b" }));
+    expect(connect).toHaveBeenCalledWith(expect.objectContaining({ token: "token-b" }), expect.any(AbortSignal));
   });
 
   it("still restarts when the pipeline isn't polling, so Save can revive a stalled one", async () => {

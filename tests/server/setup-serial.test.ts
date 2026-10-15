@@ -31,15 +31,19 @@ const { UsageTracker } = await import("../../core/usage/tracker.js");
 const { registerMessagingAdapter } = await import("../../core/adapters/registry.js");
 
 // A stand-in chat adapter whose connect takes a moment, like a real platform, records overlap, and hangs for
-// the token "hang"
+// the token "hang" (until told to stop)
 let connecting = 0;
+let hungSignal: AbortSignal | undefined;
 let maxConnecting = 0;
 registerMessagingAdapter("slowchat", () => ({
   name: "slowchat",
   displayName: "Slow chat",
   getSetupInfo: () => ({ name: "slowchat", displayName: "Slow chat", fields: [{ key: "token", label: "Token", type: "password", required: true, envVar: "SLOWCHAT_TOKEN" }] }),
-  connect: async (creds: { token: string }) => {
-    if (creds.token === "hang") return new Promise<void>(() => {});
+  connect: async (creds: { token: string }, signal?: AbortSignal) => {
+    if (creds.token === "hang") {
+      hungSignal = signal;
+      return new Promise<void>(() => {});
+    }
     if (creds.token === "refused") throw new Error("invalid_auth");
     if (creds.token === "slow") await new Promise((r) => setTimeout(r, 600)); // longer than a real double click
     maxConnecting = Math.max(maxConnecting, ++connecting);
@@ -104,6 +108,7 @@ describe("POST /api/setup", () => {
     const [hung, next] = await Promise.all([save(chat("hang")), save(chat("token-2"))]);
 
     expect(hung.status).toBe(409);
+    expect(hungSignal!.aborted).toBe(true); // the abandoned connect is told to stop, not left running
     expect(next.status).toBe(200);
     expect(state.pipeline).toBe(started[0]);
   });
@@ -138,10 +143,23 @@ describe("POST /api/setup", () => {
 describe("untilDeadlineOrSuperseded", () => {
   it("fails a connect that never finishes", async () => {
     const never = new Promise<void>(() => {});
-    await expect(untilDeadlineOrSuperseded(never, 20, "slowchat connect")).rejects.toThrow("slowchat connect timed out");
+    let signal: AbortSignal | undefined;
+    await expect(untilDeadlineOrSuperseded((s) => { signal = s; return never; }, 20, "slowchat connect")).rejects.toThrow("slowchat connect timed out");
+    expect(signal!.aborted).toBe(true); // the connect itself is told to stop
+  });
+
+  it("handles a connect that throws straight away, without leaving a timer behind", async () => {
+    await expect(untilDeadlineOrSuperseded(() => { throw new Error("bad creds"); }, 30, "x")).rejects.toThrow("bad creds");
+    await new Promise((r) => setTimeout(r, 60)); // past the deadline: an armed timer would reject unhandled here
+  });
+
+  it("absorbs the connect's own rejection after it was told to stop", async () => {
+    const start = (s: AbortSignal) => new Promise<void>((_, reject) => s.addEventListener("abort", () => reject(s.reason)));
+    await expect(untilDeadlineOrSuperseded(start, 20, "x")).rejects.toThrow("timed out");
+    await new Promise((r) => setTimeout(r, 20));
   });
 
   it("passes a result through", async () => {
-    await expect(untilDeadlineOrSuperseded(Promise.resolve("ok"), 1000, "x")).resolves.toBe("ok");
+    await expect(untilDeadlineOrSuperseded(() => Promise.resolve("ok"), 1000, "x")).resolves.toBe("ok");
   });
 });

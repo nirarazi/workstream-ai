@@ -62,6 +62,34 @@ describe("SlackAdapter", () => {
       expect(mockAuthTest).toHaveBeenCalledOnce();
     });
 
+    it("stops listing users once its signal aborts (a newer settings save replaced it)", async () => {
+      const controller = new AbortController();
+      // Two pages of users; the save is replaced while the first page is loading
+      mockUsersList
+        .mockImplementationOnce(async () => {
+          controller.abort(new Error("replaced"));
+          return { members: [], response_metadata: { next_cursor: "page-2" } };
+        })
+        .mockResolvedValue({ members: [], response_metadata: {} });
+
+      await expect(adapter.connect({ token: "xoxp-valid-token" }, controller.signal)).rejects.toThrow();
+      expect(mockUsersList).toHaveBeenCalledTimes(1);
+      expect(mockConversationsList).not.toHaveBeenCalled();
+    });
+
+    it("doesn't retry a rate-limited page after its signal aborts", async () => {
+      const controller = new AbortController();
+      mockUsersList.mockImplementationOnce(async () => {
+        setTimeout(() => controller.abort(new Error("replaced")), 10);
+        throw Object.assign(new Error("ratelimited"), { code: "slack_webapi_rate_limited", retryAfter: 1 });
+      });
+
+      const started = Date.now();
+      await expect(adapter.connect({ token: "xoxp-valid-token" }, controller.signal)).rejects.toThrow("replaced");
+      expect(Date.now() - started).toBeLessThan(500); // the 1s Retry-After wait is cut short
+      expect(mockUsersList).toHaveBeenCalledTimes(1); // and the page isn't retried
+    });
+
     it("should reject tokens that are not xoxp-", async () => {
       await expect(adapter.connect({ token: "xoxb-bot-token" })).rejects.toThrow(
         "xoxp- user token",

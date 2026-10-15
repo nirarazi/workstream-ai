@@ -77,25 +77,33 @@ const CONNECT_DEADLINE_MS = 5 * 60 * 1000;
 /** A save gave up because a newer one arrived: the newer save wins (even if it turns out to be invalid). */
 export class SaveSupersededError extends Error {}
 
-/**
- * Note: the abandoned connect itself keeps running in the background until it settles (adapters can't be
- * cancelled yet); it's never stored, so nothing uses it, but on a very large Slack workspace its listing calls can
- * share the token's rate limit with the newer save's connect.
- */
+/** Run an adapter connect, giving up (and aborting it) when a newer save is waiting or after `ms`. */
 export function untilDeadlineOrSuperseded<T>(
-  work: Promise<T>,
+  start: (signal: AbortSignal) => Promise<T>,
   ms: number,
   what: string,
   superseded: () => boolean = () => false,
 ): Promise<T> {
+  // Aborting tells the work itself to stop (an adapter stops listing), not just this race
+  const controller = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
   let check: ReturnType<typeof setInterval> | undefined;
   const stop = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new Error(`${what} timed out after ${ms / 1000}s`)), ms);
+    const giveUp = (err: Error) => {
+      controller.abort(err);
+      reject(err);
+    };
+    timer = setTimeout(() => giveUp(new Error(`${what} timed out after ${ms / 1000}s`)), ms);
     check = setInterval(() => {
-      if (superseded()) reject(new SaveSupersededError(`${what} abandoned: a newer settings save is waiting`));
+      if (superseded()) giveUp(new SaveSupersededError(`${what} abandoned: a newer settings save is waiting`));
     }, 250);
   });
+  // Started inside a promise, so a connect that throws synchronously still ends up in the race below (and the
+  // timers are cleared), rather than escaping and leaving an armed timer to reject unhandled later
+  const work = Promise.resolve().then(() => start(controller.signal));
+  // Defensive: the race below already observes both; these keep it that way if the code around them changes
+  work.catch(() => undefined);
+  stop.catch(() => undefined);
   return Promise.race([work, stop]).finally(() => {
     clearTimeout(timer);
     clearInterval(check);
@@ -1359,7 +1367,7 @@ export function createApp(state: EngineState): Hono {
         const creds = adapter.prepareCredentials
           ? adapter.prepareCredentials(body.messaging.fields)
           : body.messaging.fields;
-        await untilDeadlineOrSuperseded(adapter.connect(creds as Record<string, string> & { token: string }), CONNECT_DEADLINE_MS, `${adapter.name} connect`, superseded);
+        await untilDeadlineOrSuperseded((signal) => adapter.connect(creds as Record<string, string> & { token: string }, signal), CONNECT_DEADLINE_MS, `${adapter.name} connect`, superseded);
         state.messagingAdapter = adapter;
         reconnecting.delete("messaging");
         const msgIdentity = adapter.getAuthenticatedUser?.();
@@ -1378,7 +1386,7 @@ export function createApp(state: EngineState): Hono {
         const creds = adapter.prepareCredentials
           ? adapter.prepareCredentials(body.task.fields)
           : body.task.fields;
-        await untilDeadlineOrSuperseded(adapter.connect(creds as Record<string, string> & { token: string }), CONNECT_DEADLINE_MS, `${adapter.name} connect`, superseded);
+        await untilDeadlineOrSuperseded((signal) => adapter.connect(creds as Record<string, string> & { token: string }, signal), CONNECT_DEADLINE_MS, `${adapter.name} connect`, superseded);
         state.taskAdapter = adapter;
         reconnecting.delete("task");
         const taskIdentity = adapter.getAuthenticatedUser?.();
