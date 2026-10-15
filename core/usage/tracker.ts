@@ -81,6 +81,7 @@ export class UsageTracker implements ModelProvider {
     fewShotExamples: Array<{ role: string; content: string }>,
     caller = "classifier",
   ): Promise<ClassificationResult> {
+    this.assertNotRetired();
     if (this.isBudgetExhausted()) {
       log.warn("Daily LLM budget exhausted — returning fallback classification");
       return {
@@ -115,6 +116,8 @@ export class UsageTracker implements ModelProvider {
     options: RequestInit,
     caller: string,
   ): Promise<Response> {
+    // Sidekick and summaries hold the tracker for a whole request; later steps mustn't use replaced settings
+    this.assertNotRetired();
     if (this.isBudgetExhausted()) {
       throw new Error("Daily LLM budget exhausted. Resets at midnight UTC.");
     }
@@ -233,6 +236,25 @@ export class UsageTracker implements ModelProvider {
     if (this.provider instanceof OpenAICompatibleProvider) {
       this.provider.abort();
     }
+  }
+
+  private retired = false;
+
+  /** This tracker has been replaced by new settings: cancel its calls and refuse any more, model or decision */
+  dispose(): void {
+    this.retired = true;
+    if (this.provider instanceof OpenAICompatibleProvider) {
+      this.provider.dispose();
+    }
+  }
+
+  get isDisposed(): boolean {
+    return this.retired;
+  }
+
+  /** Any model provider, not just the built-in one, stops at the tracker once it's been replaced */
+  private assertNotRetired(): void {
+    if (this.retired) throw new Error("Usage tracker was replaced by new settings");
   }
 
   /** Prune records older than 365 days */

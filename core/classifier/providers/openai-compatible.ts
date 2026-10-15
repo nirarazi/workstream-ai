@@ -75,6 +75,7 @@ export class OpenAICompatibleProvider implements ModelProvider {
   private readonly cacheBreakpoints: boolean;
   private readonly reasoningEffort?: string;
   private abortController = new AbortController();
+  private disposed = false;
 
   // Backoff state — exposed so the server can surface it to the UI
   private _backoff: BackoffState = {
@@ -91,8 +92,21 @@ export class OpenAICompatibleProvider implements ModelProvider {
   /** Cancel all in-flight requests and retry delays */
   abort(): void {
     this.abortController.abort();
-    this.abortController = new AbortController();
+    if (!this.disposed) this.abortController = new AbortController();
     this._backoff = { active: false, retryCount: 0, nextRetryAt: null, lastError: null };
+  }
+
+  /**
+   * Cancel everything and refuse every later call. For a provider replaced by new settings: a call still
+   * waiting on the rate limiter must not reach the old endpoint with the old key once it gets its turn.
+   */
+  dispose(): void {
+    this.disposed = true;
+    this.abort();
+  }
+
+  private assertActive(): void {
+    if (this.disposed) throw new Error("Provider was replaced by new settings");
   }
 
   constructor(config: OpenAICompatibleConfig) {
@@ -234,6 +248,8 @@ export class OpenAICompatibleProvider implements ModelProvider {
 
     log.debug("Calling Anthropic API", { url, model: this.model });
 
+    this.assertActive();
+
     const response = await fetch(url, {
       method: "POST",
       headers,
@@ -296,6 +312,8 @@ export class OpenAICompatibleProvider implements ModelProvider {
       };
 
       log.debug("Calling OpenAI-compatible API", { url, model: this.model, useSystemRole });
+
+      this.assertActive();
 
       const response = await fetch(url, {
         method: "POST",

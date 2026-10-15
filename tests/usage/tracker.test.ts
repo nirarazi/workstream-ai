@@ -300,3 +300,21 @@ describe("Classifier with UsageTracker", () => {
     db.close();
   });
 });
+
+describe("UsageTracker.dispose", () => {
+  it("refuses model calls and sidekick/summary calls once replaced, for any provider", async () => {
+    const db = new Database(":memory:");
+    const provider = mockProvider({ status: "noise", confidence: 0.9, reason: "", workItemIds: [], title: "" } as ClassificationResult);
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const tracker = new UsageTracker(provider, db, DEFAULT_CONFIG);
+
+    tracker.dispose();
+
+    await expect(tracker.classify("Blocked on OPS-101", "sys", [])).rejects.toThrow(/replaced/);
+    await expect(tracker.completionCall("http://localhost/v1/chat/completions", {}, "sidekick")).rejects.toThrow(/replaced/);
+    expect(provider.classify).not.toHaveBeenCalled();
+    expect(fetchSpy).not.toHaveBeenCalled();
+    fetchSpy.mockRestore();
+    db.close();
+  });
+});
