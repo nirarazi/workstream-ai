@@ -99,18 +99,21 @@ export class UsageTracker implements ModelProvider {
     const fewShotText = fewShotExamples.map((e) => e.content).join("");
     const inputTokens = estimateTokens(systemPrompt + fewShotText + message) + MIN_INPUT_TOKEN_OVERHEAD;
 
+    // Each attempt cut off at the timeout (the provider retries those) was usually billed too
+    let timedOut = 0;
+    const recordTimeouts = () => {
+      for (let i = 0; i < timedOut; i++) this.recordUsage(caller, inputTokens, MIN_OUTPUT_TOKEN_OVERHEAD, "estimated");
+    };
     let result: ClassificationResult;
     try {
-      result = await this.provider.classify(message, systemPrompt, fewShotExamples);
+      result = await this.provider.classify(message, systemPrompt, fewShotExamples, { onTimedOutAttempt: () => timedOut++ });
     } catch (err) {
-      // A reply that came back but couldn't be used was still billed, and so, usually, is a generation cut off by
-      // the timeout: both count toward the budget
-      const timedOut = err instanceof Error && err.name === "TimeoutError";
-      if ((err instanceof InvalidReplyError && err.billed) || timedOut) {
-        this.recordUsage(caller, inputTokens, MIN_OUTPUT_TOKEN_OVERHEAD, "estimated");
-      }
+      recordTimeouts();
+      // A reply that came back but couldn't be used was still billed
+      if (err instanceof InvalidReplyError && err.billed) this.recordUsage(caller, inputTokens, MIN_OUTPUT_TOKEN_OVERHEAD, "estimated");
       throw err;
     }
+    recordTimeouts();
 
     const outputTokens = estimateTokens(JSON.stringify(result)) + MIN_OUTPUT_TOKEN_OVERHEAD;
 

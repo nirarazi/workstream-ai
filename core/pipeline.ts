@@ -35,6 +35,9 @@ const MAX_HOLD_MS = 6 * 60 * 60 * 1000;
 const RETRY_BASE_MS = 30_000;
 const RETRY_MAX_MS = 30 * 60 * 1000;
 
+/** While the model looks unavailable, read the platform no more often than this (new messages wait at most this) */
+const OUTAGE_READ_MAX_WAIT_MS = 5 * 60 * 1000;
+
 /** After the provider refuses the credentials, try again this often (a settings save resumes at once) */
 const AUTH_PAUSE_MS = 5 * 60 * 1000;
 
@@ -88,6 +91,8 @@ export class Pipeline {
   private pausedFor: "budget" | "auth" | null = null;
   /** The last poll had failures and no real model answers */
   private modelUnavailable = false;
+  /** During such an outage, skip platform reads until the earliest held message is due for a retry */
+  private outageReadsAfter = 0;
 
   constructor(
     messagingAdapter: MessagingAdapter,
@@ -181,7 +186,7 @@ export class Pipeline {
     // just rotated the credentials or moved the model endpoint this poll was started with
     const run = this.runId;
     const stopped = () => run !== this.runId;
-    if (Date.now() < this.pausedUntil) {
+    if (Date.now() < this.pausedUntil || (this.modelUnavailable && Date.now() < this.outageReadsAfter)) {
       this.expireInactiveItems();
       return { processed, classified, errors };
     }
@@ -404,6 +409,14 @@ export class Pipeline {
     // the problem. During an outage nothing counts, and messages wait for the model to come back.
     // Failures and not one real answer: the model looks unavailable (shown as a degraded status)
     this.modelUnavailable = failedThisPoll.length > 0 && this.answeredThisPoll === 0;
+    if (this.modelUnavailable) {
+      // Nothing could be classified: re-reading the platform before a held message is due again (up to 30 min
+      // with backoff) only costs reads and rate limit. Capped, so a message arriving meanwhile waits at most 5 min.
+      const now = Date.now();
+      let earliest = now + OUTAGE_READ_MAX_WAIT_MS;
+      for (const rec of this.failedMessages.values()) earliest = Math.min(earliest, rec.nextTryAt);
+      this.outageReadsAfter = earliest;
+    }
     if (this.answeredThisPoll > 0) {
       for (const key of failedThisPoll) {
         const rec = this.failedMessages.get(key);

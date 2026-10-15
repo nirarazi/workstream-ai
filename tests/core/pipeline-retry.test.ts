@@ -233,3 +233,39 @@ describe("Pipeline.isModelUnavailable", () => {
     db.close();
   });
 });
+
+describe("Pipeline: during an outage", () => {
+  it("doesn't re-read the platform before a held message is due, and waits at most 5 minutes", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    let clock = Date.parse("2026-10-15T08:00:00.000Z");
+    vi.setSystemTime(clock);
+    const db = new Database(":memory:");
+    const graph = new ContextGraph(db);
+    const readThreads = vi.fn(async () => [thread("T1", "2026-10-15T05:00:00.000Z")]);
+    const classify = vi.fn().mockResolvedValue(UNREACHABLE);
+    const pipeline = new Pipeline({ name: "fake", readThreads, getThreadMessages: vi.fn(async () => []) } as any, { classify } as any, graph,
+      new WorkItemLinker(graph, [new DefaultExtractor({ ticketPatterns: [], prPatterns: [] })]), undefined, CONFIG);
+    const pollAfter = async (ms: number) => {
+      clock += ms;
+      vi.setSystemTime(clock);
+      await pipeline.processOnce();
+    };
+
+    await pipeline.processOnce(); // fails; first retry is due at once
+    await pollAfter(30_000); // fails again; next retry in 30s
+    const readsSoFar = readThreads.mock.calls.length;
+    await pollAfter(10_000); // before the retry is due: no read
+    expect(readThreads.mock.calls.length).toBe(readsSoFar);
+    await pollAfter(25_000); // due: reads again
+    expect(readThreads.mock.calls.length).toBe(readsSoFar + 1);
+
+    // Much later in a long outage, the wait between reads is capped at 5 minutes
+    for (let i = 0; i < 12; i++) await pollAfter(31 * 60_000);
+    const before = readThreads.mock.calls.length;
+    await pollAfter(5 * 60_000 + 1_000);
+    expect(readThreads.mock.calls.length).toBe(before + 1);
+
+    vi.useRealTimers();
+    db.close();
+  });
+});

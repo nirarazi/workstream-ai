@@ -1,7 +1,7 @@
 // core/classifier/providers/openai-compatible.ts — Universal provider for OpenAI-compatible and Anthropic APIs
 
 import { createLogger } from "../../logger.js";
-import { InvalidReplyError, ProviderAuthError, type ClassificationResult, type ModelProvider } from "./interface.js";
+import { InvalidReplyError, ProviderAuthError, type ClassificationResult, type ClassifyOptions, type ModelProvider } from "./interface.js";
 
 const log = createLogger("openai-compatible");
 
@@ -158,10 +158,11 @@ export class OpenAICompatibleProvider implements ModelProvider {
     message: string,
     systemPrompt: string,
     fewShotExamples: Array<{ role: string; content: string }>,
+    options?: ClassifyOptions,
   ): Promise<ClassificationResult> {
     let rawText: string;
     try {
-      rawText = await this.complete(message, systemPrompt, fewShotExamples);
+      rawText = (await this.completeWithUsage(message, systemPrompt, fewShotExamples, options)).text;
     } catch (err) {
       if (err instanceof ApiError && err.status !== undefined && (REQUEST_REJECTED.has(err.status) || err.status === 401 || err.status === 403)) {
         throw classifyRefusal(err);
@@ -193,6 +194,7 @@ export class OpenAICompatibleProvider implements ModelProvider {
     message: string,
     systemPrompt: string,
     fewShotExamples: Array<{ role: string; content: string }> = [],
+    options?: ClassifyOptions,
   ): Promise<Completion> {
     let lastError: unknown;
 
@@ -210,6 +212,7 @@ export class OpenAICompatibleProvider implements ModelProvider {
         return completion;
       } catch (error) {
         lastError = error;
+        if (error instanceof Error && error.name === "TimeoutError") options?.onTimedOutAttempt?.();
 
         if (attempt < MAX_RETRIES && isRetryable(error)) {
           const serverDelay = error instanceof ApiError && error.retryAfterSeconds
