@@ -420,6 +420,11 @@ export class ContextGraph {
     return Boolean(newValue);
   }
 
+  /** Run `fn` in one SQLite transaction: its writes all land, or none do if it throws. */
+  transaction<T>(fn: () => T): T {
+    return this.db.db.transaction(fn)();
+  }
+
   /** Mark a completed work item as brought back by a message at `at`, or clear the mark (null) when it's closed. */
   setReopened(workItemId: string, at: string | null): void {
     this.db.db.prepare("UPDATE work_items SET reopened_at = ? WHERE id = ?").run(at, workItemId);

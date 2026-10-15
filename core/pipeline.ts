@@ -857,29 +857,155 @@ export class Pipeline {
       throw new ClassificationFailed(classification.failed);
     }
 
-    // Separate LLM-suggested IDs into verified (match an extracted ID) and unverified
-    const extractedSet = new Set(extractedIds);
-    // Add extracted IDs to allWorkItemIds
-    for (const id of extractedIds) {
-      allWorkItemIds.add(id);
-    }
-
-    for (const llmId of classification.workItemIds) {
-      if (!extractedSet.has(llmId)) {
-        // LLM suggested an ID that the regex didn't find — validate before creating
-        if (!this.isValidWorkItemId(llmId)) {
-          log.debug("Discarding LLM-suggested ID that doesn't match known prefixes:", llmId);
-          continue;
-        }
-        this.graph.upsertWorkItem({
-          id: llmId,
-          source: "inferred",
-          title: classification.title || llmId,
-        });
+    // What the classification decides is written together or not at all (steps 2b–6, and the work items it names):
+    // if a write fails (e.g. the database is busy), the retry finds no event and no half-updated work item, and runs
+    // them all again
+    this.graph.transaction(() => {
+      // Separate LLM-suggested IDs into verified (match an extracted ID) and unverified
+      const extractedSet = new Set(extractedIds);
+      // Add extracted IDs to allWorkItemIds
+      for (const id of extractedIds) {
+        allWorkItemIds.add(id);
       }
-      allWorkItemIds.add(llmId);
-    }
 
+      for (const llmId of classification.workItemIds) {
+        if (!extractedSet.has(llmId)) {
+          // LLM suggested an ID that the regex didn't find — validate before creating
+          if (!this.isValidWorkItemId(llmId)) {
+            log.debug("Discarding LLM-suggested ID that doesn't match known prefixes:", llmId);
+            continue;
+          }
+          this.graph.upsertWorkItem({
+            id: llmId,
+            source: "inferred",
+            title: classification.title || llmId,
+          });
+        }
+        allWorkItemIds.add(llmId);
+      }
+
+
+      // Step 2b: If no work item IDs found and this isn't noise, create a synthetic work item
+      // keyed by thread ID so the conversation stays grouped under one item
+      if (allWorkItemIds.size === 0 && classification.status !== "noise") {
+        const syntheticId = `thread:${thread.id}`;
+        // A message classified late (held for a retry) mustn't overwrite the state a newer message already set
+        if (!this.isOlderThanStatus(this.graph.getWorkItemById(syntheticId), message)) {
+          this.graph.upsertWorkItem({
+            id: syntheticId,
+            source: "inferred",
+            title: classification.title || "Untitled conversation",
+            currentAtcStatus: classification.status,
+            currentConfidence: classification.confidence,
+            statusAt: message.timestamp,
+          });
+        }
+        allWorkItemIds.add(syntheticId);
+        log.debug("Created synthetic work item for unticketed thread", syntheticId, classification.title);
+      }
+
+      // Step 3: Upsert agent
+      const agent = this.graph.upsertAgent({
+        id: message.userId,
+        name: message.userName,
+        platform: message.platform,
+        platformUserId: message.userId,
+        avatarUrl: message.userAvatarUrl ?? null,
+        isBot: message.senderType === "agent" ? true : message.senderType === "human" ? false : null,
+      });
+
+      // Step 4: Upsert thread in graph — preserve manually linked work items
+      const isManuallyLinked = existingThread?.manuallyLinked === true;
+      const primaryWorkItemId = allWorkItemIds.size > 0 ? [...allWorkItemIds][0] : null;
+
+      this.graph.upsertThread({
+        id: thread.id,
+        channelId: thread.channelId,
+        channelName: thread.channelName,
+        platformMeta: thread.platformMeta,
+        platform: thread.platform,
+        workItemId: isManuallyLinked ? existingThread!.workItemId : primaryWorkItemId,
+        // Never backwards: a message classified late (held for a retry) is older than what's already recorded
+        lastActivity: existingThread?.lastActivity && existingThread.lastActivity > message.timestamp
+          ? existingThread.lastActivity
+          : message.timestamp,
+        messageCount: thread.messages.length,
+      });
+
+      // Step 5: Insert event with classification
+      this.graph.insertEvent({
+        threadId: thread.id,
+        messageId: message.id,
+        workItemId: primaryWorkItemId,
+        agentId: agent.id,
+        status: classification.status,
+        entryType: classification.entryType,
+        confidence: classification.confidence,
+        reason: classification.reason,
+        rawText: message.text,
+        timestamp: message.timestamp,
+        targetedAtOperator: classification.targetedAtOperator,
+        actionRequiredFrom: classification.actionRequiredFrom,
+        nextAction: classification.nextAction,
+      });
+
+      // Step 6: Update work item status and write junction rows
+      const validatedBreakdownMap = new Map(
+        (classification.breakdown ?? [])
+          .filter((b) => allWorkItemIds.has(b.workItemId))
+          .map((b) => [b.workItemId, b]),
+      );
+
+      for (const workItemId of allWorkItemIds) {
+        // Write junction row (primary for the first/inherited ID, mentioned for the rest)
+        const relation = workItemId === primaryWorkItemId ? "primary" : "mentioned";
+        this.graph.linkThreadWorkItem(thread.id, workItemId, relation);
+
+        const existing = this.graph.getWorkItemById(workItemId);
+        if (existing) {
+          const itemClassification = validatedBreakdownMap.get(workItemId);
+
+          // Only the primary work item inherits the thread-level classification.
+          // Mentioned items must have an explicit breakdown entry — otherwise we
+          // skip the status update.  This prevents a planning/summary thread's
+          // top-level status (e.g. "needs_decision") from bleeding into every
+          // ticket that happened to be listed in the message.
+          if (!itemClassification && relation === "mentioned") {
+            continue;
+          }
+
+          const itemStatus = itemClassification?.status ?? classification.status;
+          const itemConfidence = itemClassification?.confidence ?? classification.confidence;
+          const itemTitle = itemClassification?.title ?? classification.title;
+
+          // A message classified late (held for a retry) doesn't overwrite the status a newer message already set
+          const newer = !this.isOlderThanStatus(existing, message);
+          // Done stays done, except for a blocker or decision (back to the inbox), or a human saying work resumed.
+          // Agent chatter after completion ("thanks, merged") doesn't reopen it, however confident.
+          const shouldUpdate = existing.currentAtcStatus === "completed"
+            ? newer && reopens(itemStatus, message, this.isOperator(message))
+            : (!existing.currentConfidence || itemConfidence >= existing.currentConfidence) && newer;
+
+          if (shouldUpdate) {
+            this.graph.upsertWorkItem({
+              id: workItemId,
+              source: existing.source,
+              currentAtcStatus: itemStatus,
+              currentConfidence: itemConfidence,
+              statusAt: message.timestamp,
+              // Set LLM title if work item has no title yet (e.g. extracted IDs with no Jira enrichment)
+              ...(itemTitle && !existing.title ? { title: itemTitle } : {}),
+            });
+            if (existing.currentAtcStatus === "completed") {
+              this.graph.setReopened(workItemId, message.timestamp);
+              log.info("Reopened completed work item", workItemId, itemStatus);
+            }
+          }
+        }
+      }
+    });
+
+    // Only once it's all stored: a retry that reused the cached answer would skip the steps above
     // Cache the classification for content deduplication
     const hash = this.getContentHash(message.text, thread.id);
     // A stored placeholder isn't an answer to reuse for the same text later
@@ -887,125 +1013,6 @@ export class Pipeline {
     if (this.recentContentHashes.size > this.MAX_CONTENT_HASHES) {
       const firstKey = this.recentContentHashes.keys().next().value;
       if (firstKey) this.recentContentHashes.delete(firstKey);
-    }
-
-    // Step 2b: If no work item IDs found and this isn't noise, create a synthetic work item
-    // keyed by thread ID so the conversation stays grouped under one item
-    if (allWorkItemIds.size === 0 && classification.status !== "noise") {
-      const syntheticId = `thread:${thread.id}`;
-      // A message classified late (held for a retry) mustn't overwrite the state a newer message already set
-      if (!this.isOlderThanStatus(this.graph.getWorkItemById(syntheticId), message)) {
-        this.graph.upsertWorkItem({
-          id: syntheticId,
-          source: "inferred",
-          title: classification.title || "Untitled conversation",
-          currentAtcStatus: classification.status,
-          currentConfidence: classification.confidence,
-          statusAt: message.timestamp,
-        });
-      }
-      allWorkItemIds.add(syntheticId);
-      log.debug("Created synthetic work item for unticketed thread", syntheticId, classification.title);
-    }
-
-    // Step 3: Upsert agent
-    const agent = this.graph.upsertAgent({
-      id: message.userId,
-      name: message.userName,
-      platform: message.platform,
-      platformUserId: message.userId,
-      avatarUrl: message.userAvatarUrl ?? null,
-      isBot: message.senderType === "agent" ? true : message.senderType === "human" ? false : null,
-    });
-
-    // Step 4: Upsert thread in graph — preserve manually linked work items
-    const isManuallyLinked = existingThread?.manuallyLinked === true;
-    const primaryWorkItemId = allWorkItemIds.size > 0 ? [...allWorkItemIds][0] : null;
-
-    this.graph.upsertThread({
-      id: thread.id,
-      channelId: thread.channelId,
-      channelName: thread.channelName,
-      platformMeta: thread.platformMeta,
-      platform: thread.platform,
-      workItemId: isManuallyLinked ? existingThread!.workItemId : primaryWorkItemId,
-      // Never backwards: a message classified late (held for a retry) is older than what's already recorded
-      lastActivity: existingThread?.lastActivity && existingThread.lastActivity > message.timestamp
-        ? existingThread.lastActivity
-        : message.timestamp,
-      messageCount: thread.messages.length,
-    });
-
-    // Step 5: Insert event with classification
-    this.graph.insertEvent({
-      threadId: thread.id,
-      messageId: message.id,
-      workItemId: primaryWorkItemId,
-      agentId: agent.id,
-      status: classification.status,
-      entryType: classification.entryType,
-      confidence: classification.confidence,
-      reason: classification.reason,
-      rawText: message.text,
-      timestamp: message.timestamp,
-      targetedAtOperator: classification.targetedAtOperator,
-      actionRequiredFrom: classification.actionRequiredFrom,
-      nextAction: classification.nextAction,
-    });
-
-    // Step 6: Update work item status and write junction rows
-    const validatedBreakdownMap = new Map(
-      (classification.breakdown ?? [])
-        .filter((b) => allWorkItemIds.has(b.workItemId))
-        .map((b) => [b.workItemId, b]),
-    );
-
-    for (const workItemId of allWorkItemIds) {
-      // Write junction row (primary for the first/inherited ID, mentioned for the rest)
-      const relation = workItemId === primaryWorkItemId ? "primary" : "mentioned";
-      this.graph.linkThreadWorkItem(thread.id, workItemId, relation);
-
-      const existing = this.graph.getWorkItemById(workItemId);
-      if (existing) {
-        const itemClassification = validatedBreakdownMap.get(workItemId);
-
-        // Only the primary work item inherits the thread-level classification.
-        // Mentioned items must have an explicit breakdown entry — otherwise we
-        // skip the status update.  This prevents a planning/summary thread's
-        // top-level status (e.g. "needs_decision") from bleeding into every
-        // ticket that happened to be listed in the message.
-        if (!itemClassification && relation === "mentioned") {
-          continue;
-        }
-
-        const itemStatus = itemClassification?.status ?? classification.status;
-        const itemConfidence = itemClassification?.confidence ?? classification.confidence;
-        const itemTitle = itemClassification?.title ?? classification.title;
-
-        // A message classified late (held for a retry) doesn't overwrite the status a newer message already set
-        const newer = !this.isOlderThanStatus(existing, message);
-        // Done stays done, except for a blocker or decision (back to the inbox), or a human saying work resumed.
-        // Agent chatter after completion ("thanks, merged") doesn't reopen it, however confident.
-        const shouldUpdate = existing.currentAtcStatus === "completed"
-          ? newer && reopens(itemStatus, message, this.isOperator(message))
-          : (!existing.currentConfidence || itemConfidence >= existing.currentConfidence) && newer;
-
-        if (shouldUpdate) {
-          this.graph.upsertWorkItem({
-            id: workItemId,
-            source: existing.source,
-            currentAtcStatus: itemStatus,
-            currentConfidence: itemConfidence,
-            statusAt: message.timestamp,
-            // Set LLM title if work item has no title yet (e.g. extracted IDs with no Jira enrichment)
-            ...(itemTitle && !existing.title ? { title: itemTitle } : {}),
-          });
-          if (existing.currentAtcStatus === "completed") {
-            this.graph.setReopened(workItemId, message.timestamp);
-            log.info("Reopened completed work item", workItemId, itemStatus);
-          }
-        }
-      }
     }
 
     // Step 7: Enrich from task adapter if available
