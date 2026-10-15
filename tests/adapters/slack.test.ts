@@ -107,6 +107,63 @@ describe("SlackAdapter", () => {
       expect(threads[0].messages[0].text).toBe("Hello from agent");
     });
 
+    it("skips a channel that no longer exists instead of failing the whole poll", async () => {
+      mockConversationsList.mockResolvedValue({
+        channels: [{ id: "CGONE", name: "deleted" }, { id: "C001", name: "general" }],
+        response_metadata: { next_cursor: "" },
+      });
+      const gone = Object.assign(new Error("An API error occurred: channel_not_found"), {
+        code: "slack_webapi_platform_error",
+        data: { ok: false, error: "channel_not_found" },
+      });
+      mockConversationsHistory.mockImplementation(async ({ channel }: { channel: string }) => {
+        if (channel === "CGONE") throw gone;
+        return { messages: [makeSlackMessage({ ts: "1700000001.000100" })], response_metadata: { next_cursor: "" } };
+      });
+
+      const threads = await adapter.readThreads(new Date("2024-01-01"));
+
+      expect(threads.map((t) => t.channelId)).toEqual(["C001"]);
+    });
+
+    it("reads a channel quiet for a day only every 5 minutes, and an active one every poll", async () => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      try {
+        vi.setSystemTime(new Date("2026-10-13T12:00:00Z"));
+        mockConversationsList.mockResolvedValue({
+          channels: [{ id: "CBUSY", name: "busy" }, { id: "CQUIET", name: "quiet" }],
+          response_metadata: { next_cursor: "" },
+        });
+        const recentTs = String(new Date("2026-10-13T11:00:00Z").getTime() / 1000);
+        mockConversationsHistory.mockImplementation(async ({ channel }: { channel: string }) => ({
+          messages: channel === "CBUSY" ? [makeSlackMessage({ ts: recentTs })] : [],
+          response_metadata: { next_cursor: "" },
+        }));
+        const readChannels = () => mockConversationsHistory.mock.calls.map((c) => c[0].channel);
+
+        await adapter.readThreads(new Date("2026-10-10T00:00:00Z"));
+        expect(readChannels()).toEqual(["CBUSY", "CQUIET"]);
+
+        mockConversationsHistory.mockClear();
+        vi.setSystemTime(new Date("2026-10-13T12:01:00Z"));
+        await adapter.readThreads(new Date("2026-10-10T00:00:00Z"));
+        expect(readChannels()).toEqual(["CBUSY"]);
+
+        mockConversationsHistory.mockClear();
+        vi.setSystemTime(new Date("2026-10-13T12:06:00Z"));
+        await adapter.readThreads(new Date("2026-10-10T00:00:00Z"));
+        expect(readChannels()).toEqual(["CBUSY", "CQUIET"]);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("still fails the poll on errors that aren't about one channel", async () => {
+      mockConversationsList.mockResolvedValue({ channels: [{ id: "C001", name: "general" }], response_metadata: { next_cursor: "" } });
+      mockConversationsHistory.mockRejectedValue(Object.assign(new Error("invalid_auth"), { data: { ok: false, error: "invalid_auth" } }));
+      await expect(adapter.readThreads(new Date("2024-01-01"))).rejects.toThrow("invalid_auth");
+    });
+
     it("should fetch thread replies for messages with reply_count > 0", async () => {
       mockConversationsList.mockResolvedValue({
         channels: [{ id: "C001", name: "general" }],
@@ -479,7 +536,7 @@ describe("SlackAdapter", () => {
       mockUsersList.mockResolvedValueOnce({
         members: [
           { id: "U001", name: "byte", is_bot: true, profile: { display_name: "Relay" } },
-          { id: "U002", name: "nir", is_bot: false, profile: { display_name: "Nir" } },
+          { id: "U002", name: "nir", is_bot: false, profile: { display_name: "Alex" } },
         ],
         response_metadata: { next_cursor: "" },
       });
@@ -550,7 +607,7 @@ describe("SlackAdapter", () => {
       (localAdapter as any).channelMap = new Map([["C123", { name: "test", isPrivate: false }]]);
       (localAdapter as any).userInfoMap = new Map([
         ["U_BOT", { name: "Relay", avatar: "", isBot: true }],
-        ["U_HUMAN", { name: "Nir", avatar: "", isBot: false }],
+        ["U_HUMAN", { name: "Alex", avatar: "", isBot: false }],
       ]);
 
       const messages = await localAdapter.getThreadMessages("1711900000.000000", "C123");

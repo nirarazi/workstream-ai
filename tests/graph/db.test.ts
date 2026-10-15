@@ -686,11 +686,11 @@ describe("Database", () => {
         rawText: "Please approve PR #716",
         timestamp: new Date().toISOString(),
         targetedAtOperator: true,
-        actionRequiredFrom: ["U_GUY123", "U_OPERATOR"],
+        actionRequiredFrom: ["U_DANA123", "U_OPERATOR"],
         nextAction: "Review and approve PR #716",
       });
 
-      expect(event.actionRequiredFrom).toEqual(["U_GUY123", "U_OPERATOR"]);
+      expect(event.actionRequiredFrom).toEqual(["U_DANA123", "U_OPERATOR"]);
       expect(event.nextAction).toBe("Review and approve PR #716");
     });
 
@@ -827,7 +827,7 @@ describe("Database", () => {
     it("classifies conversational bots as agent", () => {
       // Create an AI agent bot: varied messages, participates in threads with others
       graph.upsertAgent({ id: "U-levy", name: "Atlas", platform: "slack", platformUserId: "U-levy", isBot: true });
-      graph.upsertAgent({ id: "U-human", name: "Nir", platform: "slack", platformUserId: "U-human", isBot: false });
+      graph.upsertAgent({ id: "U-human", name: "Alex", platform: "slack", platformUserId: "U-human", isBot: false });
       graph.upsertWorkItem({ id: "OPS-100", source: "extracted", title: "Deployment task" });
 
       graph.upsertThread({ id: "t-conv1", channelId: "C-ops", channelName: "#ops", platform: "slack", workItemId: "OPS-100", lastActivity: new Date().toISOString(), messageCount: 3 });
@@ -901,6 +901,58 @@ describe("Database", () => {
       expect(graph.getWorkItemById("thread:alert-2")!.currentAtcStatus).toBe("noise");
       // Human-participated thread stays blocked
       expect(graph.getWorkItemById("thread:mixed")!.currentAtcStatus).toBe("blocked_on_human");
+    });
+  });
+  describe("findRecurringWorkItem", () => {
+    const ALERT =
+      ":rotating_light: <@U0OPERATOR1> Credential EXPIRED on lane `account-7`: access and refresh tokens are empty. " +
+      "Lane contributes no capacity and must be logged in again, then clear its failover entry.";
+    const setup = (opts: { status?: string; dismissed?: boolean } = {}) => {
+      graph.upsertAgent({ id: "bot", name: "Fleet Alerts", platform: "slack", platformUserId: "UBOT" });
+      graph.upsertWorkItem({ id: "thread:1", source: "inferred", title: "Lane account-7 credential expired", currentAtcStatus: (opts.status ?? "blocked_on_human") as never });
+      graph.upsertThread({ id: "1", channelId: "C-alerts", platform: "slack", workItemId: "thread:1" });
+      graph.insertEvent({
+        threadId: "1", messageId: "m1", workItemId: "thread:1", agentId: "bot", status: "blocked_on_human",
+        confidence: 0.9, reason: "", rawText: ALERT, timestamp: "2026-10-12T20:00:00.000Z",
+      });
+      if (opts.dismissed) graph.dismissWorkItem("thread:1");
+    };
+    const find = (text: string, before = "2026-10-12T20:30:00.000Z", agentId = "bot", channelId = "C-alerts") =>
+      graph.findRecurringWorkItem({ agentId, channelId, text, before });
+
+    it("matches a re-post of the same alert, even with an extra clause", () => {
+      setup();
+      expect(find(ALERT.replace("are empty.", "are empty (TRANSITION: was OK last run)."))).toBe("thread:1");
+    });
+
+    it("ignores different text, other senders, other channels and old alerts", () => {
+      setup();
+      expect(find("Deploy of the reports service failed on staging: migration 42 timed out, rolled back automatically.")).toBeNull();
+      expect(find(ALERT, undefined, "someone-else")).toBeNull();
+      expect(find(ALERT, undefined, "bot", "C-other")).toBeNull();
+      expect(find(ALERT, "2026-10-14T20:30:00.000Z")).toBeNull();
+    });
+
+    it("doesn't join the same template about a different ticket", () => {
+      setup();
+      const ci = (ticket: string) =>
+        `CI failed for ${ticket} on the main branch: unit tests in the billing service timed out after retries, please take a look.`;
+      graph.insertEvent({
+        threadId: "1", messageId: "m2", workItemId: "thread:1", agentId: "bot", status: "blocked_on_human",
+        confidence: 0.9, reason: "", rawText: ci("OPS-101"), timestamp: "2026-10-12T20:10:00.000Z",
+      });
+      expect(find(ci("OPS-101"))).toBe("thread:1");
+      expect(find(ci("OPS-202"))).toBeNull();
+    });
+
+    it("doesn't join an item the operator dismissed", () => {
+      setup({ dismissed: true });
+      expect(find(ALERT)).toBeNull();
+    });
+
+    it("doesn't join a completed item", () => {
+      setup({ status: "completed" });
+      expect(find(ALERT)).toBeNull();
     });
   });
 });

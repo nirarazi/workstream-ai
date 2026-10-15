@@ -15,6 +15,9 @@ export type EntryType =
   | "escalation"
   | "noise";
 
+/** Why a work item was dismissed: by the operator, or auto-dismissed after inbox.expireAfterDays. */
+export type DismissReason = "operator" | "expired";
+
 export interface OperatorIdentity {
   userId: string;
   userName: string;
@@ -63,6 +66,13 @@ export interface Message {
   senderType?: "agent" | "human" | "notification" | "unknown";
 }
 
+/** What a message is a reply to: the thread's work item and the messages before it. */
+export interface ThreadContext {
+  workItem?: { id: string; title: string; status?: string | null };
+  /** Earlier messages in the same thread, oldest first. */
+  messages: Array<{ senderName: string; text: string }>;
+}
+
 export interface Thread {
   id: string;
   channelId: string;
@@ -88,6 +98,7 @@ export interface WorkItem {
   snoozedUntil: string | null;
   pinned: boolean;
   dismissedAt: string | null;
+  dismissReason: DismissReason | null;
   mergedInto: string | null;
   createdAt: string;
   updatedAt: string;

@@ -10,6 +10,8 @@ import {
 } from "../lib/api";
 import AdapterFieldGroup from "./AdapterFieldGroup";
 
+const MAX_EXPIRE_DAYS = 3650;
+
 interface SetupProps {
   onComplete: () => void;
 }
@@ -99,6 +101,11 @@ export default function Setup({ onComplete }: SetupProps): JSX.Element {
   // Rate limits
   const [rateLimits, setRateLimits] = useState<Record<string, RateLimitInfo>>({});
 
+  // Inbox: auto-dismiss after N days of no activity ("" = never)
+  const [expireAfterDays, setExpireAfterDays] = useState<string>("");
+  // Only send the setting once it's known (loaded or typed), so a failed load can't save over it
+  const [inboxKnown, setInboxKnown] = useState(false);
+
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -168,6 +175,10 @@ export default function Setup({ onComplete }: SetupProps): JSX.Element {
         if (prefill.rateLimits) {
           setRateLimits(prefill.rateLimits);
         }
+        if (prefill.inbox?.expireAfterDays != null) {
+          setExpireAfterDays(String(prefill.inbox.expireAfterDays));
+        }
+        setInboxKnown(true);
       })
       .catch(() => {});
   }, []);
@@ -271,6 +282,14 @@ export default function Setup({ onComplete }: SetupProps): JSX.Element {
           rl[name] = info.maxPerMinute;
         }
         payload.rateLimits = rl;
+      }
+
+      if (inboxKnown) {
+        const days = expireAfterDays.trim() === "" ? null : Number(expireAfterDays);
+        if (days !== null && !(Number.isInteger(days) && days >= 1 && days <= MAX_EXPIRE_DAYS)) {
+          throw new Error(`Auto-dismiss must be a whole number of days from 1 to ${MAX_EXPIRE_DAYS}, or empty`);
+        }
+        payload.inbox = { expireAfterDays: days };
       }
 
       await postSetup(payload);
@@ -631,6 +650,34 @@ export default function Setup({ onComplete }: SetupProps): JSX.Element {
             </p>
           </fieldset>
         )}
+
+        {/* ── Inbox ─────────────────────────────────────────── */}
+        <fieldset className="space-y-3">
+          <legend className="text-xs font-semibold uppercase tracking-widest text-gray-500 mb-1">Inbox</legend>
+          <div>
+            <label htmlFor="expire-after-days" className="text-xs text-gray-400 mb-1 block">
+              Auto-dismiss items with no activity after (days)
+            </label>
+            <input
+              id="expire-after-days"
+              type="number"
+              min={1}
+              max={MAX_EXPIRE_DAYS}
+              step={1}
+              placeholder="Never"
+              value={expireAfterDays}
+              onChange={(e) => {
+                setExpireAfterDays(e.target.value);
+                setInboxKnown(true);
+              }}
+              className={inputClass}
+            />
+          </div>
+          <p className="text-[11px] text-gray-600">
+            Leave empty to keep items until you act on them. Auto-dismissed items move to Stream → Dismissed,
+            and come back if someone writes to you about them again.
+          </p>
+        </fieldset>
 
         {error && <p className="text-xs text-red-400">{error}</p>}
 

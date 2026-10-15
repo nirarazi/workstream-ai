@@ -12,6 +12,16 @@ classifier:
     apiKey: ${WORKSTREAM_LLM_API_KEY:-}
   # Confidence threshold — below this, classify as "noise"
   confidenceThreshold: 0.6
+  # "llm": the LLM above classifies everything (default).
+  # "decisions": a decision model decides status and whether the operator should see each message;
+  #   the LLM still writes titles, next actions and work item links. Both run in parallel per message.
+  #   Each message, up to 4 earlier thread messages, the operator's name and remit are sent to the
+  #   decision provider below, in addition to the LLM provider.
+  mode: llm
+  # decisions:
+  #   provider: openai            # openai (OpenAI Decisions API) | typesafe (Jev; uses OpenRouter if no key) | llm
+  #   apiKey: ${OPENAI_API_KEY:-}
+  #   interruptThreshold: 0.5     # surface when P(blocked)+P(decision) reaches this; lower = fewer misses, more interrupts
 
 taskAdapter:
   # baseUrl loaded from WORKSTREAM_JIRA_BASE_URL env var
@@ -42,6 +52,16 @@ lookback:
   initialDays: 1             # 1 day — keeps initial LLM calls manageable
   # Max threads to classify per poll cycle (0 = unlimited)
   maxThreadsPerPoll: 50
+  # After a pause, catch up at most this many days of history (defaults to initialDays)
+  # maxCatchUpDays: 1
+
+inbox:
+  # Auto-dismiss Needs-me items with no new message for this many days (null = never).
+  # They move to Stream > Dismissed and come back if someone writes to you about them again.
+  expireAfterDays: null
+  # A later message saying a block is now waiting on someone else takes it out of Needs me
+  # (it stays in All active) when the model is at least this sure of it. Lower = drops sooner.
+  handoffMinConfidence: 0.6
 
 continuation:
   # Strategy for grouping non-threaded messages into conversations

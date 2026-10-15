@@ -161,6 +161,8 @@ function createMockGraph(): ContextGraph {
     upsertEnrichment: vi.fn(),
     getActiveThreads: vi.fn().mockReturnValue([]),
     getRecentChannelContext: vi.fn().mockReturnValue([]),
+    expireInactiveItems: vi.fn().mockReturnValue(0),
+    findRecurringWorkItem: vi.fn().mockReturnValue(null),
     linkThreadWorkItem: vi.fn(),
   } as unknown as ContextGraph;
 }
@@ -222,6 +224,7 @@ describe("Pipeline", () => {
         { senderName: "Relay", senderType: "unknown", channelName: "fleet-ops" },
         [],
         [],
+        expect.objectContaining({ messages: expect.any(Array) }),
       );
     });
 
@@ -378,8 +381,9 @@ describe("Pipeline", () => {
     });
 
     it("passes per-channel cursors when available", async () => {
+      const recent = new Date(Date.now() - 2 * 3600_000).toISOString();
       vi.mocked(graph.getAllPollCursors).mockReturnValue([
-        { channelId: "C-1", lastTimestamp: "2026-03-29T08:00:00.000Z", updatedAt: "2026-03-29T08:00:00.000Z" },
+        { channelId: "C-1", lastTimestamp: recent, updatedAt: recent },
       ]);
 
       vi.mocked(adapter.readThreads).mockResolvedValue([]);
@@ -388,7 +392,21 @@ describe("Pipeline", () => {
 
       const perChannelSince = vi.mocked(adapter.readThreads).mock.calls[0][2];
       expect(perChannelSince).toBeDefined();
-      expect(perChannelSince!.get("C-1")!.toISOString()).toBe("2026-03-29T08:00:00.000Z");
+      expect(perChannelSince!.get("C-1")!.toISOString()).toBe(recent);
+    });
+
+    it("caps catch-up after a long pause instead of replaying months of history", async () => {
+      vi.mocked(graph.getAllPollCursors).mockReturnValue([
+        { channelId: "C-old", lastTimestamp: "2026-03-29T08:00:00.000Z", updatedAt: "2026-03-29T08:00:00.000Z" },
+      ]);
+      vi.mocked(adapter.readThreads).mockResolvedValue([]);
+
+      await pipeline.processOnce();
+
+      const since = vi.mocked(adapter.readThreads).mock.calls[0][2]!.get("C-old")!;
+      const days = (Date.now() - since.getTime()) / 86_400_000;
+      expect(days).toBeGreaterThan(0.9);
+      expect(days).toBeLessThan(3.1); // initialDays from the test config, never months
     });
 
     it("falls back to initialDays lookback when no poll cursors exist", async () => {
@@ -427,6 +445,41 @@ describe("Pipeline", () => {
 
       // Should set cursor to the latest timestamp
       expect(graph.setPollCursor).toHaveBeenCalledWith("C-1", "2026-03-30T12:00:00.000Z");
+    });
+
+    it("doesn't spend the per-poll cap on threads that are already fully classified", async () => {
+      const done = makeThread({ id: "t-done" }, [makeMessage({ id: "m-done", threadId: "t-done", timestamp: "2026-03-30T09:00:00.000Z" })]);
+      const fresh = makeThread({ id: "t-new" }, [makeMessage({ id: "m-new", text: "m-new", threadId: "t-new" })]);
+      vi.mocked(graph.hasEvent).mockImplementation((id: string) => id === "m-done");
+      vi.mocked(adapter.readThreads).mockResolvedValue([fresh, done]);
+      pipeline = new Pipeline(adapter, classifier, graph, linker, undefined, makeConfig({
+        lookback: { ...config.lookback, maxThreadsPerPoll: 1 },
+      } as Partial<Config>));
+
+      await pipeline.processOnce();
+
+      expect(vi.mocked(classifier.classify).mock.calls.map((c) => c[0])).toEqual(["m-new"]);
+    });
+
+    it("caps to the oldest threads and keeps the cursor before the ones it deferred", async () => {
+      const at = (h: number) => `2026-03-30T${String(h).padStart(2, "0")}:00:00.000Z`;
+      const thread = (h: number, replyH?: number) =>
+        makeThread({ id: `t-${h}` }, [
+          makeMessage({ id: `msg-${h}`, text: `msg-${h}`, threadId: `t-${h}`, timestamp: at(h) }),
+          ...(replyH ? [makeMessage({ id: `reply-${h}`, text: `reply-${h}`, threadId: `t-${h}`, timestamp: at(replyH) })] : []),
+        ]);
+      // Newest first, as Slack returns history; the 09:00 thread has a reply at 13:00
+      vi.mocked(adapter.readThreads).mockResolvedValue([thread(12), thread(11), thread(10), thread(9, 13)]);
+      pipeline = new Pipeline(adapter, classifier, graph, linker, undefined, makeConfig({
+        lookback: { ...config.lookback, maxThreadsPerPoll: 2 },
+      } as Partial<Config>));
+
+      await pipeline.processOnce();
+
+      const classifiedIds = vi.mocked(classifier.classify).mock.calls.map((c) => c[0]);
+      expect(classifiedIds).toEqual(["msg-9", "reply-9", "msg-10"]);
+      // Not 13:00 (the reply) — the 11:00 and 12:00 threads must still be read next poll
+      expect(graph.setPollCursor).toHaveBeenCalledWith("C-1", at(10));
     });
   });
 
@@ -585,6 +638,7 @@ describe("Pipeline", () => {
         { senderName: "Relay", senderType: "unknown", channelName: "fleet-ops" },
         [],
         [],
+        expect.objectContaining({ messages: expect.any(Array) }),
       );
     });
 
@@ -645,6 +699,28 @@ describe("Pipeline", () => {
       expect(adapter.readThreads).toHaveBeenCalledTimes(1);
 
       pipeline.stop();
+    });
+
+    it("skips interval ticks while a poll is still running", async () => {
+      vi.useFakeTimers();
+      try {
+        vi.mocked(adapter.readThreads).mockResolvedValueOnce([]);
+        await pipeline.start();
+
+        // The next poll hangs (e.g. a long catch-up); later ticks must not start more polls
+        let release!: (t: Thread[]) => void;
+        vi.mocked(adapter.readThreads).mockReturnValueOnce(new Promise((r) => (release = r)));
+        await vi.advanceTimersByTimeAsync(30_000 * 4);
+        expect(adapter.readThreads).toHaveBeenCalledTimes(2);
+
+        vi.mocked(adapter.readThreads).mockResolvedValue([]);
+        release([]);
+        await vi.advanceTimersByTimeAsync(30_000);
+        expect(adapter.readThreads).toHaveBeenCalledTimes(3);
+      } finally {
+        pipeline.stop();
+        vi.useRealTimers();
+      }
     });
   });
 
@@ -916,12 +992,54 @@ describe("Pipeline", () => {
     });
   });
 
+  describe("inbox expiry", () => {
+    it("auto-dismisses inactive items after each poll when inbox.expireAfterDays is set", async () => {
+      vi.mocked(adapter.readThreads).mockResolvedValue([]);
+      await new Pipeline(adapter, classifier, graph, linker, undefined, makeConfig({ inbox: { expireAfterDays: 14 } } as Partial<Config>)).processOnce();
+      expect(graph.expireInactiveItems).toHaveBeenCalledWith(14);
+    });
+
+    it("never expires anything when it isn't set", async () => {
+      vi.mocked(adapter.readThreads).mockResolvedValue([]);
+      await pipeline.processOnce();
+      expect(graph.expireInactiveItems).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("operator's own messages", () => {
+    const operatorIdentities = new Map([["slack", { userId: "U-operator", userName: "Alex" }]]);
+    const run = async (classification: Partial<Classification>, userId = "U-operator") => {
+      vi.mocked(adapter.readThreads).mockResolvedValue([makeThread({}, [makeMessage({ userId, userName: "Alex" })])]);
+      vi.mocked(classifier.classify).mockResolvedValue(makeClassification(classification));
+      await new Pipeline(adapter, classifier, graph, linker, undefined, config, operatorIdentities).processOnce();
+      return vi.mocked(graph.insertEvent).mock.calls.at(-1)![0];
+    };
+
+    it("are never targeted at the operator, and don't leave the item waiting on them", async () => {
+      const event = await run({ status: "blocked_on_human", targetedAtOperator: true, actionRequiredFrom: [] });
+      expect(event.targetedAtOperator).toBe(false);
+      expect(event.status).toBe("in_progress");
+    });
+
+    it("keep a block the operator hands to someone else, untargeted", async () => {
+      const event = await run({ status: "blocked_on_human", targetedAtOperator: true, actionRequiredFrom: ["U-dana"] });
+      expect(event.targetedAtOperator).toBe(false);
+      expect(event.status).toBe("blocked_on_human");
+    });
+
+    it("leave other senders' classifications alone", async () => {
+      const event = await run({ status: "blocked_on_human", targetedAtOperator: true }, "U-agent1");
+      expect(event.targetedAtOperator).toBe(true);
+      expect(event.status).toBe("blocked_on_human");
+    });
+  });
+
   describe("operator identity passthrough", () => {
     it("passes operator identities map to classifier on classify call", async () => {
       vi.mocked(adapter.readThreads).mockResolvedValue([makeThread()]);
 
       const operatorIdentities = new Map([
-        ["slack", { userId: "U-operator", userName: "Nir" }],
+        ["slack", { userId: "U-operator", userName: "Alex" }],
       ]);
       const pipelineWithIdentity = new Pipeline(adapter, classifier, graph, linker, undefined, config, operatorIdentities);
 
@@ -934,6 +1052,7 @@ describe("Pipeline", () => {
         expect.objectContaining({ senderName: "Relay" }),
         [],
         [],
+        expect.objectContaining({ messages: expect.any(Array) }),
       );
     });
 
@@ -950,6 +1069,7 @@ describe("Pipeline", () => {
         expect.objectContaining({ senderName: "Relay" }),
         [],
         [],
+        expect.objectContaining({ messages: expect.any(Array) }),
       );
     });
 
@@ -966,6 +1086,7 @@ describe("Pipeline", () => {
         { senderName: "Prism", senderType: "agent", channelName: "#design" },
         [],
         [],
+        expect.objectContaining({ messages: expect.any(Array) }),
       );
     });
   });
@@ -981,7 +1102,7 @@ describe("Pipeline", () => {
         confidence: 0.9,
         reason: "Agent is waiting for operator review",
         workItemIds: [],
-        actionRequiredFrom: ["U_GUY123"],
+        actionRequiredFrom: ["U_DANA123"],
         nextAction: "Review and approve PR #716",
       });
       vi.mocked(classifier.classify).mockResolvedValue(classification);
@@ -993,7 +1114,7 @@ describe("Pipeline", () => {
           threadId: "t-blocked",
           messageId: "msg-blocked",
           status: "blocked_on_human",
-          actionRequiredFrom: ["U_GUY123"],
+          actionRequiredFrom: ["U_DANA123"],
           nextAction: "Review and approve PR #716",
         }),
       );
@@ -1033,7 +1154,7 @@ describe("Pipeline", () => {
         channelId: "C001",
         channelName: "general",
         userId: "U002",
-        userName: "Nir",
+        userName: "Alex",
         text: "Looks good",
         timestamp: new Date().toISOString(),
         platform: "slack",
@@ -1103,6 +1224,7 @@ describe("Pipeline", () => {
         expect.objectContaining({ senderName: "Relay" }),
         [],
         [],
+        expect.objectContaining({ messages: expect.any(Array) }),
       );
     });
 
@@ -1195,6 +1317,35 @@ describe("Pipeline", () => {
       const upsertWorkItemCalls = vi.mocked(graph.upsertWorkItem).mock.calls;
       const syntheticIds = upsertWorkItemCalls.map((c: any[]) => c[0].id);
       expect(syntheticIds).not.toContain("thread:t-new");
+    });
+
+    it("joins a bot's re-posted alert to the open item without relying on the LLM", async () => {
+      const msg = makeMessage({ id: "alert-2", threadId: "t-alert-2", senderType: "agent", text: "Credential expired on lane 7" });
+      vi.mocked(adapter.readThreads).mockResolvedValue([makeThread({ id: "t-alert-2" }, [msg])]);
+      vi.mocked(classifier.classify).mockResolvedValue(makeClassification({ status: "blocked_on_human", workItemIds: [] }));
+      vi.mocked(graph.findRecurringWorkItem).mockReturnValue("thread:alert-1");
+
+      await pipeline.processOnce();
+
+      const upsertThreadCalls = vi.mocked(graph.upsertThread).mock.calls;
+      expect(upsertThreadCalls[upsertThreadCalls.length - 1][0].workItemId).toBe("thread:alert-1");
+      const createdIds = vi.mocked(graph.upsertWorkItem).mock.calls.map((c: any[]) => c[0].id);
+      expect(createdIds).not.toContain("thread:t-alert-2");
+    });
+
+    it("doesn't look for recurring alerts from humans or for replies", async () => {
+      const human = makeMessage({ id: "h-1", threadId: "t-h", senderType: "human" });
+      const root = makeMessage({ id: "root", threadId: "t-r", senderType: "agent", timestamp: "2026-03-30T09:00:00.000Z" });
+      const reply = makeMessage({ id: "reply", threadId: "t-r", senderType: "agent" });
+      vi.mocked(graph.hasEvent).mockImplementation((id: string) => id === "root");
+      vi.mocked(adapter.readThreads).mockResolvedValue([
+        makeThread({ id: "t-h" }, [human]),
+        makeThread({ id: "t-r" }, [root, reply]),
+      ]);
+
+      await pipeline.processOnce();
+
+      expect(graph.findRecurringWorkItem).not.toHaveBeenCalled();
     });
   });
 

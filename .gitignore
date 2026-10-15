@@ -10,3 +10,5 @@ config/local.yaml
 .superpowers/
 .claude/
 .worktrees/
+# Eval set: real fleet messages — never commit
+eval-data/

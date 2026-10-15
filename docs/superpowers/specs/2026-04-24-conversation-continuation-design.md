@@ -7,7 +7,7 @@
 
 Non-threaded messages in DM channels (and occasionally in regular channels) each create a separate synthetic work item, even when they're part of the same conversation. In Slack DMs, threading is supported but rarely used — people send sequential messages. The pipeline treats each standalone message as its own "thread" (`thread_ts === ts`), which creates a separate `thread:$ts` synthetic work item per message.
 
-**Example:** Dana sends "I'm OK with it. But would a partner?" and Nir replies 2 minutes later with "No big difference from floating it over..." — these are the same conversation but create two separate work items with different titles.
+**Example:** Dana sends "I'm OK with it. But would a partner?" and Alex replies 2 minutes later with "No big difference from floating it over..." — these are the same conversation but create two separate work items with different titles.
 
 Deterministic grouping (time windows, same-participant heuristics) cannot reliably distinguish continuations from new topics. The classifier already has the infrastructure to receive candidate work items — it just lacks the message content needed to judge semantic continuity.
 

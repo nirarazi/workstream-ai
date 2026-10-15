@@ -120,7 +120,23 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/** Slack errors that mean "this channel can't be read any more", as opposed to auth or rate-limit failures. */
+const CHANNEL_GONE_ERRORS = new Set(["channel_not_found", "not_in_channel", "is_archived", "access_denied"]);
+
+/**
+ * conversations.history allows ~50 calls/min, so reading every channel each poll takes minutes in a
+ * workspace with 100+ channels. A channel with no message in QUIET_AFTER_MS is read every QUIET_POLL_MS
+ * instead of every poll; its first new message puts it back on the fast path.
+ */
+const QUIET_AFTER_MS = 24 * 60 * 60 * 1000;
+const QUIET_POLL_MS = 5 * 60 * 1000;
+
 export class SlackAdapter implements MessagingAdapter {
+  /** Channels that error on read (deleted, archived, left) — skipped and logged once each. */
+  private readonly unreadableChannels = new Set<string>();
+  /** Latest message time seen per channel (epoch ms), and when each channel was last read. */
+  private readonly channelLastActivity = new Map<string, number>();
+  private readonly channelLastRead = new Map<string, number>();
   readonly name = "slack";
   readonly displayName = "Slack";
 
@@ -198,6 +214,18 @@ export class SlackAdapter implements MessagingAdapter {
     }
   }
 
+  private noteActivity(channelId: string, atMs: number): void {
+    if (atMs > (this.channelLastActivity.get(channelId) ?? 0)) this.channelLastActivity.set(channelId, atMs);
+  }
+
+  /** True when the channel has been quiet for a day and was read less than QUIET_POLL_MS ago. */
+  private isQuietAndRecentlyRead(channelId: string, now: number): boolean {
+    const lastRead = this.channelLastRead.get(channelId);
+    if (lastRead === undefined) return false; // never read in this session
+    const lastActivity = this.channelLastActivity.get(channelId) ?? 0;
+    return now - lastActivity > QUIET_AFTER_MS && now - lastRead < QUIET_POLL_MS;
+  }
+
   async readThreads(since: Date, channels?: string[], perChannelSince?: Map<string, Date>): Promise<Thread[]> {
     this.ensureConnected();
 
@@ -214,13 +242,34 @@ export class SlackAdapter implements MessagingAdapter {
 
       // Use per-channel cursor if available, otherwise fall back to global
       const channelSince = perChannelSince?.get(channelId);
+
+      // The cursor is the last processed message, so it also tells us when the channel was last active
+      const now = Date.now();
+      if (channelSince) this.noteActivity(channelId, channelSince.getTime());
+      if (this.isQuietAndRecentlyRead(channelId, now)) continue;
+      this.channelLastRead.set(channelId, now);
       const oldest = channelSince
         ? String(channelSince.getTime() / 1000)
         : globalOldest;
 
-      const messages = await this.fetchChannelHistory(channelId, oldest);
+      let messages: Awaited<ReturnType<SlackAdapter["fetchChannelHistory"]>>;
+      try {
+        messages = await this.fetchChannelHistory(channelId, oldest);
+      } catch (err) {
+        // One gone channel must not stop polling for all the others.
+        const code = (err as { data?: { error?: string } }).data?.error;
+        if (code && CHANNEL_GONE_ERRORS.has(code)) {
+          if (!this.unreadableChannels.has(channelId)) {
+            this.unreadableChannels.add(channelId);
+            log.warn(`Skipping channel ${channelName} (${channelId}): ${code}`);
+          }
+          continue;
+        }
+        throw err;
+      }
 
       for (const msg of messages) {
+        if (msg.ts) this.noteActivity(channelId, parseFloat(msg.ts) * 1000);
         if (!msg.ts || msg.subtype === "channel_join" || msg.subtype === "channel_leave") {
           continue;
         }
