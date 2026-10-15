@@ -264,14 +264,16 @@ describe("SlackAdapter", () => {
         });
         listChannels(["CGONE", ...ids]);
         at("12:00:00");
-        await adapter.readThreads(since);
+        // CGONE was active until the operator left it, so its cursor alone doesn't make it quiet
+        const left = new Map([["CGONE", new Date("2026-10-13T11:50:00Z")]]);
+        await adapter.readThreads(since, undefined, left);
         gone = false; // e.g. the operator is invited back
 
         const goneReads: string[] = [];
         for (const time of ["12:01:00", "12:06:00", "12:11:00", "12:16:00", "12:21:00", "12:26:00", "12:31:00"]) {
           mockConversationsHistory.mockClear();
           at(time);
-          await adapter.readThreads(since);
+          await adapter.readThreads(since, undefined, left);
           if (readChannels().includes("CGONE")) goneReads.push(time);
           expect(readChannels().length).toBeLessThanOrEqual(15);
         }

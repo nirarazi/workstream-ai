@@ -142,7 +142,7 @@ const CHANNEL_GONE_ERRORS = new Set(["channel_not_found", "not_in_channel", "is_
 const QUIET_AFTER_MS = 24 * 60 * 60 * 1000;
 const QUIET_POLL_MS = 5 * 60 * 1000;
 /**
- * Quiet channels read in one poll, most overdue first. Without a cap they all fall due in the same poll
+ * Quiet (and unreadable) channels read in one poll, most overdue first. Without a cap they all fall due in the same poll
  * (they were all first read together), and ~100 history calls at ~50/min hold that poll for minutes.
  */
 const QUIET_READS_PER_POLL = 15;
@@ -150,7 +150,7 @@ const QUIET_READS_PER_POLL = 15;
 const UNREADABLE_RETRY_MS = 30 * 60 * 1000;
 
 export class SlackAdapter implements MessagingAdapter {
-  /** Channels that error on read (deleted, archived, left) — skipped and logged once each. */
+  /** Channels that error on read (deleted, archived, left) — logged once, then retried every UNREADABLE_RETRY_MS. */
   private readonly unreadableChannels = new Set<string>();
   /** Latest message time seen per channel (epoch ms), and when each channel was last read. */
   private readonly channelLastActivity = new Map<string, number>();
@@ -253,7 +253,7 @@ export class SlackAdapter implements MessagingAdapter {
    * QUIET_POLL_MS, and unreadable ones not tried for UNREADABLE_RETRY_MS (so they can't crowd out readable ones,
    * yet a channel that's rejoined is still found).
    */
-  private quietChannelsDue(channelIds: string[], now: number): Set<string> {
+  private slowChannelsDue(channelIds: string[], now: number): Set<string> {
     const due: Array<{ id: string; lastRead: number }> = [];
     for (const id of channelIds) {
       const lastRead = this.channelLastRead.get(id);
@@ -281,7 +281,7 @@ export class SlackAdapter implements MessagingAdapter {
       if (channelSince) this.noteActivity(channelId, channelSince.getTime());
     }
     const pollStart = Date.now();
-    const quietDue = this.quietChannelsDue(channelIds, pollStart);
+    const slowDue = this.slowChannelsDue(channelIds, pollStart);
     // A failed poll's threads are all dropped, so the channels it read keep their place in the quiet queue
     const lastReadBefore = new Map<string, number | undefined>();
 
@@ -293,7 +293,7 @@ export class SlackAdapter implements MessagingAdapter {
         // Use per-channel cursor if available, otherwise fall back to global
         const channelSince = perChannelSince?.get(channelId);
 
-        if (this.isReadSlowly(channelId, pollStart) && !quietDue.has(channelId)) continue;
+        if (this.isReadSlowly(channelId, pollStart) && !slowDue.has(channelId)) continue;
         lastReadBefore.set(channelId, this.channelLastRead.get(channelId));
         this.channelLastRead.set(channelId, Date.now());
         const oldest = channelSince
