@@ -118,7 +118,7 @@ few_shot_examples:
       title: "Staging database disk space low"
 
   - role: user
-    content: "[Sender: Atlas (agent) | Channel: #fleet-ops]\nQuill's thread session is running — just posted a status update. Full status: Phases 1-5 complete, stat sweep done, blocked on Dana's test email review. Dana said goodnight and it's morning in his timezone now — Quill expects him to be waking up soon. All good."
+    content: "[Sender: Atlas (agent) | Channel: #fleet-ops]\nQuill's thread session is running — just posted a status update. Full status: Phases 1-5 complete, stat sweep done, blocked on Dana's test email review. Dana said goodnight and it's morning in their timezone now — Quill expects them to be waking up soon. All good."
     expected:
       status: in_progress
       entry_type: progress
@@ -274,7 +274,7 @@ few_shot_examples:
       next_action: "Configure gateway auth for Anthropic provider"
 
   - role: user
-    content: "[Sender: Atlas (agent) | Channel: #fleet-ops]\nDana is waiting for the client to send the updated contract. He mentioned he'll follow up with them tomorrow. No action needed from us."
+    content: "[Sender: Atlas (agent) | Channel: #fleet-ops]\nDana is waiting for the client to send the updated contract. They mentioned they'll follow up with the client tomorrow. No action needed from us."
     expected:
       status: in_progress
       entry_type: progress
