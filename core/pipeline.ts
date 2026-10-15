@@ -89,6 +89,8 @@ export class Pipeline {
   private running = false;
   private polling = false;
   private recentContentHashes = new Map<string, Classification>();
+  /** Answers whose writes failed (e.g. the database was busy), by thread and message id, until a retry stores them */
+  private classifiedNotStored = new Map<string, Classification>();
   private readonly MAX_CONTENT_HASHES = 1000;
   private operatorIdentities: OperatorIdentityMap | null = null;
   private validPrefixes: string[] | null = null;
@@ -656,7 +658,10 @@ export class Pipeline {
     failedThisPoll: string[],
   ): "held" {
     // Entries for messages that vanished before a retry
-    if (this.failedMessages.size > 10_000) this.failedMessages.clear();
+    if (this.failedMessages.size > 10_000) {
+      this.failedMessages.clear();
+      this.classifiedNotStored.clear();
+    }
     const r = rec ?? { tries: 0, attempts: 0, since: now, nextTryAt: 0 };
     r.attempts++;
     r.nextTryAt = now + retryDelay(r.attempts);
@@ -843,7 +848,9 @@ export class Pipeline {
         .slice(-THREAD_CONTEXT_MESSAGES)
         .map((m) => ({ senderName: m.userName, text: m.text })),
     };
-    const classification = this.fromOperator(
+    // A message whose writes failed after it was classified reuses that answer: the retry redoes the writes, not the call
+    const writeKey = `${thread.id}:${message.id}`;
+    const classification = this.classifiedNotStored.get(writeKey) ?? this.fromOperator(
       message,
       await this.classifier.classify(message.text, candidateContext, this.operatorIdentities, senderContext, this.getValidPrefixes(), channelContext, threadContext),
     );
@@ -860,6 +867,9 @@ export class Pipeline {
     // What the classification decides is written together or not at all (steps 2b–6, and the work items it names):
     // if a write fails (e.g. the database is busy), the retry finds no event and no half-updated work item, and runs
     // them all again
+    // Logged once committed, not for writes that were rolled back. No return inside: it would skip what follows.
+    const reopened: string[] = [];
+    this.classifiedNotStored.set(writeKey, classification);
     this.graph.transaction(() => {
       // Separate LLM-suggested IDs into verified (match an extracted ID) and unverified
       const extractedSet = new Set(extractedIds);
@@ -883,7 +893,6 @@ export class Pipeline {
         }
         allWorkItemIds.add(llmId);
       }
-
 
       // Step 2b: If no work item IDs found and this isn't noise, create a synthetic work item
       // keyed by thread ID so the conversation stays grouped under one item
@@ -998,12 +1007,15 @@ export class Pipeline {
             });
             if (existing.currentAtcStatus === "completed") {
               this.graph.setReopened(workItemId, message.timestamp);
-              log.info("Reopened completed work item", workItemId, itemStatus);
+              reopened.push(`${workItemId} (${itemStatus})`);
             }
           }
         }
       }
     });
+
+    this.classifiedNotStored.delete(writeKey);
+    for (const item of reopened) log.info("Reopened completed work item", item);
 
     // Only once it's all stored: a retry that reused the cached answer would skip the steps above
     // Cache the classification for content deduplication

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, afterEach } from "vitest";
+import { describe, it, expect, vi, afterEach, onTestFinished } from "vitest";
 import { Pipeline } from "../../core/pipeline.js";
 import { Database } from "../../core/graph/db.js";
 import { ContextGraph } from "../../core/graph/index.js";
@@ -17,7 +17,10 @@ const message: Message = {
 } as Message;
 const thread: Thread = { id: "T1", channelId: "C1", channelName: "fleet-ops", platform: "slack", workItemId: null, lastActivity: message.timestamp, messageCount: 1, messages: [message] };
 
-afterEach(() => vi.useRealTimers());
+afterEach(() => {
+  vi.useRealTimers();
+  vi.restoreAllMocks();
+});
 
 describe("Pipeline: a write failing after classification", () => {
   it("leaves nothing half-written, and the retry still updates the work item", async () => {
@@ -29,14 +32,19 @@ describe("Pipeline: a write failing after classification", () => {
     const classify = vi.fn(async () => BLOCKED);
     const readThreads = vi.fn(async () => [thread]);
     const pipeline = new Pipeline({ name: "fake", readThreads, getThreadMessages: vi.fn(async () => []) } as any, { classify } as any, graph, linker, undefined, CONFIG);
-    // After classification the event is stored, then linking it to its work item (step 6) fails, once. The linker's
-    // own call, before classification, goes through.
+    // After classification the event is stored, then linking it to its work item (step 6) fails, once
     const realLink = graph.linkThreadWorkItem.bind(graph);
-    let calls = 0;
-    const link = vi.spyOn(graph, "linkThreadWorkItem").mockImplementation((...args) => {
-      if (++calls === 2) throw new Error("SQLITE_BUSY");
+    let failed = false;
+    let linksAfterFailure = 0;
+    vi.spyOn(graph, "linkThreadWorkItem").mockImplementation((...args) => {
+      if (classify.mock.calls.length > 0 && !failed) {
+        failed = true;
+        throw new Error("SQLITE_BUSY");
+      }
+      if (failed) linksAfterFailure++;
       return realLink(...args);
     });
+    onTestFinished(() => db.close());
 
     await pipeline.processOnce();
     expect(graph.hasEvent("m1", "T1")).toBe(false); // rolled back with the rest
@@ -45,8 +53,8 @@ describe("Pipeline: a write failing after classification", () => {
     await pipeline.processOnce(); // the retry, on the next poll
     expect(graph.hasEvent("m1", "T1")).toBe(true);
     expect(graph.getWorkItemById("OPS-101")?.currentAtcStatus).toBe("blocked_on_human");
-    expect(calls).toBeGreaterThan(2); // step 6 really ran again
-    link.mockRestore();
-    db.close();
+    expect(failed).toBe(true);
+    expect(linksAfterFailure).toBeGreaterThan(0); // step 6 really ran again
+    expect(classify).toHaveBeenCalledTimes(1); // with the answer kept from the failed try, not a new model call
   });
 });
