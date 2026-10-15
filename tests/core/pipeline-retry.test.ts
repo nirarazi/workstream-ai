@@ -215,3 +215,21 @@ describe("Pipeline: when the model gives no answer", () => {
     expect(graph.getPollCursor("CB")!.lastTimestamp).toBe("2026-10-15T05:19:59.999Z");
   });
 });
+
+describe("Pipeline.isModelUnavailable", () => {
+  it("is true after a poll with failures and no real answers, and false once the model answers", async () => {
+    const db = new Database(":memory:");
+    const graph = new ContextGraph(db);
+    const classify = vi.fn().mockResolvedValue(UNREACHABLE);
+    const pipeline = new Pipeline(
+      { name: "fake", readThreads: vi.fn(async () => [thread("T1", "2026-10-15T05:00:00.000Z")]), getThreadMessages: vi.fn(async () => []) } as any,
+      { classify } as any, graph, new WorkItemLinker(graph, [new DefaultExtractor({ ticketPatterns: [], prPatterns: [] })]), undefined, CONFIG,
+    );
+    await pipeline.processOnce();
+    expect(pipeline.isModelUnavailable()).toBe(true);
+    classify.mockResolvedValue(ANSWER);
+    await pipeline.processOnce();
+    expect(pipeline.isModelUnavailable()).toBe(false);
+    db.close();
+  });
+});

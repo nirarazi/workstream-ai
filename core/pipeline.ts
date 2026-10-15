@@ -86,6 +86,8 @@ export class Pipeline {
    */
   private pausedUntil = 0;
   private pausedFor: "budget" | "auth" | null = null;
+  /** The last poll had failures and no real model answers */
+  private modelUnavailable = false;
 
   constructor(
     messagingAdapter: MessagingAdapter,
@@ -108,6 +110,11 @@ export class Pipeline {
   /** Why classification is paused right now, if it is: shown as a degraded model status */
   pauseReason(): "budget" | "auth" | null {
     return Date.now() < this.pausedUntil ? this.pausedFor : null;
+  }
+
+  /** Whether the last poll got failures and no real model answers (an outage, or an account-wide refusal) */
+  isModelUnavailable(): boolean {
+    return this.modelUnavailable;
   }
 
   /** Settings read at each poll (inbox) take effect from the next one, without a restart. */
@@ -395,6 +402,8 @@ export class Pipeline {
 
     // A failed try counts only if other messages were classified this poll: the model is up, so the message is
     // the problem. During an outage nothing counts, and messages wait for the model to come back.
+    // Failures and not one real answer: the model looks unavailable (shown as a degraded status)
+    this.modelUnavailable = failedThisPoll.length > 0 && this.answeredThisPoll === 0;
     if (this.answeredThisPoll > 0) {
       for (const key of failedThisPoll) {
         const rec = this.failedMessages.get(key);
