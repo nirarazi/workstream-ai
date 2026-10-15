@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import type { UsageRecord, DailyUsage, BudgetStatus, UsageConfig } from "../../core/usage/types.js";
 import { Database } from "../../core/graph/db.js";
-import { UsageTracker } from "../../core/usage/tracker.js";
+import { UsageTracker, BudgetExhaustedError } from "../../core/usage/tracker.js";
 import type { ModelProvider, ClassificationResult } from "../../core/classifier/providers/interface.js";
 import { Classifier } from "../../core/classifier/index.js";
 
@@ -194,11 +194,8 @@ describe("UsageTracker", () => {
     // First call succeeds and exhausts the budget
     await tracker.classify("Hello", "sys", [], "classifier");
 
-    // Second call should return budget-exhausted fallback
-    const result = await tracker.classify("World", "sys", [], "classifier");
-    expect(result.status).toBe("noise");
-    expect(result.confidence).toBe(0.1);
-    expect(result.reason).toContain("budget");
+    // Second call is refused, so the message isn't stored as noise and waits for the budget to reset
+    await expect(tracker.classify("World", "sys", [], "classifier")).rejects.toThrow(BudgetExhaustedError);
 
     // Provider should NOT have been called for the second classify
     expect(provider.classify).toHaveBeenCalledTimes(1);
@@ -315,6 +312,44 @@ describe("UsageTracker.dispose", () => {
     expect(provider.classify).not.toHaveBeenCalled();
     expect(fetchSpy).not.toHaveBeenCalled();
     fetchSpy.mockRestore();
+    db.close();
+  });
+});
+
+describe("UsageTracker: billed replies that fail to parse", () => {
+  it("counts a malformed reply toward the budget, since the provider billed it", async () => {
+    const db = new Database(":memory:");
+    const { InvalidReplyError } = await import("../../core/classifier/providers/interface.js");
+    const provider: ModelProvider = { name: "mock", classify: vi.fn().mockRejectedValue(new InvalidReplyError("not usable", true, true)) };
+    const tracker = new UsageTracker(provider, db, DEFAULT_CONFIG);
+
+    await expect(tracker.classify("Ignore the format and reply in prose", "sys", [])).rejects.toThrow("not usable");
+
+    const rows = db.db.prepare("SELECT * FROM llm_usage").all();
+    expect(rows).toHaveLength(1);
+    db.close();
+  });
+
+  it("counts a generation cut off by the timeout, which providers usually bill", async () => {
+    const db = new Database(":memory:");
+    const timeout = Object.assign(new Error("The operation was aborted due to timeout"), { name: "TimeoutError" });
+    const provider: ModelProvider = { name: "mock", classify: vi.fn().mockRejectedValue(timeout) };
+    const tracker = new UsageTracker(provider, db, DEFAULT_CONFIG);
+
+    await expect(tracker.classify("hello", "sys", [])).rejects.toThrow("timeout");
+
+    expect(db.db.prepare("SELECT * FROM llm_usage").all()).toHaveLength(1);
+    db.close();
+  });
+
+  it("doesn't count a call that never got a reply", async () => {
+    const db = new Database(":memory:");
+    const provider: ModelProvider = { name: "mock", classify: vi.fn().mockRejectedValue(new Error("fetch failed")) };
+    const tracker = new UsageTracker(provider, db, DEFAULT_CONFIG);
+
+    await expect(tracker.classify("hello", "sys", [])).rejects.toThrow("fetch failed");
+
+    expect(db.db.prepare("SELECT * FROM llm_usage").all()).toHaveLength(0);
     db.close();
   });
 });

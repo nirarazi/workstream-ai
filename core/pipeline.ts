@@ -16,6 +16,36 @@ const log = createLogger("pipeline");
 /** Thrown inside a poll that stop() has superseded, so it unwinds without storing anything. */
 class PipelineStopped extends Error {}
 
+/** Thrown when the model gave no answer for a message; nothing is stored and the message is tried again. */
+class ClassificationFailed extends Error {
+  constructor(readonly kind: "invalid" | "unreachable" | "auth" | "budget") {
+    super(`Classification failed (${kind})`);
+  }
+}
+
+/**
+ * A message whose classification keeps failing is stored as noise after this many counted tries, so it can't hold
+ * its channel back forever. An unusable reply always counts; "couldn't reach the model" counts only when other
+ * messages got real answers in the same poll, so an outage doesn't use up tries.
+ */
+const MAX_CLASSIFY_ATTEMPTS = 3;
+/** However the tries go, a message isn't held back for longer than this. */
+const MAX_HOLD_MS = 6 * 60 * 60 * 1000;
+/** Retries back off (next poll, then 30s, 1m, 2m … up to 30m), which bounds the calls a held message costs. */
+const RETRY_BASE_MS = 30_000;
+const RETRY_MAX_MS = 30 * 60 * 1000;
+
+/** After the provider refuses the credentials, try again this often (a settings save resumes at once) */
+const AUTH_PAUSE_MS = 5 * 60 * 1000;
+
+function retryDelay(attempts: number): number {
+  return attempts <= 1 ? 0 : Math.min(RETRY_BASE_MS * 2 ** (attempts - 2), RETRY_MAX_MS);
+}
+
+function nextUtcMidnight(now = new Date()): number {
+  return Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1);
+}
+
 const DEFAULT_POLL_INTERVAL = 30;
 const DEFAULT_LOOKBACK_DAYS = 1;
 const DEFAULT_MAX_THREADS_PER_POLL = 50;
@@ -46,6 +76,18 @@ export class Pipeline {
   private validPrefixes: string[] | null = null;
   /** Advanced by start() and stop(); a poll that sees it change has been superseded and stops. */
   private runId = 0;
+  /** Messages (`threadId:messageId`) whose classification failed, cleared once one is stored. */
+  private failedMessages = new Map<string, { tries: number; attempts: number; since: number; nextTryAt: number }>();
+  /** Real model answers this poll: evidence the model is up when deciding whether a failed try counts. */
+  private answeredThisPoll = 0;
+  /**
+   * Polling (and its Slack reads) pauses after the daily budget runs out, until it resets, and for a few minutes
+   * after the provider refuses the credentials (a settings save builds a new pipeline, so a fix applies at once).
+   */
+  private pausedUntil = 0;
+  private pausedFor: "budget" | "auth" | null = null;
+  /** The last poll had failures and no real model answers */
+  private modelUnavailable = false;
 
   constructor(
     messagingAdapter: MessagingAdapter,
@@ -63,6 +105,16 @@ export class Pipeline {
     this.taskAdapter = taskAdapter;
     this.config = config;
     this.operatorIdentities = operatorIdentities ?? null;
+  }
+
+  /** Why classification is paused right now, if it is: shown as a degraded model status */
+  pauseReason(): "budget" | "auth" | null {
+    return Date.now() < this.pausedUntil ? this.pausedFor : null;
+  }
+
+  /** Whether the last poll got failures and no real model answers (an outage, or an account-wide refusal) */
+  isModelUnavailable(): boolean {
+    return this.modelUnavailable;
   }
 
   /** Settings read at each poll (inbox) take effect from the next one, without a restart. */
@@ -129,6 +181,12 @@ export class Pipeline {
     // just rotated the credentials or moved the model endpoint this poll was started with
     const run = this.runId;
     const stopped = () => run !== this.runId;
+    if (Date.now() < this.pausedUntil) {
+      this.expireInactiveItems();
+      return { processed, classified, errors };
+    }
+    const failedThisPoll: string[] = [];
+    this.answeredThisPoll = 0;
 
     // Build per-channel cursors from the database
     const { globalSince, perChannelSince } = this.getPerChannelSince();
@@ -148,6 +206,9 @@ export class Pipeline {
 
     // Track latest timestamp per channel for cursor updates
     const latestTimestamps = new Map<string, string>();
+    // Channels with a message to retry: the cursor stays before that thread
+    const heldBack = new Map<string, string | null>();
+    let paused = false;
 
     // Cap threads per poll to avoid LLM call bursts
     const maxThreads = this.config?.lookback?.maxThreadsPerPoll ?? DEFAULT_MAX_THREADS_PER_POLL;
@@ -155,9 +216,19 @@ export class Pipeline {
     // threads behind a cursor that had already moved past them.
     const threadStart = (t: Thread) => t.messages[0]?.timestamp ?? t.lastActivity;
     // Threads with every message already classified (re-read at a cursor boundary) don't take a slot.
-    const sortedThreads = threads
-      .filter((t) => t.messages.some((m) => !this.graph.hasEvent(m.id, t.id)))
-      .sort((a, b) => threadStart(a).localeCompare(threadStart(b)));
+    const pendingKey = new Map<Thread, string>();
+    for (const t of threads) {
+      const m = t.messages.find((msg) => !this.graph.hasEvent(msg.id, t.id));
+      if (m) pendingKey.set(t, `${t.id}:${m.id}`);
+    }
+    const pendingThreads = [...pendingKey.keys()].sort((a, b) => threadStart(a).localeCompare(threadStart(b)));
+    // A thread whose message is backing off from a failure doesn't take a slot this poll; fresh threads go before
+    // retries, so held messages can't crowd out new ones. Threads not processed keep their channel's cursor.
+    const pollStart = Date.now();
+    const waitingThreads = pendingThreads.filter((t) => (this.failedMessages.get(pendingKey.get(t)!)?.nextTryAt ?? 0) > pollStart);
+    const ready = pendingThreads.filter((t) => !waitingThreads.includes(t));
+    const isRetry = (t: Thread) => this.failedMessages.has(pendingKey.get(t)!);
+    const sortedThreads = [...ready.filter((t) => !isRetry(t)), ...ready.filter(isRetry)];
     const cappedThreads = maxThreads > 0 ? sortedThreads.slice(0, maxThreads) : sortedThreads;
 
     // Channels with threads left for a later poll: their cursor must stay before the first one skipped.
@@ -170,7 +241,17 @@ export class Pipeline {
     // Track thread IDs covered by this channel history poll
     const polledThreadIds = new Set<string>();
 
-    for (const thread of cappedThreads) {
+    // Keep a channel's cursor just before a thread that has to be read again
+    const holdBack = (t: Thread) => {
+      const before = Date.parse(threadStart(t)) - 1;
+      const prior = heldBack.get(t.channelId);
+      const at = Number.isNaN(before) ? null : new Date(before).toISOString();
+      heldBack.set(t.channelId, prior === undefined ? at : prior === null || at === null ? null : prior < at ? prior : at);
+    };
+
+    for (const t of [...waitingThreads, ...sortedThreads.slice(cappedThreads.length)]) holdBack(t);
+
+    for (const [index, thread] of cappedThreads.entries()) {
       if (stopped()) break;
       if (!thread.messages || thread.messages.length === 0) {
         continue;
@@ -183,6 +264,7 @@ export class Pipeline {
       // cheap DB lookup and will skip already-processed messages without an
       // LLM call.  Processing every message ensures intermediate work-item
       // references and status transitions are captured.
+      let held = false;
       for (const message of thread.messages) {
         if (stopped()) break;
         if (this.graph.hasEvent(message.id, thread.id)) {
@@ -190,8 +272,15 @@ export class Pipeline {
         }
         processed++;
         try {
-          await this.processMessageInternal(message, thread, stopped);
-          classified++;
+          const outcome = await this.classifyPending(message, thread, stopped, failedThisPoll);
+          if (outcome === "done") {
+            classified++;
+            continue;
+          }
+          if (outcome !== "waiting") errors++;
+          held = true;
+          if (outcome === "paused") paused = true;
+          break; // later messages in the thread wait, so they're classified in order
         } catch (err) {
           if (err instanceof PipelineStopped) break;
           log.error("Failed to process message", message.id, err);
@@ -201,9 +290,19 @@ export class Pipeline {
       // A thread cut short doesn't move its channel's cursor; the next pipeline reads it again
       if (stopped()) break;
 
+      const channelId = thread.channelId;
+      if (held) {
+        holdBack(thread);
+        if (paused) {
+          // Threads not reached this poll must be read again too, whatever channel they're in
+          for (const rest of cappedThreads.slice(index + 1)) holdBack(rest);
+          break;
+        }
+        continue;
+      }
+
       // Track the latest timestamp for poll cursor updates
       // (a deferred channel advances only to this thread's start; later replies come back via re-polls)
-      const channelId = thread.channelId;
       const cursorTs = deferredChannels.has(channelId)
         ? threadStart(thread)
         : thread.messages[thread.messages.length - 1].timestamp;
@@ -214,6 +313,13 @@ export class Pipeline {
     }
 
     if (stopped()) return { processed, classified, errors };
+
+    // A channel with a thread to retry doesn't move past it (null: its start time is unknown, so don't move)
+    for (const [channelId, at] of heldBack) {
+      const latest = latestTimestamps.get(channelId);
+      if (at === null) latestTimestamps.delete(channelId);
+      else if (!latest || at < latest) latestTimestamps.set(channelId, at);
+    }
 
     // Update poll cursors
     for (const [channelId, timestamp] of latestTimestamps) {
@@ -229,12 +335,12 @@ export class Pipeline {
     // in conversations.history, but they can still receive new replies.
     // Re-fetch replies for known active threads that weren't already covered.
     const maxRepolls = this.config?.lookback?.maxActiveThreadRepolls ?? DEFAULT_MAX_ACTIVE_THREAD_REPOLLS;
-    if (maxRepolls > 0) {
+    if (maxRepolls > 0 && !paused) {
       const activeThreads = this.graph.getActiveThreads(maxRepolls);
       let repolled = 0;
 
       for (const activeThread of activeThreads) {
-        if (stopped()) break;
+        if (stopped() || paused) break;
         if (polledThreadIds.has(activeThread.id)) continue; // already covered
 
         try {
@@ -264,8 +370,15 @@ export class Pipeline {
             hadNew = true;
             processed++;
             try {
-              await this.processMessageInternal(msg, threadObj, stopped);
-              classified++;
+              const outcome = await this.classifyPending(msg, threadObj, stopped, failedThisPoll);
+              if (outcome === "done") {
+                classified++;
+                continue;
+              }
+              // No cursor here: an active thread is fetched again on the next poll
+              if (outcome !== "waiting") errors++;
+              if (outcome === "paused") paused = true;
+              break;
             } catch (err) {
               if (err instanceof PipelineStopped) break;
               log.error("Failed to process re-polled message", msg.id, err);
@@ -287,23 +400,37 @@ export class Pipeline {
 
     if (stopped()) return { processed, classified, errors };
 
+    // A failed try counts only if other messages were classified this poll: the model is up, so the message is
+    // the problem. During an outage nothing counts, and messages wait for the model to come back.
+    // Failures and not one real answer: the model looks unavailable (shown as a degraded status)
+    this.modelUnavailable = failedThisPoll.length > 0 && this.answeredThisPoll === 0;
+    if (this.answeredThisPoll > 0) {
+      for (const key of failedThisPoll) {
+        const rec = this.failedMessages.get(key);
+        if (rec) rec.tries++;
+      }
+    }
+
     // Recompute bot types after processing — more data may refine classifications
     if (processed > 0) {
       this.graph.computeBotTypes();
     }
 
-    // Optional: auto-dismiss Needs-me items nobody has written about for inbox.expireAfterDays
-    const expireAfterDays = this.config?.inbox?.expireAfterDays;
-    if (expireAfterDays) {
-      try {
-        const expired = this.graph.expireInactiveItems(expireAfterDays);
-        if (expired > 0) log.info(`Auto-dismissed ${expired} item(s) with no activity for ${expireAfterDays} day(s)`);
-      } catch (err) {
-        log.error("Failed to expire inactive items", err);
-      }
-    }
+    this.expireInactiveItems();
 
     return { processed, classified, errors };
+  }
+
+  /** Optional: auto-dismiss Needs-me items nobody has written about for inbox.expireAfterDays */
+  private expireInactiveItems(): void {
+    const expireAfterDays = this.config?.inbox?.expireAfterDays;
+    if (!expireAfterDays) return;
+    try {
+      const expired = this.graph.expireInactiveItems(expireAfterDays);
+      if (expired > 0) log.info(`Auto-dismissed ${expired} item(s) with no activity for ${expireAfterDays} day(s)`);
+    } catch (err) {
+      log.error("Failed to expire inactive items", err);
+    }
   }
 
   async processMessage(message: Message, threadId: string, channelId: string): Promise<Classification> {
@@ -381,6 +508,50 @@ export class Pipeline {
     return prefixes.some(prefix => id.toUpperCase().startsWith(prefix));
   }
 
+  /**
+   * Classify and store one polled message. "held": the model gave no answer, so nothing was stored and the
+   * message is tried again later; after MAX_CLASSIFY_ATTEMPTS counted tries, or once it has been held for
+   * MAX_HOLD_MS, it's stored as noise instead. "waiting": still backing off from a failure, so not tried.
+   * "paused": the budget is spent or the credentials were refused, and the poll should stop here.
+   */
+  private async classifyPending(
+    message: Message,
+    thread: Thread,
+    stopped: () => boolean,
+    failedThisPoll: string[],
+  ): Promise<"done" | "held" | "waiting" | "paused"> {
+    const key = `${thread.id}:${message.id}`;
+    const now = Date.now();
+    const rec = this.failedMessages.get(key);
+    if (rec && now < rec.nextTryAt) return "waiting"; // backing off: no model call this poll
+    const giveUp = rec !== undefined && (rec.tries >= MAX_CLASSIFY_ATTEMPTS || now - rec.since > MAX_HOLD_MS);
+    try {
+      await this.processMessageInternal(message, thread, stopped, giveUp);
+      this.failedMessages.delete(key);
+      return "done";
+    } catch (err) {
+      if (!(err instanceof ClassificationFailed)) throw err;
+      if (err.kind === "budget" || err.kind === "auth") {
+        this.pausedFor = err.kind;
+        this.pausedUntil = err.kind === "budget" ? nextUtcMidnight() : now + AUTH_PAUSE_MS;
+        log.warn(err.kind === "budget"
+          ? `Daily LLM budget spent; classification is paused until ${new Date(this.pausedUntil).toISOString()}`
+          : "The model provider refused the API key or account; classification is paused. Check Settings.");
+        return "paused";
+      }
+      // Entries for messages that vanished before a retry
+      if (this.failedMessages.size > 10_000) this.failedMessages.clear();
+      const r = rec ?? { tries: 0, attempts: 0, since: now, nextTryAt: 0 };
+      r.attempts++;
+      r.nextTryAt = now + retryDelay(r.attempts);
+      if (err.kind === "invalid") r.tries++;
+      else failedThisPoll.push(key); // counted at the end of the poll if the model answered anything else
+      this.failedMessages.set(key, r);
+      log.warn(`Classification failed for ${message.id} (${err.kind}); trying again later`);
+      return "held";
+    }
+  }
+
   private getContentHash(text: string, threadId: string): string {
     return createHash("sha256").update(`${threadId}:${text}`).digest("hex");
   }
@@ -416,7 +587,12 @@ export class Pipeline {
     return { globalSince, perChannelSince };
   }
 
-  private async processMessageInternal(message: Message, thread: Thread, stopped: () => boolean = () => false): Promise<Classification> {
+  private async processMessageInternal(
+    message: Message,
+    thread: Thread,
+    stopped: () => boolean = () => false,
+    storeFailure = true,
+  ): Promise<Classification> {
     // Step 0: Skip if we've already processed this message (avoids duplicate LLM calls)
     if (this.graph.hasEvent(message.id, thread.id)) {
       log.debug("Skipping already-processed message", message.id);
@@ -601,6 +777,12 @@ export class Pipeline {
     // Stopped while classifying: the call may have been cut off and come back as a fallback, so store
     // nothing and leave the message for the next pipeline to classify
     if (stopped()) throw new PipelineStopped();
+    // No answer from the model: store nothing so the message is tried again, unless this was the last try
+    // (a spent budget is never stored: it resets)
+    if (!classification.failed) this.answeredThisPoll++;
+    if (classification.failed && !(storeFailure && (classification.failed === "invalid" || classification.failed === "unreachable"))) {
+      throw new ClassificationFailed(classification.failed);
+    }
 
     // Separate LLM-suggested IDs into verified (match an extracted ID) and unverified
     const extractedSet = new Set(extractedIds);
@@ -627,7 +809,8 @@ export class Pipeline {
 
     // Cache the classification for content deduplication
     const hash = this.getContentHash(message.text, thread.id);
-    this.recentContentHashes.set(hash, classification);
+    // A stored placeholder isn't an answer to reuse for the same text later
+    if (!classification.failed) this.recentContentHashes.set(hash, classification);
     if (this.recentContentHashes.size > this.MAX_CONTENT_HASHES) {
       const firstKey = this.recentContentHashes.keys().next().value;
       if (firstKey) this.recentContentHashes.delete(firstKey);
