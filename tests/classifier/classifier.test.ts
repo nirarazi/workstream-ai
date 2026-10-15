@@ -356,15 +356,15 @@ describe("action_required_from → targetedAtOperator (with OperatorIdentityMap)
     const provider = mockProvider({
       status: "blocked_on_human",
       confidence: 0.9,
-      reason: "Quote pending review",
-      workItemIds: ["Q-123"],
-      title: "Quote review",
+      reason: "Invoice pending review",
+      workItemIds: ["INV-123"],
+      title: "Invoice review",
       action_required_from: null,
       next_action: null,
     });
     const classifier = new Classifier(provider, SYSTEM_PROMPT, FEW_SHOT, undefined, undefined, OPERATOR_MAP);
 
-    const result = await classifier.classify("Quote Q-123 pending review");
+    const result = await classifier.classify("Invoice INV-123 pending review");
     // blocked_on_human + null action_required_from = contradiction → operator is backstop
     expect(result.targetedAtOperator).toBe(true);
   });

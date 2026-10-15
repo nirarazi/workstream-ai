@@ -99,7 +99,7 @@ describe("Stream", () => {
       const agentAvatarMap = new Map<string, string | null>([["a1", null]]);
       const threadChannelMap = new Map([
         ["t1", { channelId: "C1", channelName: "#fleet-ops" }],
-        ["t2", { channelId: "C2", channelName: "#strategy" }],
+        ["t2", { channelId: "C2", channelName: "#planning" }],
       ]);
       const threadPlatformMap = new Map([["t1", "slack"], ["t2", "slack"]]);
       const timeline = buildTimeline(events, agentMap, agentAvatarMap, threadChannelMap, threadPlatformMap);
@@ -109,7 +109,7 @@ describe("Stream", () => {
       expect(timeline[0].agentName).toBe("Relay");
       expect(timeline[1].entryType).toBe("decision");
       expect(timeline[1].isOperator).toBe(true);
-      expect(timeline[1].channelName).toBe("#strategy");
+      expect(timeline[1].channelName).toBe("#planning");
     });
   });
 
@@ -163,7 +163,7 @@ describe("Stream", () => {
         id: "OPS-300", source: "jira", title: "Blocked task",
         currentAtcStatus: "blocked_on_human", currentConfidence: 0.9,
       });
-      graph.upsertThread({ id: "t1", channelId: "C1", channelName: "orchestrator", platform: "slack", workItemId: "OPS-300" });
+      graph.upsertThread({ id: "t1", channelId: "C1", channelName: "fleet-ops", platform: "slack", workItemId: "OPS-300" });
       graph.linkThreadWorkItem("t1", "OPS-300", "primary");
       graph.upsertAgent({ id: "a1", name: "Relay", platform: "slack", platformUserId: "U1" });
       graph.insertEvent({
@@ -337,9 +337,9 @@ describe("Stream", () => {
   describe("multi-agent multi-thread aggregation", () => {
     it("getAgentsForWorkItem returns all agents who have events", () => {
       graph.upsertWorkItem({ id: "OPS-100", source: "jira", title: "Test" });
-      graph.upsertThread({ id: "t1", channelId: "C1", channelName: "orchestrator", platform: "slack", workItemId: "OPS-100" });
+      graph.upsertThread({ id: "t1", channelId: "C1", channelName: "fleet-ops", platform: "slack", workItemId: "OPS-100" });
       graph.linkThreadWorkItem("t1", "OPS-100", "primary");
-      graph.upsertThread({ id: "t2", channelId: "C2", channelName: "strategy", platform: "slack", workItemId: "OPS-100" });
+      graph.upsertThread({ id: "t2", channelId: "C2", channelName: "planning", platform: "slack", workItemId: "OPS-100" });
       graph.linkThreadWorkItem("t2", "OPS-100", "primary");
       const agent1 = graph.upsertAgent({ name: "Relay", platform: "slack", platformUserId: "U1" });
       const agent2 = graph.upsertAgent({ name: "Prism", platform: "slack", platformUserId: "U2" });
@@ -352,13 +352,13 @@ describe("Stream", () => {
 
     it("getChannelsForWorkItem returns all channels", () => {
       graph.upsertWorkItem({ id: "OPS-100", source: "jira", title: "Test" });
-      graph.upsertThread({ id: "t1", channelId: "C1", channelName: "orchestrator", platform: "slack", workItemId: "OPS-100" });
+      graph.upsertThread({ id: "t1", channelId: "C1", channelName: "fleet-ops", platform: "slack", workItemId: "OPS-100" });
       graph.linkThreadWorkItem("t1", "OPS-100", "primary");
-      graph.upsertThread({ id: "t2", channelId: "C2", channelName: "strategy", platform: "slack", workItemId: "OPS-100" });
+      graph.upsertThread({ id: "t2", channelId: "C2", channelName: "planning", platform: "slack", workItemId: "OPS-100" });
       graph.linkThreadWorkItem("t2", "OPS-100", "primary");
       const channels = graph.getChannelsForWorkItem("OPS-100");
       expect(channels).toHaveLength(2);
-      expect(channels.map((c) => c.name).sort()).toEqual(["orchestrator", "strategy"]);
+      expect(channels.map((c) => c.name).sort()).toEqual(["fleet-ops", "planning"]);
     });
   });
 });

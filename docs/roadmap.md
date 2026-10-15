@@ -127,7 +127,7 @@ accuracy on the reference fleet) has never been measured.
    - **Helpers for writing it:**
      - **A first draft from usage:** channels the person posts in, items they acted on, items they dismissed.
      - **A fixed structure:** *I own… / not mine… / escalate to me anyway when…*
-     - **Plain-language remit plus optional hard rules** ("#business → Dana"), so the model only
+     - **Plain-language remit plus optional hard rules** ("#partners → Dana"), so the model only
        handles what the rules can't.
      - **Edits suggested from "not for me" corrections**, as in the existing plan.
      - **A score against the person's own answers:** "this remit agrees with 26 of your 30 past

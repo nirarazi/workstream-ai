@@ -31,7 +31,7 @@ describe("DefaultExtractor", () => {
     });
 
     it("ignores lowercase prefixes", () => {
-      const ids = extractor.extractWorkItemIds("working on ai-382");
+      const ids = extractor.extractWorkItemIds("working on ops-382");
       expect(ids).toHaveLength(0);
     });
 
