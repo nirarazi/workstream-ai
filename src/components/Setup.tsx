@@ -1,4 +1,4 @@
-import { useState, useEffect, type JSX, type FormEvent } from "react";
+import { useState, useEffect, useRef, type JSX, type FormEvent } from "react";
 import {
   postSetup,
   fetchSetupPrefill,
@@ -107,6 +107,8 @@ export default function Setup({ onComplete }: SetupProps): JSX.Element {
   const [inboxKnown, setInboxKnown] = useState(false);
 
   const [submitting, setSubmitting] = useState(false);
+  // Blocks a second submit in the same tick, before `submitting` re-renders the button disabled
+  const submittingRef = useRef(false);
   const [error, setError] = useState<string | null>(null);
 
   // Fetch adapter schemas + prefill on mount
@@ -219,6 +221,7 @@ export default function Setup({ onComplete }: SetupProps): JSX.Element {
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
+    if (submittingRef.current) return;
     setError(null);
 
     if (currentMessaging) {
@@ -238,6 +241,7 @@ export default function Setup({ onComplete }: SetupProps): JSX.Element {
     }
 
     setSubmitting(true);
+    submittingRef.current = true;
     try {
       const payload: SetupPayload = {};
 
@@ -295,9 +299,12 @@ export default function Setup({ onComplete }: SetupProps): JSX.Element {
       await postSetup(payload);
       onComplete();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Setup failed");
+      const message = err instanceof Error ? err.message : "Setup failed";
+      // 409: another save (say, from a second window) arrived and replaced this one
+      setError(message.startsWith("API 409") ? "These settings were replaced by a newer save. Reload to see the current settings." : message);
     } finally {
       setSubmitting(false);
+      submittingRef.current = false;
     }
   }
 

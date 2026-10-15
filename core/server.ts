@@ -74,6 +74,14 @@ function hostName(host: string): string {
  */
 const CONNECT_DEADLINE_MS = 5 * 60 * 1000;
 
+/** A save gave up because a newer one arrived: the newer save wins (even if it turns out to be invalid). */
+export class SaveSupersededError extends Error {}
+
+/**
+ * Note: the abandoned connect itself keeps running in the background until it settles (adapters can't be
+ * cancelled yet); it's never stored, so nothing uses it, but on a very large Slack workspace its listing calls can
+ * share the token's rate limit with the newer save's connect.
+ */
 export function untilDeadlineOrSuperseded<T>(
   work: Promise<T>,
   ms: number,
@@ -85,7 +93,7 @@ export function untilDeadlineOrSuperseded<T>(
   const stop = new Promise<never>((_, reject) => {
     timer = setTimeout(() => reject(new Error(`${what} timed out after ${ms / 1000}s`)), ms);
     check = setInterval(() => {
-      if (superseded()) reject(new Error(`${what} abandoned: a newer settings save is waiting`));
+      if (superseded()) reject(new SaveSupersededError(`${what} abandoned: a newer settings save is waiting`));
     }, 250);
   });
   return Promise.race([work, stop]).finally(() => {
@@ -94,17 +102,19 @@ export function untilDeadlineOrSuperseded<T>(
   });
 }
 
-/** A fresh usage tracker and classifier for the current config (after a settings save) */
+/** A fresh usage tracker and classifier for the current config (after a settings save). Both are swapped in
+ * together, so a failure part-way leaves the previous pair in place. */
 function rebuildClassifier(state: EngineState): void {
   const provider = createProvider(state.config);
   const tracker = new UsageTracker(provider, state.db, state.config.llmBudget);
-  state.usageTracker = tracker;
   const prompt = loadPrompt(findProjectRoot());
   const fewShot = buildFewShotMessages(prompt.few_shot_examples);
   const operatorRole = state.config.operator?.role ?? "";
-  state.classifier = new Classifier(tracker, prompt.system, fewShot, undefined, operatorRole, state.operatorIdentities, buildOperatorContext(state.config), hasRemit(state.config));
-  if (state.rateLimiters.llm) state.classifier.setRateLimiter(state.rateLimiters.llm);
-  state.classifier.setDecisionGate(createDecisionGate(state.config, tracker));
+  const classifier = new Classifier(tracker, prompt.system, fewShot, undefined, operatorRole, state.operatorIdentities, buildOperatorContext(state.config), hasRemit(state.config));
+  if (state.rateLimiters.llm) classifier.setRateLimiter(state.rateLimiters.llm);
+  classifier.setDecisionGate(createDecisionGate(state.config, tracker));
+  state.usageTracker = tracker;
+  state.classifier = classifier;
 }
 
 /** Whether a settings save changed anything beyond the inbox settings, which the pipeline reads at each poll. */
@@ -1065,6 +1075,7 @@ export function createApp(state: EngineState): Hono {
     // Saves start in arrival order, so this save is superseded once a later one has arrived
     const thisSave = savesStarted;
     const superseded = () => savesRequested > thisSave;
+    const reconnecting = new Set<"messaging" | "task">();
     const body = await c.req.json<{
       messaging?: {
         adapter: string;
@@ -1326,6 +1337,11 @@ export function createApp(state: EngineState): Hono {
       }
       state.rateLimiters = newLimiters;
 
+      // Adapters being reconnected with new credentials: if a connect fails or gives way to a newer save, the old
+      // adapter must not stay in place, or a later save would restart polling on credentials that were replaced
+      if (body.messaging) reconnecting.add("messaging");
+      if (body.task) reconnecting.add("task");
+
       // Reconnect messaging adapter
       if (body.messaging) {
         const adapter = createMessagingAdapter(body.messaging.adapter);
@@ -1337,6 +1353,7 @@ export function createApp(state: EngineState): Hono {
           : body.messaging.fields;
         await untilDeadlineOrSuperseded(adapter.connect(creds as Record<string, string> & { token: string }), CONNECT_DEADLINE_MS, `${adapter.name} connect`, superseded);
         state.messagingAdapter = adapter;
+        reconnecting.delete("messaging");
         const msgIdentity = adapter.getAuthenticatedUser?.();
         if (msgIdentity) {
           state.operatorIdentities.set(adapter.name, msgIdentity);
@@ -1355,6 +1372,7 @@ export function createApp(state: EngineState): Hono {
           : body.task.fields;
         await untilDeadlineOrSuperseded(adapter.connect(creds as Record<string, string> & { token: string }), CONNECT_DEADLINE_MS, `${adapter.name} connect`, superseded);
         state.taskAdapter = adapter;
+        reconnecting.delete("task");
         const taskIdentity = adapter.getAuthenticatedUser?.();
         if (taskIdentity) {
           state.operatorIdentities.set(adapter.name, taskIdentity);
@@ -1396,6 +1414,8 @@ export function createApp(state: EngineState): Hono {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       log.error("Setup failed", message);
+      if (reconnecting.has("messaging")) state.messagingAdapter = null;
+      if (reconnecting.has("task")) state.taskAdapter = null;
       // The old tracker was retired before the reconnect; don't leave a dead one in place (summaries, Sidekick)
       if (state.usageTracker?.isDisposed) {
         try {
@@ -1404,6 +1424,8 @@ export function createApp(state: EngineState): Hono {
           log.error("Couldn't rebuild the classifier after a failed save", rebuildErr);
         }
       }
+      // Replaced by a newer save: not an error for the operator, who sees the newer save's result
+      if (err instanceof SaveSupersededError) return c.json({ ok: false, superseded: true, error: message }, 409);
       return c.json({ ok: false, error: message }, 500);
     }
   });

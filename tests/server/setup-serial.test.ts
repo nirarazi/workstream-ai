@@ -27,6 +27,7 @@ const { Database } = await import("../../core/graph/db.js");
 const { ContextGraph } = await import("../../core/graph/index.js");
 const { Pipeline } = await import("../../core/pipeline.js");
 const { createApp, untilDeadlineOrSuperseded } = await import("../../core/server.js");
+const { UsageTracker } = await import("../../core/usage/tracker.js");
 const { registerMessagingAdapter } = await import("../../core/adapters/registry.js");
 
 // A stand-in chat adapter whose connect takes a moment, like a real platform, records overlap, and hangs for
@@ -39,6 +40,8 @@ registerMessagingAdapter("slowchat", () => ({
   getSetupInfo: () => ({ name: "slowchat", displayName: "Slow chat", fields: [{ key: "token", label: "Token", type: "password", required: true, envVar: "SLOWCHAT_TOKEN" }] }),
   connect: async (creds: { token: string }) => {
     if (creds.token === "hang") return new Promise<void>(() => {});
+    if (creds.token === "refused") throw new Error("invalid_auth");
+    if (creds.token === "slow") await new Promise((r) => setTimeout(r, 600)); // longer than a real double click
     maxConnecting = Math.max(maxConnecting, ++connecting);
     await new Promise((r) => setTimeout(r, 20));
     connecting--;
@@ -88,13 +91,36 @@ describe("POST /api/setup", () => {
     expect(state.pipeline).toBe(started[1]);
   });
 
+  it("answers a save that gave way to a newer one with 409, not an error, and the newer save wins", async () => {
+    const [first, second] = await Promise.all([save(chat("slow")), save(chat("token-2"))]);
+
+    expect(first.status).toBe(409);
+    expect((await first.json()).superseded).toBe(true);
+    expect(second.status).toBe(200);
+    expect(state.pipeline).toBe(started[0]);
+  });
+
   it("gives up a hung connect as soon as a newer save is waiting, so that save isn't held up", async () => {
     const [hung, next] = await Promise.all([save(chat("hang")), save(chat("token-2"))]);
 
-    expect(hung.status).toBe(500);
-    expect((await hung.json()).error).toMatch(/newer settings save/);
+    expect(hung.status).toBe(409);
     expect(next.status).toBe(200);
     expect(state.pipeline).toBe(started[0]);
+  });
+
+  it("after a failed reconnect, rebuilds the retired tracker and doesn't keep the old adapter", async () => {
+    const original = new UsageTracker({ name: "mock", classify: vi.fn() } as any, db, config.llmBudget);
+    state.usageTracker = original;
+    state.messagingAdapter = { name: "slowchat" }; // connected with the old token
+
+    const res = await save(chat("refused"));
+
+    expect(res.status).toBe(500);
+    expect(original.isDisposed).toBe(true);
+    expect(state.usageTracker).not.toBe(original);
+    expect(state.usageTracker.isDisposed).toBe(false);
+    // A later save without chat settings mustn't restart polling with the replaced token
+    expect(state.messagingAdapter).toBeNull();
   });
 
   it("keeps the queue moving after a failed save, and doesn't leave a retired tracker in place", async () => {
