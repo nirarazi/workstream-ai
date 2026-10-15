@@ -608,7 +608,7 @@ describe("Operator profile and sender context", () => {
 // --- OpenAICompatibleProvider response parsing tests ---
 
 describe("OpenAICompatibleProvider", () => {
-  it("sends nothing after dispose(), even a call that was waiting its turn", async () => {
+  it("sends nothing once disposed", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch");
     const provider = new OpenAICompatibleProvider({ name: "test", baseUrl: "http://localhost:11434/v1", model: "llama3" });
     provider.dispose(); // replaced by new settings
