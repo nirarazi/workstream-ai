@@ -48,14 +48,53 @@ export interface EngineState {
 
 // --- App factory (testable without starting the server) ---
 
+const LOOPBACK_NAMES = new Set(["127.0.0.1", "localhost", "[::1]"]);
+
+/** The browser origins the UI runs on: Vite dev server, Tauri WebView (macOS/Linux, then Windows), and the engine itself in web mode. */
+function appOrigins(port: number): string[] {
+  return [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "tauri://localhost",
+    "https://tauri.localhost",
+    "http://tauri.localhost",
+    `http://localhost:${port}`,
+    `http://127.0.0.1:${port}`,
+  ];
+}
+
+function hostName(host: string): string {
+  return host.startsWith("[") ? host.slice(0, host.indexOf("]") + 1) : host.split(":")[0];
+}
+
 export function createApp(state: EngineState): Hono {
   const app = new Hono();
+  const origins = appOrigins(state.config.server.port);
 
-  // CORS for Vite dev server and Tauri WebView
+  // CORS stops other sites reading responses but not sending writes, so the engine can post to Slack
+  // as the operator: refuse names other than this machine (DNS rebinding), writes from other origins,
+  // and writes that aren't JSON (those can be sent without a preflight). Local tools send no Origin.
+  app.use("/api/*", async (c, next) => {
+    const host = c.req.header("host");
+    if (host && !LOOPBACK_NAMES.has(hostName(host).toLowerCase())) {
+      return c.json({ error: "Forbidden host" }, 403);
+    }
+    if (c.req.method !== "GET" && c.req.method !== "HEAD" && c.req.method !== "OPTIONS") {
+      const origin = c.req.header("origin");
+      if (origin !== undefined && !origins.includes(origin)) {
+        return c.json({ error: "Forbidden origin" }, 403);
+      }
+      if (!(c.req.header("content-type") ?? "").toLowerCase().startsWith("application/json")) {
+        return c.json({ error: "Content-Type must be application/json" }, 415);
+      }
+    }
+    await next();
+  });
+
   app.use(
     "/api/*",
     cors({
-      origin: ["http://localhost:5173", "https://tauri.localhost", "http://tauri.localhost"],
+      origin: origins,
       allowMethods: ["GET", "POST", "OPTIONS"],
       allowHeaders: ["Content-Type"],
     }),

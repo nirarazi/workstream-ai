@@ -174,7 +174,7 @@ describe("POST /api/work-item/:id/summarize", () => {
     );
 
     const app = createApp(state);
-    const res = await app.request("/api/work-item/AI-382/summarize", { method: "POST" });
+    const res = await app.request("/api/work-item/AI-382/summarize", { method: "POST", headers: { "Content-Type": "application/json" } });
 
     expect(res.status).toBe(200);
     const body = await res.json();
@@ -190,7 +190,7 @@ describe("POST /api/work-item/:id/summarize", () => {
 
   it("returns 404 for non-existent work item", async () => {
     const app = createApp(state);
-    const res = await app.request("/api/work-item/NOPE-1/summarize", { method: "POST" });
+    const res = await app.request("/api/work-item/NOPE-1/summarize", { method: "POST", headers: { "Content-Type": "application/json" } });
     expect(res.status).toBe(404);
   });
 });
