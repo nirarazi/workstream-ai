@@ -26,6 +26,7 @@ const ANSWER: Classification = {
 };
 const UNREACHABLE: Classification = { ...ANSWER, status: "noise", entryType: "noise", confidence: 0.1, reason: "Classification failed — defaulting to noise", failed: "unreachable" };
 const INVALID: Classification = { ...UNREACHABLE, failed: "invalid" };
+const AUTH: Classification = { ...UNREACHABLE, failed: "auth" };
 const NO_BUDGET: Classification = { ...UNREACHABLE, reason: "Daily LLM budget exhausted. Resets at midnight UTC.", failed: "budget" };
 
 describe("Pipeline: when the model gives no answer", () => {
@@ -154,6 +155,47 @@ describe("Pipeline: when the model gives no answer", () => {
     await pipeline.processOnce();
     expect(graph.getEventByMessageId("T1-m1", "T1")!.reason).toBe("working on it");
     expect(graph.hasEvent("T2-m1", "T2")).toBe(true);
+  });
+
+  it("doesn't let held threads take every slot, so a new message still gets classified", async () => {
+    const pipelineWith = (max: number) =>
+      new Pipeline({ name: "fake", readThreads, getThreadMessages: vi.fn(async () => []) } as any, { classify } as any, graph,
+        new WorkItemLinker(graph, [new DefaultExtractor({ ticketPatterns: [], prPatterns: [] })]), undefined,
+        { ...CONFIG, lookback: { maxThreadsPerPoll: max, maxActiveThreadRepolls: 0 } });
+    pipeline = pipelineWith(2);
+    const held = [thread("H1", "2026-10-15T04:00:00.000Z"), thread("H2", "2026-10-15T04:01:00.000Z"), thread("H3", "2026-10-15T04:02:00.000Z")];
+    readThreads.mockResolvedValue(held);
+    classify.mockResolvedValue(UNREACHABLE);
+    await pipeline.processOnce(); // H1, H2 fail (cap 2); H3 deferred
+    await pollLater(); // H3 fails; H1, H2 retried (fresh first)
+
+    // A real new message arrives behind three older held threads
+    readThreads.mockResolvedValue([...held, thread("NEW", "2026-10-15T09:00:00.000Z")]);
+    classify.mockImplementation(async (text: string) => (text.includes("NEW") ? ANSWER : UNREACHABLE));
+    clock += 5_000; // the held ones are still backing off
+    vi.setSystemTime(clock);
+    await pipeline.processOnce();
+
+    expect(graph.getEventByMessageId("NEW-m1", "NEW")!.reason).toBe("working on it");
+    // The held threads still keep the channel's cursor before them
+    expect(graph.getPollCursor("C1")!.lastTimestamp).toBe("2026-10-15T03:59:59.999Z");
+  });
+
+  it("pauses for a while when the provider refuses the API key, and shows why", async () => {
+    classify.mockResolvedValue(AUTH);
+
+    await pipeline.processOnce();
+    await pipeline.processOnce();
+
+    expect(classify).toHaveBeenCalledTimes(1);
+    expect(readThreads).toHaveBeenCalledTimes(1);
+    expect(pipeline.pauseReason()).toBe("auth");
+    expect(graph.hasEvent("T1-m1", "T1")).toBe(false);
+
+    classify.mockResolvedValue(ANSWER);
+    await pollLater(); // the pause is a few minutes
+    expect(pipeline.pauseReason()).toBeNull();
+    expect(graph.getEventByMessageId("T1-m1", "T1")!.reason).toBe("working on it");
   });
 
   it("doesn't let another channel's cursor skip a thread the budget stop never reached", async () => {

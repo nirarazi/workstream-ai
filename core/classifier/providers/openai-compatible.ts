@@ -1,7 +1,7 @@
 // core/classifier/providers/openai-compatible.ts — Universal provider for OpenAI-compatible and Anthropic APIs
 
 import { createLogger } from "../../logger.js";
-import { InvalidReplyError, type ClassificationResult, type ModelProvider } from "./interface.js";
+import { InvalidReplyError, ProviderAuthError, type ClassificationResult, type ModelProvider } from "./interface.js";
 
 const log = createLogger("openai-compatible");
 
@@ -34,8 +34,21 @@ class ApiError extends Error {
   }
 }
 
-/** Statuses meaning this request can't succeed as sent (malformed or too large), unlike auth, outages or limits */
+/** Statuses meaning the provider refused this request as sent, unlike auth, outages or rate limits */
 const REQUEST_REJECTED = new Set([400, 413, 422]);
+/** A refusal that's about this message (too long, flagged by moderation) rather than the account or settings */
+const MESSAGE_REFUSAL = /context.?length|maximum context|too long|too many tokens|token limit|moderat|flagged/i;
+
+/** Map a provider refusal to what it means for retrying this message */
+function classifyRefusal(err: ApiError): Error {
+  if (err.status === 401 || (err.status === 403 && !MESSAGE_REFUSAL.test(err.message))) {
+    return new ProviderAuthError(`Model provider refused the credentials (HTTP ${err.status})`);
+  }
+  if (err.status === 413 || (err.status === 403 && MESSAGE_REFUSAL.test(err.message))) {
+    return new InvalidReplyError(`Model refused this message (HTTP ${err.status})`, false, true);
+  }
+  return new InvalidReplyError(`Model refused the request (HTTP ${err.status})`, false, MESSAGE_REFUSAL.test(err.message));
+}
 
 function isRetryable(error: unknown): boolean {
   if (error instanceof Error) {
@@ -133,8 +146,8 @@ export class OpenAICompatibleProvider implements ModelProvider {
     try {
       rawText = await this.complete(message, systemPrompt, fewShotExamples);
     } catch (err) {
-      if (err instanceof ApiError && err.status !== undefined && REQUEST_REJECTED.has(err.status)) {
-        throw new InvalidReplyError(`Model rejected the request (HTTP ${err.status})`, false);
+      if (err instanceof ApiError && err.status !== undefined && (REQUEST_REJECTED.has(err.status) || err.status === 401 || err.status === 403)) {
+        throw classifyRefusal(err);
       }
       throw err;
     }
@@ -143,7 +156,7 @@ export class OpenAICompatibleProvider implements ModelProvider {
       result = this.parseResponse(rawText);
     } catch {
       // No reply text in the message: it can echo the classified message
-      throw new InvalidReplyError("Model reply wasn't a usable classification", true);
+      throw new InvalidReplyError("Model reply wasn't a usable classification", true, true);
     }
     log.debug("Classification result", { input: message.slice(0, 120), result });
     return result;
