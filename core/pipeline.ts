@@ -736,8 +736,11 @@ export class Pipeline {
     // Step 7: Enrich from task adapter if available
     if (this.taskAdapter) {
       for (const workItemId of allWorkItemIds) {
+        // Enrichment is best-effort and the event is already stored: after stop() just skip the rest
+        if (stopped()) break;
         try {
           const detail = await this.taskAdapter.getWorkItem(workItemId);
+          if (stopped()) break;
           if (detail) {
             this.graph.upsertEnrichment({
               workItemId,

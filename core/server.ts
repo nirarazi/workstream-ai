@@ -1229,8 +1229,10 @@ export function createApp(state: EngineState): Hono {
         state.pipeline.stop();
         state.pipeline = null;
       }
+      // Retire the old model provider and decision gate: a call still waiting its turn must not go out
+      // with the old key or to the old endpoint
       if (state.usageTracker) {
-        state.usageTracker.abort();
+        state.usageTracker.dispose();
       }
 
       // Recreate rate limiters
