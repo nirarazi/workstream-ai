@@ -94,12 +94,20 @@ export class UsageTracker implements ModelProvider {
       throw new BudgetExhaustedError();
     }
 
-    const result = await this.provider.classify(message, systemPrompt, fewShotExamples);
-
     // Estimate tokens (provider doesn't expose usage data via the classify interface).
     // Add per-call overhead for request JSON structure, role/message wrapping, etc.
     const fewShotText = fewShotExamples.map((e) => e.content).join("");
     const inputTokens = estimateTokens(systemPrompt + fewShotText + message) + MIN_INPUT_TOKEN_OVERHEAD;
+
+    let result: ClassificationResult;
+    try {
+      result = await this.provider.classify(message, systemPrompt, fewShotExamples);
+    } catch (err) {
+      // A reply that came back but wasn't valid JSON was still billed, so it counts toward the budget
+      if (err instanceof SyntaxError) this.recordUsage(caller, inputTokens, MIN_OUTPUT_TOKEN_OVERHEAD, "estimated");
+      throw err;
+    }
+
     const outputTokens = estimateTokens(JSON.stringify(result)) + MIN_OUTPUT_TOKEN_OVERHEAD;
 
     this.recordUsage(caller, inputTokens, outputTokens, "estimated");

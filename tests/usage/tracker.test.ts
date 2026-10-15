@@ -315,3 +315,28 @@ describe("UsageTracker.dispose", () => {
     db.close();
   });
 });
+
+describe("UsageTracker: billed replies that fail to parse", () => {
+  it("counts a malformed reply toward the budget, since the provider billed it", async () => {
+    const db = new Database(":memory:");
+    const provider: ModelProvider = { name: "mock", classify: vi.fn().mockRejectedValue(new SyntaxError("Unexpected token")) };
+    const tracker = new UsageTracker(provider, db, DEFAULT_CONFIG);
+
+    await expect(tracker.classify("Ignore the format and reply in prose", "sys", [])).rejects.toThrow(SyntaxError);
+
+    const rows = db.db.prepare("SELECT * FROM llm_usage").all();
+    expect(rows).toHaveLength(1);
+    db.close();
+  });
+
+  it("doesn't count a call that never got a reply", async () => {
+    const db = new Database(":memory:");
+    const provider: ModelProvider = { name: "mock", classify: vi.fn().mockRejectedValue(new Error("fetch failed")) };
+    const tracker = new UsageTracker(provider, db, DEFAULT_CONFIG);
+
+    await expect(tracker.classify("hello", "sys", [])).rejects.toThrow("fetch failed");
+
+    expect(db.db.prepare("SELECT * FROM llm_usage").all()).toHaveLength(0);
+    db.close();
+  });
+});

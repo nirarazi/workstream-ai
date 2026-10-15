@@ -23,9 +23,15 @@ class ClassificationFailed extends Error {
   }
 }
 
-/** A message whose classification keeps failing is stored as noise after this many tries, so it can't hold its
- * channel back forever. */
+/** A message whose classification keeps failing is stored as noise after this many counted tries, so it can't
+ * hold its channel back forever. A try counts only when other messages were classified in the same poll. */
 const MAX_CLASSIFY_ATTEMPTS = 3;
+/** However the tries go, a thread isn't held back for longer than this. */
+const MAX_HOLD_MS = 6 * 60 * 60 * 1000;
+
+function nextUtcMidnight(now = new Date()): number {
+  return Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1);
+}
 
 const DEFAULT_POLL_INTERVAL = 30;
 const DEFAULT_LOOKBACK_DAYS = 1;
@@ -57,9 +63,12 @@ export class Pipeline {
   private validPrefixes: string[] | null = null;
   /** Advanced by start() and stop(); a poll that sees it change has been superseded and stops. */
   private runId = 0;
-  /** Failed classification attempts per message (`threadId:messageId`), cleared once one succeeds. */
-  private classifyAttempts = new Map<string, number>();
-  private budgetPauseLogged = false;
+  /** Messages (`threadId:messageId`) whose classification failed: counted tries, cleared once one is stored. */
+  private failedMessages = new Map<string, { tries: number }>();
+  /** When each held thread was first held back. */
+  private threadHeldSince = new Map<string, number>();
+  /** After the daily budget runs out, polling (and its Slack reads) pauses until the budget resets. */
+  private budgetPausedUntil = 0;
 
   constructor(
     messagingAdapter: MessagingAdapter,
@@ -143,6 +152,8 @@ export class Pipeline {
     // just rotated the credentials or moved the model endpoint this poll was started with
     const run = this.runId;
     const stopped = () => run !== this.runId;
+    if (Date.now() < this.budgetPausedUntil) return { processed, classified, errors };
+    const failedThisPoll: string[] = [];
 
     // Build per-channel cursors from the database
     const { globalSince, perChannelSince } = this.getPerChannelSince();
@@ -187,7 +198,15 @@ export class Pipeline {
     // Track thread IDs covered by this channel history poll
     const polledThreadIds = new Set<string>();
 
-    for (const thread of cappedThreads) {
+    // Keep a channel's cursor just before a thread that has to be read again
+    const holdBack = (t: Thread) => {
+      const before = Date.parse(threadStart(t)) - 1;
+      const prior = heldBack.get(t.channelId);
+      const at = Number.isNaN(before) ? null : new Date(before).toISOString();
+      heldBack.set(t.channelId, prior === undefined ? at : prior === null || at === null ? null : prior < at ? prior : at);
+    };
+
+    for (const [index, thread] of cappedThreads.entries()) {
       if (stopped()) break;
       if (!thread.messages || thread.messages.length === 0) {
         continue;
@@ -208,7 +227,7 @@ export class Pipeline {
         }
         processed++;
         try {
-          const outcome = await this.classifyPending(message, thread, stopped);
+          const outcome = await this.classifyPending(message, thread, stopped, failedThisPoll);
           if (outcome === "done") {
             classified++;
             continue;
@@ -228,14 +247,15 @@ export class Pipeline {
 
       const channelId = thread.channelId;
       if (held) {
-        // Keep the channel's cursor just before this thread, so the next poll reads it again
-        const before = Date.parse(threadStart(thread)) - 1;
-        const prior = heldBack.get(channelId);
-        const at = Number.isNaN(before) ? null : new Date(before).toISOString();
-        heldBack.set(channelId, prior === undefined ? at : prior === null || at === null ? null : prior < at ? prior : at);
-        if (budgetSpent) break;
+        holdBack(thread);
+        if (budgetSpent) {
+          // Threads not reached this poll must be read again too, whatever channel they're in
+          for (const rest of cappedThreads.slice(index + 1)) holdBack(rest);
+          break;
+        }
         continue;
       }
+      this.threadHeldSince.delete(thread.id);
 
       // Track the latest timestamp for poll cursor updates
       // (a deferred channel advances only to this thread's start; later replies come back via re-polls)
@@ -306,7 +326,7 @@ export class Pipeline {
             hadNew = true;
             processed++;
             try {
-              const outcome = await this.classifyPending(msg, threadObj, stopped);
+              const outcome = await this.classifyPending(msg, threadObj, stopped, failedThisPoll);
               if (outcome === "done") {
                 classified++;
                 continue;
@@ -335,6 +355,15 @@ export class Pipeline {
     }
 
     if (stopped()) return { processed, classified, errors };
+
+    // A failed try counts only if other messages were classified this poll: the model is up, so the message is
+    // the problem. During an outage nothing counts, and messages wait for the model to come back.
+    if (classified > 0) {
+      for (const key of failedThisPoll) {
+        const rec = this.failedMessages.get(key);
+        if (rec) rec.tries++;
+      }
+    }
 
     // Recompute bot types after processing — more data may refine classifications
     if (processed > 0) {
@@ -432,27 +461,39 @@ export class Pipeline {
 
   /**
    * Classify and store one polled message. "held": the model gave no answer, so nothing was stored and the
-   * message is tried again on the next poll; after MAX_CLASSIFY_ATTEMPTS tries it's stored as noise instead.
+   * message is tried again on the next poll; after MAX_CLASSIFY_ATTEMPTS counted tries, or once its thread has
+   * been held for MAX_HOLD_MS, it's stored as noise instead.
    * "budget": the daily budget is spent, and the poll should stop here.
    */
-  private async classifyPending(message: Message, thread: Thread, stopped: () => boolean): Promise<"done" | "held" | "budget"> {
+  private async classifyPending(
+    message: Message,
+    thread: Thread,
+    stopped: () => boolean,
+    failedThisPoll: string[],
+  ): Promise<"done" | "held" | "budget"> {
     const key = `${thread.id}:${message.id}`;
-    const attempt = (this.classifyAttempts.get(key) ?? 0) + 1;
+    const rec = this.failedMessages.get(key);
+    const heldSince = this.threadHeldSince.get(thread.id);
+    const giveUp = (rec !== undefined && rec.tries >= MAX_CLASSIFY_ATTEMPTS)
+      || (heldSince !== undefined && Date.now() - heldSince > MAX_HOLD_MS);
     try {
-      await this.processMessageInternal(message, thread, stopped, attempt >= MAX_CLASSIFY_ATTEMPTS);
-      this.classifyAttempts.delete(key);
-      this.budgetPauseLogged = false;
+      await this.processMessageInternal(message, thread, stopped, giveUp);
+      this.failedMessages.delete(key);
       return "done";
     } catch (err) {
       if (!(err instanceof ClassificationFailed)) throw err;
       if (err.kind === "budget") {
-        if (!this.budgetPauseLogged) log.warn("Daily LLM budget spent; classification is paused until it resets");
-        this.budgetPauseLogged = true;
+        this.budgetPausedUntil = nextUtcMidnight();
+        log.warn(`Daily LLM budget spent; classification is paused until ${new Date(this.budgetPausedUntil).toISOString()}`);
         return "budget";
       }
-      if (this.classifyAttempts.size > 10_000) this.classifyAttempts.clear(); // messages that vanished before a retry
-      this.classifyAttempts.set(key, attempt);
-      log.warn(`Classification failed for ${message.id} (try ${attempt} of ${MAX_CLASSIFY_ATTEMPTS}); trying again next poll`);
+      // Entries for messages that vanished before a retry
+      if (this.failedMessages.size > 10_000) this.failedMessages.clear();
+      if (this.threadHeldSince.size > 10_000) this.threadHeldSince.clear();
+      if (!rec) this.failedMessages.set(key, { tries: 0 });
+      if (heldSince === undefined) this.threadHeldSince.set(thread.id, Date.now());
+      failedThisPoll.push(key);
+      log.warn(`Classification failed for ${message.id}; trying again next poll`);
       return "held";
     }
   }
@@ -713,7 +754,8 @@ export class Pipeline {
 
     // Cache the classification for content deduplication
     const hash = this.getContentHash(message.text, thread.id);
-    this.recentContentHashes.set(hash, classification);
+    // A stored placeholder isn't an answer to reuse for the same text later
+    if (!classification.failed) this.recentContentHashes.set(hash, classification);
     if (this.recentContentHashes.size > this.MAX_CONTENT_HASHES) {
       const firstKey = this.recentContentHashes.keys().next().value;
       if (firstKey) this.recentContentHashes.delete(firstKey);
