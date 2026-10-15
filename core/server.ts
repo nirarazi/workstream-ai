@@ -113,7 +113,9 @@ export function createApp(state: EngineState): Hono {
     const uptime = Math.floor((Date.now() - state.startedAt.getTime()) / 1000);
     const llmBackoff = state.classifier.getBackoffState();
     const llmThrottled = state.rateLimiters.llm?.isThrottling ?? false;
-    const llmDegraded = llmBackoff?.active || llmThrottled;
+    // A spent daily budget pauses classification, so the inbox isn't keeping up: show it
+    const budgetSpent = Boolean(state.usageTracker?.getBudgetStatus().exhausted);
+    const llmDegraded = llmBackoff?.active || llmThrottled || budgetSpent;
 
     // Check messaging adapter's own throttling state
     const platformThrottled = state.messagingAdapter?.isThrottling ?? false;
