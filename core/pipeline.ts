@@ -81,6 +81,8 @@ export class Pipeline {
     // Run once immediately
     const result = await this.processOnce();
     log.info("Initial poll complete", result);
+    // stop() during that first poll (a settings save restarts the pipeline) means no polling timer
+    if (!this.running) return;
 
     // Set up the polling interval
     const intervalSeconds = this.config?.messaging?.pollInterval ?? DEFAULT_POLL_INTERVAL;
