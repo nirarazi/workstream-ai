@@ -84,8 +84,10 @@ describe("SlackAdapter", () => {
         throw Object.assign(new Error("ratelimited"), { code: "slack_webapi_rate_limited", retryAfter: 1 });
       });
 
+      const started = Date.now();
       await expect(adapter.connect({ token: "xoxp-valid-token" }, controller.signal)).rejects.toThrow("replaced");
-      expect(mockUsersList).toHaveBeenCalledTimes(1); // no retry after the abort, and no 1s wait
+      expect(Date.now() - started).toBeLessThan(500); // the 1s Retry-After wait is cut short
+      expect(mockUsersList).toHaveBeenCalledTimes(1); // and the page isn't retried
     });
 
     it("should reject tokens that are not xoxp-", async () => {

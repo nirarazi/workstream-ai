@@ -101,8 +101,9 @@ export function untilDeadlineOrSuperseded<T>(
   // Started inside a promise, so a connect that throws synchronously still ends up in the race below (and the
   // timers are cleared), rather than escaping and leaving an armed timer to reject unhandled later
   const work = Promise.resolve().then(() => start(controller.signal));
-  work.catch(() => undefined); // its rejection after an abort is expected and handled by the race
-  stop.catch(() => undefined); // only observed through the race
+  // Defensive: the race below already observes both; these keep it that way if the code around them changes
+  work.catch(() => undefined);
+  stop.catch(() => undefined);
   return Promise.race([work, stop]).finally(() => {
     clearTimeout(timer);
     clearInterval(check);
