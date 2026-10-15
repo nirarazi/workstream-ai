@@ -855,13 +855,16 @@ export class Pipeline {
     // keyed by thread ID so the conversation stays grouped under one item
     if (allWorkItemIds.size === 0 && classification.status !== "noise") {
       const syntheticId = `thread:${thread.id}`;
-      this.graph.upsertWorkItem({
-        id: syntheticId,
-        source: "inferred",
-        title: classification.title || "Untitled conversation",
-        currentAtcStatus: classification.status,
-        currentConfidence: classification.confidence,
-      });
+      // A message classified late (held for a retry) mustn't overwrite the state a newer message already set
+      if (!this.graph.getWorkItemById(syntheticId) || !this.graph.hasNewerEvent(syntheticId, thread.id, message.timestamp)) {
+        this.graph.upsertWorkItem({
+          id: syntheticId,
+          source: "inferred",
+          title: classification.title || "Untitled conversation",
+          currentAtcStatus: classification.status,
+          currentConfidence: classification.confidence,
+        });
+      }
       allWorkItemIds.add(syntheticId);
       log.debug("Created synthetic work item for unticketed thread", syntheticId, classification.title);
     }
@@ -937,9 +940,10 @@ export class Pipeline {
         const itemConfidence = itemClassification?.confidence ?? classification.confidence;
         const itemTitle = itemClassification?.title ?? classification.title;
 
+        // A message classified late (held for a retry) doesn't overwrite the status a newer message already set
         const shouldUpdate =
-          !existing.currentConfidence ||
-          itemConfidence >= existing.currentConfidence;
+          (!existing.currentConfidence || itemConfidence >= existing.currentConfidence) &&
+          !this.graph.hasNewerEvent(workItemId, thread.id, message.timestamp);
 
         if (shouldUpdate) {
           this.graph.upsertWorkItem({

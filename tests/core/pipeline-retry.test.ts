@@ -343,3 +343,36 @@ describe("Pipeline: a reply that keeps failing", () => {
     db.close();
   });
 });
+
+describe("Pipeline: a message classified late", () => {
+  it("doesn't overwrite the status a newer message in its thread already set", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    let clock = Date.parse("2026-10-15T08:00:00.000Z");
+    vi.setSystemTime(clock);
+    const db = new Database(":memory:");
+    const graph = new ContextGraph(db);
+    // m1 "done" (older), m2 "blocked on you" (newer); m1 fails twice, so m2 is classified first
+    const t = thread("T1", "2026-10-15T07:58:00.000Z", "C1", "2026-10-15T07:59:00.000Z");
+    let m1Fails = 2;
+    const classify = vi.fn(async (text: string) => {
+      if (text.includes("T1-m1")) {
+        if (m1Fails-- > 0) return UNREACHABLE;
+        return { ...ANSWER, status: "completed", entryType: "progress", reason: "done" };
+      }
+      return { ...ANSWER, status: "blocked_on_human", entryType: "block", reason: "needs approval", targetedAtOperator: true };
+    });
+    const pipeline = new Pipeline({ name: "fake", readThreads: vi.fn(async () => [t]), getThreadMessages: vi.fn(async () => []) } as any,
+      { classify } as any, graph, new WorkItemLinker(graph, [new DefaultExtractor({ ticketPatterns: [], prPatterns: [] })]), undefined, CONFIG);
+
+    for (let i = 0; i < 6; i++) {
+      await pipeline.processOnce();
+      clock += 31 * 60_000;
+      vi.setSystemTime(clock);
+    }
+
+    expect(graph.hasEvent("T1-m1", "T1")).toBe(true); // m1 was classified in the end
+    expect(graph.getWorkItemById("thread:T1")!.currentAtcStatus).toBe("blocked_on_human"); // but m2's state stands
+    vi.useRealTimers();
+    db.close();
+  });
+});

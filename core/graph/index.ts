@@ -702,6 +702,17 @@ export class ContextGraph {
     return this.getEventById(id)!;
   }
 
+  /** Whether a message newer than `timestamp` has been recorded for this work item (or this thread) */
+  hasNewerEvent(workItemId: string, threadId: string, timestamp: string): boolean {
+    const row = this.db.db.prepare(`
+      SELECT 1 FROM events
+      WHERE (work_item_id = ? OR thread_id = ? OR thread_id IN (SELECT thread_id FROM thread_work_items WHERE work_item_id = ?))
+        AND timestamp > ?
+      LIMIT 1
+    `).get(workItemId, threadId, workItemId, timestamp);
+    return !!row;
+  }
+
   hasEvent(messageId: string, threadId: string): boolean {
     const row = this.db.db.prepare(
       "SELECT 1 FROM events WHERE message_id = ? AND thread_id = ? LIMIT 1"
