@@ -816,7 +816,7 @@ describe("Database", () => {
 
       for (let i = 1; i <= 3; i++) {
         graph.upsertThread({ id: `t${i}`, channelId: "C-alerts", channelName: "#alerts", platform: "slack", workItemId: `thread:t${i}`, lastActivity: new Date().toISOString(), messageCount: 1 });
-        graph.insertEvent({ threadId: `t${i}`, messageId: `m-crm-${i}`, workItemId: `thread:t${i}`, agentId: "B-crm", status: "blocked_on_human", confidence: 0.8, reason: "Lead alert", rawText: "*Alert: New lead determination*\n*QUOTE:* Q12345", timestamp: new Date().toISOString() });
+        graph.insertEvent({ threadId: `t${i}`, messageId: `m-crm-${i}`, workItemId: `thread:t${i}`, agentId: "B-crm", status: "blocked_on_human", confidence: 0.8, reason: "Lead alert", rawText: "*Alert: New lead received*\n*ORDER:* Q12345", timestamp: new Date().toISOString() });
       }
 
       graph.computeBotTypes();
@@ -862,7 +862,7 @@ describe("Database", () => {
       for (let i = 1; i <= 3; i++) {
         graph.upsertWorkItem({ id: `thread:lead-${i}`, source: "inferred", title: "New lead pending", currentAtcStatus: "blocked_on_human" });
         graph.upsertThread({ id: `lead-${i}`, channelId: "C-alerts", channelName: "#alerts", platform: "slack", workItemId: `thread:lead-${i}`, lastActivity: new Date().toISOString(), messageCount: 1 });
-        graph.insertEvent({ threadId: `lead-${i}`, messageId: `m-sync-${i}`, workItemId: `thread:lead-${i}`, agentId: "B-sync", status: "blocked_on_human", confidence: 0.8, reason: "Lead alert", rawText: "*Alert: New lead determination*", timestamp: new Date().toISOString() });
+        graph.insertEvent({ threadId: `lead-${i}`, messageId: `m-sync-${i}`, workItemId: `thread:lead-${i}`, agentId: "B-sync", status: "blocked_on_human", confidence: 0.8, reason: "Lead alert", rawText: "*Alert: New lead received*", timestamp: new Date().toISOString() });
       }
 
       // Before classification, all are blocked
@@ -885,14 +885,14 @@ describe("Database", () => {
       for (let i = 1; i <= 10; i++) {
         graph.upsertWorkItem({ id: `thread:alert-${i}`, source: "inferred", title: "Pure bot alert", currentAtcStatus: "blocked_on_human" });
         graph.upsertThread({ id: `alert-${i}`, channelId: "C-alerts", channelName: "#alerts", platform: "slack", workItemId: `thread:alert-${i}`, lastActivity: new Date().toISOString(), messageCount: 1 });
-        graph.insertEvent({ threadId: `alert-${i}`, messageId: `m-alert-${i}`, workItemId: `thread:alert-${i}`, agentId: "B-alert", status: "blocked_on_human", confidence: 0.8, reason: "Alert", rawText: "*Alert: New lead determination*", timestamp: new Date().toISOString() });
+        graph.insertEvent({ threadId: `alert-${i}`, messageId: `m-alert-${i}`, workItemId: `thread:alert-${i}`, agentId: "B-alert", status: "blocked_on_human", confidence: 0.8, reason: "Alert", rawText: "*Alert: New lead received*", timestamp: new Date().toISOString() });
       }
 
       // Create a thread where the bot posted AND a human replied
       graph.upsertWorkItem({ id: "thread:mixed", source: "inferred", title: "Lead with human reply", currentAtcStatus: "blocked_on_human" });
       graph.upsertThread({ id: "mixed", channelId: "C-alerts", channelName: "#alerts", platform: "slack", workItemId: "thread:mixed", lastActivity: new Date().toISOString(), messageCount: 2 });
-      graph.insertEvent({ threadId: "mixed", messageId: "m-alert-mixed", workItemId: "thread:mixed", agentId: "B-alert", status: "blocked_on_human", confidence: 0.8, reason: "Alert", rawText: "*Alert: New lead determination*", timestamp: new Date().toISOString() });
-      graph.insertEvent({ threadId: "mixed", messageId: "m-kris-1", workItemId: "thread:mixed", agentId: "U-sam", status: "blocked_on_human", confidence: 0.8, reason: "Human action", rawText: "Sam, take care of this please", timestamp: new Date().toISOString() });
+      graph.insertEvent({ threadId: "mixed", messageId: "m-alert-mixed", workItemId: "thread:mixed", agentId: "B-alert", status: "blocked_on_human", confidence: 0.8, reason: "Alert", rawText: "*Alert: New lead received*", timestamp: new Date().toISOString() });
+      graph.insertEvent({ threadId: "mixed", messageId: "m-sam-1", workItemId: "thread:mixed", agentId: "U-sam", status: "blocked_on_human", confidence: 0.8, reason: "Human action", rawText: "Sam, take care of this please", timestamp: new Date().toISOString() });
 
       graph.computeBotTypes();
 

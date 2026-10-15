@@ -142,7 +142,7 @@ few_shot_examples:
       next_action: null
 
   - role: user
-    content: "[Sender: Echo (agent) | Channel: #alerts]\nNew lead from dev site: John Smith, john@example.com, requesting demo for fleet management platform. Source: website contact form. CRM ticket #4521 created automatically."
+    content: "[Sender: Echo (agent) | Channel: #inbound]\nNew lead from dev site: John Smith, john@example.com, requesting demo for fleet management platform. Source: website contact form. CRM ticket #4521 created automatically."
     expected:
       status: blocked_on_human
       confidence: 0.8
@@ -223,7 +223,7 @@ few_shot_examples:
           title: "Newsletter draft scheduled"
 
   - role: user
-    content: "[Sender: Atlas (agent) | Channel: DM]\nDispatch Verification — 4/5 tickets clean.\nOPS-603 ✅ OPS-611 ✅ OPS-618 ✅ OPS-624 ✅\nNeeds human attention:\n• OPS-630 (Invoice export retry) — still In Progress in JIRA. No linked branch or PR found. Ticket may be blocked or scope changed. Please confirm if Done or still pending."
+    content: "[Sender: Atlas (agent) | Channel: DM]\nDispatch Verification — 4/5 tickets clean.\nOPS-603 ✅ OPS-611 ✅ OPS-618 ✅ OPS-624 ✅\nNeeds human attention:\n• OPS-630 (Invoice export to CSV) — still In Progress in JIRA. No linked branch or PR found. Ticket may be blocked or scope changed. Please confirm if Done or still pending."
     expected:
       status: noise
       confidence: 0.85
@@ -255,7 +255,7 @@ few_shot_examples:
           status: blocked_on_human
           confidence: 0.9
           reason: "No linked branch found, agent cannot proceed — asking operator to confirm status"
-          title: "Invoice export retry — no branch found, needs confirmation"
+          title: "Invoice export to CSV — no branch found, needs confirmation"
           action_required_from: []
           next_action: "Confirm if OPS-630 is done or still pending"
           targeted_at_operator: true
