@@ -67,7 +67,7 @@ export default function CreateTicketButton({ workItemId, disabled, onCreated, on
           {projectKeys === null ? (
             <div className="px-3 py-1.5 text-xs text-gray-500">Loading...</div>
           ) : projectKeys.length === 0 ? (
-            <div className="px-3 py-1.5 text-xs text-gray-500">No projects configured</div>
+            <div className="px-3 py-1.5 text-xs text-gray-500">No projects set. Add taskAdapter.ticketPrefixes or taskAdapter.defaultProject to config/local.yaml.</div>
           ) : (
             projectKeys.map((key) => (
               <button

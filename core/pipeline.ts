@@ -9,6 +9,7 @@ import type { TaskAdapter } from "./adapters/tasks/interface.js";
 import type { Classifier } from "./classifier/index.js";
 import type { ContextGraph } from "./graph/index.js";
 import type { WorkItemLinker } from "./graph/linker.js";
+import { looksLikeTicketKey } from "./graph/extractors/default.js";
 
 const log = createLogger("pipeline");
 
@@ -371,10 +372,11 @@ export class Pipeline {
   }
 
   private isValidWorkItemId(id: string): boolean {
+    // Also allow synthetic IDs (thread:xxx) and pull requests ("PR #123")
+    if (id.startsWith("thread:") || /^PR\s*#?\d+$/i.test(id)) return true;
     const prefixes = this.getValidPrefixes();
-    if (prefixes.length === 0) return true; // no prefixes configured → accept all
-    // Also allow synthetic IDs (thread:xxx) and known patterns like "PR #123"
-    if (id.startsWith("thread:")) return true;
+    // No prefixes configured: accept anything shaped like a ticket key, but not technical terms like UTF-8
+    if (prefixes.length === 0) return looksLikeTicketKey(id);
     return prefixes.some(prefix => id.toUpperCase().startsWith(prefix));
   }
 

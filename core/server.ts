@@ -149,9 +149,11 @@ export function createApp(state: EngineState): Hono {
       },
       llmBackoff,
       llmUsage,
-      projectKeys: (state.config.taskAdapter?.ticketPrefixes ?? []).map(
-        (p: string) => p.replace(/-$/, ""),
-      ),
+      // Ticket prefixes double as the Create Ticket project list; fall back to the default project
+      projectKeys: (state.config.taskAdapter?.ticketPrefixes?.length
+        ? state.config.taskAdapter.ticketPrefixes
+        : [state.config.taskAdapter?.defaultProject].filter((p): p is string => Boolean(p))
+      ).map((p: string) => p.replace(/-$/, "")),
     });
   });
 
@@ -1125,9 +1127,11 @@ export function createApp(state: EngineState): Hono {
 
         // Write non-sensitive config
         if (fields.baseUrl) {
-          // Merge, so settings the form doesn't manage (ticketPrefixes) survive a save
+          // Merge, so settings the form doesn't manage (ticketPrefixes) survive a save; a token pasted here
+          // by hand doesn't (the token lives in .env)
+          const { token: _staleToken, ...existingTask } = (localConfig.taskAdapter ?? {}) as Record<string, unknown>;
           localConfig.taskAdapter = {
-            ...((localConfig.taskAdapter ?? {}) as Record<string, unknown>),
+            ...existingTask,
             enabled: true,
             baseUrl: fields.baseUrl,
           };

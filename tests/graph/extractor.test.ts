@@ -116,6 +116,12 @@ describe("DefaultExtractor", () => {
       expect(ids).toContain("UI-5");
     });
 
+    it("skips technical terms shaped like ticket keys when no prefixes are configured", () => {
+      const noPrefixes = new DefaultExtractor({ ticketPatterns: ["\\b([A-Z]{2,6}-\\d+)\\b"], prPatterns: [], ticketPrefixes: [] });
+      const ids = noPrefixes.extractWorkItemIds("Hash it with SHA-256, encode as UTF-8, ask GPT-4, then close OPS-101 (see RFC-7231)");
+      expect(ids).toEqual(["OPS-101"]);
+    });
+
     it("works with custom prefixes", () => {
       const custom = new DefaultExtractor({
         ticketPatterns: ["\\b([A-Z]{2,6}-\\d+)\\b"],
