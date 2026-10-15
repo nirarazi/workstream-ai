@@ -536,14 +536,14 @@ describe("Stream", () => {
       ];
 
       const agentMap = new Map([["a1", "Relay"]]);
-      const threadChannelMap = new Map([["t1", "#fleet-ops"], ["t2", "#strategy"]]);
+      const threadChannelMap = new Map([["t1", "#fleet-ops"], ["t2", "#planning"]]);
 
       const timeline = buildTimeline(events, agentMap, threadChannelMap);
 
       expect(timeline).toHaveLength(2); // noise filtered out
       expect(timeline[0].entryType).toBe("decision"); // newest first
       expect(timeline[0].isOperator).toBe(true);
-      expect(timeline[0].channelName).toBe("#strategy");
+      expect(timeline[0].channelName).toBe("#planning");
       expect(timeline[1].entryType).toBe("progress");
       expect(timeline[1].agentName).toBe("Relay");
     });
@@ -552,8 +552,8 @@ describe("Stream", () => {
   describe("multi-agent multi-thread aggregation", () => {
     it("getAgentsForWorkItem returns all agents who have events", () => {
       graph.upsertWorkItem({ id: "OPS-100", source: "jira", title: "Test" });
-      graph.upsertThread({ id: "t1", channelId: "C1", channelName: "orchestrator", platform: "slack", workItemId: "OPS-100" });
-      graph.upsertThread({ id: "t2", channelId: "C2", channelName: "strategy", platform: "slack", workItemId: "OPS-100" });
+      graph.upsertThread({ id: "t1", channelId: "C1", channelName: "fleet-ops", platform: "slack", workItemId: "OPS-100" });
+      graph.upsertThread({ id: "t2", channelId: "C2", channelName: "planning", platform: "slack", workItemId: "OPS-100" });
 
       const agent1 = graph.upsertAgent({ name: "Relay", platform: "slack", platformUserId: "U1" });
       const agent2 = graph.upsertAgent({ name: "Prism", platform: "slack", platformUserId: "U2" });
@@ -563,17 +563,17 @@ describe("Stream", () => {
 
       const agents = graph.getAgentsForWorkItem("OPS-100");
       expect(agents).toHaveLength(2);
-      expect(agents.map((a) => a.name).sort()).toEqual(["Relay", "Prism"]);
+      expect(agents.map((a) => a.name).sort()).toEqual(["Prism", "Relay"]);
     });
 
     it("getChannelsForWorkItem returns all channels", () => {
       graph.upsertWorkItem({ id: "OPS-100", source: "jira", title: "Test" });
-      graph.upsertThread({ id: "t1", channelId: "C1", channelName: "orchestrator", platform: "slack", workItemId: "OPS-100" });
-      graph.upsertThread({ id: "t2", channelId: "C2", channelName: "strategy", platform: "slack", workItemId: "OPS-100" });
+      graph.upsertThread({ id: "t1", channelId: "C1", channelName: "fleet-ops", platform: "slack", workItemId: "OPS-100" });
+      graph.upsertThread({ id: "t2", channelId: "C2", channelName: "planning", platform: "slack", workItemId: "OPS-100" });
 
       const channels = graph.getChannelsForWorkItem("OPS-100");
       expect(channels).toHaveLength(2);
-      expect(channels.map((c) => c.name).sort()).toEqual(["orchestrator", "strategy"]);
+      expect(channels.map((c) => c.name).sort()).toEqual(["fleet-ops", "planning"]);
     });
   });
 });

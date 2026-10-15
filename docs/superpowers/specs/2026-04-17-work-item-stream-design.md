@@ -66,7 +66,7 @@ Not a separate section. Excerpts are **inline expansions of timeline entries** �
 - Most recent first within expansion
 - "Earlier in thread (N messages)" truncation for the rest
 - Operator's own messages are never truncated away
-- Cross-channel excerpts — a decision in #strategy and a block in #fleet-ops both appear under the same work item
+- Cross-channel excerpts — a decision in #planning and a block in #fleet-ops both appear under the same work item
 
 ### Suggested Actions
 
