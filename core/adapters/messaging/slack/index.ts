@@ -179,7 +179,7 @@ export class SlackAdapter implements MessagingAdapter {
     return this.limiter.isThrottling;
   }
 
-  async connect(credentials: Credentials): Promise<void> {
+  async connect(credentials: Credentials, signal?: AbortSignal): Promise<void> {
     const token = credentials.token;
     if (!token || !token.startsWith("xoxp-")) {
       throw new Error("Slack adapter requires an xoxp- user token");
@@ -203,9 +203,9 @@ export class SlackAdapter implements MessagingAdapter {
 
       // Pre-fetch user and channel lists so names, avatars, and privacy flags
       // are available for thread building and backfill
-      await this.fetchUsers();
+      await this.fetchUsers(signal);
       log.info(`Loaded ${this.userInfoMap.size} Slack users`);
-      await this.fetchChannelList();
+      await this.fetchChannelList(signal);
       log.info(`Loaded ${this.channelMap.size} Slack channels`);
     } catch (err: unknown) {
       this.client = null;
@@ -544,11 +544,12 @@ export class SlackAdapter implements MessagingAdapter {
     return Array.from(this.channelMap.keys());
   }
 
-  private async fetchChannelList(): Promise<void> {
+  private async fetchChannelList(signal?: AbortSignal): Promise<void> {
     let cursor: string | undefined;
     this.channelMap.clear();
 
     do {
+      signal?.throwIfAborted(); // a newer settings save replaced this connect: stop listing
       const result = await withRateLimitRetry(
         () =>
           this.client!.conversations.list({
@@ -635,11 +636,12 @@ export class SlackAdapter implements MessagingAdapter {
     return allMessages;
   }
 
-  private async fetchUsers(): Promise<void> {
+  private async fetchUsers(signal?: AbortSignal): Promise<void> {
     let cursor: string | undefined;
     this.userInfoMap.clear();
 
     do {
+      signal?.throwIfAborted(); // a newer settings save replaced this connect: stop listing
       const result = await withRateLimitRetry(
         () =>
           this.client!.users.list({

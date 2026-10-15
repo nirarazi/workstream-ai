@@ -31,15 +31,19 @@ const { UsageTracker } = await import("../../core/usage/tracker.js");
 const { registerMessagingAdapter } = await import("../../core/adapters/registry.js");
 
 // A stand-in chat adapter whose connect takes a moment, like a real platform, records overlap, and hangs for
-// the token "hang"
+// the token "hang" (until told to stop)
 let connecting = 0;
+let hungSignal: AbortSignal | undefined;
 let maxConnecting = 0;
 registerMessagingAdapter("slowchat", () => ({
   name: "slowchat",
   displayName: "Slow chat",
   getSetupInfo: () => ({ name: "slowchat", displayName: "Slow chat", fields: [{ key: "token", label: "Token", type: "password", required: true, envVar: "SLOWCHAT_TOKEN" }] }),
-  connect: async (creds: { token: string }) => {
-    if (creds.token === "hang") return new Promise<void>(() => {});
+  connect: async (creds: { token: string }, signal?: AbortSignal) => {
+    if (creds.token === "hang") {
+      hungSignal = signal;
+      return new Promise<void>(() => {});
+    }
     if (creds.token === "refused") throw new Error("invalid_auth");
     if (creds.token === "slow") await new Promise((r) => setTimeout(r, 600)); // longer than a real double click
     maxConnecting = Math.max(maxConnecting, ++connecting);
@@ -104,6 +108,7 @@ describe("POST /api/setup", () => {
     const [hung, next] = await Promise.all([save(chat("hang")), save(chat("token-2"))]);
 
     expect(hung.status).toBe(409);
+    expect(hungSignal!.aborted).toBe(true); // the abandoned connect is told to stop, not left running
     expect(next.status).toBe(200);
     expect(state.pipeline).toBe(started[0]);
   });
@@ -138,10 +143,12 @@ describe("POST /api/setup", () => {
 describe("untilDeadlineOrSuperseded", () => {
   it("fails a connect that never finishes", async () => {
     const never = new Promise<void>(() => {});
-    await expect(untilDeadlineOrSuperseded(never, 20, "slowchat connect")).rejects.toThrow("slowchat connect timed out");
+    let signal: AbortSignal | undefined;
+    await expect(untilDeadlineOrSuperseded((s) => { signal = s; return never; }, 20, "slowchat connect")).rejects.toThrow("slowchat connect timed out");
+    expect(signal!.aborted).toBe(true); // the connect itself is told to stop
   });
 
   it("passes a result through", async () => {
-    await expect(untilDeadlineOrSuperseded(Promise.resolve("ok"), 1000, "x")).resolves.toBe("ok");
+    await expect(untilDeadlineOrSuperseded(() => Promise.resolve("ok"), 1000, "x")).resolves.toBe("ok");
   });
 });

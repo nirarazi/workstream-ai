@@ -207,7 +207,7 @@ export class JiraAdapter implements TaskAdapter {
     }
   }
 
-  async connect(credentials: Credentials): Promise<void> {
+  async connect(credentials: Credentials, signal?: AbortSignal): Promise<void> {
     const baseUrl = credentials.baseUrl as string | undefined;
     if (!baseUrl || typeof baseUrl !== "string") {
       throw new Error("Jira credentials must include baseUrl");
@@ -221,7 +221,7 @@ export class JiraAdapter implements TaskAdapter {
 
     log.info("Verifying Jira connection...", this.baseUrl);
 
-    const response = await this.request("/rest/api/3/myself");
+    const response = await this.request("/rest/api/3/myself", { signal });
     if (!response.ok) {
       const text = await response.text();
       throw new Error(`Jira connection verification failed (${response.status}): ${text}`);

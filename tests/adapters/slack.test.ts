@@ -62,6 +62,21 @@ describe("SlackAdapter", () => {
       expect(mockAuthTest).toHaveBeenCalledOnce();
     });
 
+    it("stops listing users once its signal aborts (a newer settings save replaced it)", async () => {
+      const controller = new AbortController();
+      // Two pages of users; the save is replaced while the first page is loading
+      mockUsersList
+        .mockImplementationOnce(async () => {
+          controller.abort(new Error("replaced"));
+          return { members: [], response_metadata: { next_cursor: "page-2" } };
+        })
+        .mockResolvedValue({ members: [], response_metadata: {} });
+
+      await expect(adapter.connect({ token: "xoxp-valid-token" }, controller.signal)).rejects.toThrow();
+      expect(mockUsersList).toHaveBeenCalledTimes(1);
+      expect(mockConversationsList).not.toHaveBeenCalled();
+    });
+
     it("should reject tokens that are not xoxp-", async () => {
       await expect(adapter.connect({ token: "xoxb-bot-token" })).rejects.toThrow(
         "xoxp- user token",

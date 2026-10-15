@@ -20,7 +20,8 @@ export interface TaskAdapter {
   /** Transform raw form values before connect(). If not implemented, fields are passed as-is. */
   prepareCredentials?(fields: Record<string, string>): Record<string, string>;
 
-  connect(credentials: Credentials): Promise<void>;
+  /** Connect; when `signal` aborts (a newer settings save replaced this one), stop and reject. */
+  connect(credentials: Credentials, signal?: AbortSignal): Promise<void>;
   /** Return the authenticated user's identity (the operator). Null if not connected or not supported. */
   getAuthenticatedUser?(): { userId: string; userName: string } | null;
   getWorkItem(id: string): Promise<WorkItemDetail | null>;
