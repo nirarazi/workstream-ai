@@ -24,8 +24,9 @@ const ANSWER: Classification = {
   status: "in_progress", entryType: "progress", confidence: 0.9, reason: "working on it", workItemIds: [], title: "Update",
   targetedAtOperator: false, actionRequiredFrom: null, nextAction: null,
 };
-const FAILED: Classification = { ...ANSWER, status: "noise", entryType: "noise", confidence: 0.1, reason: "Classification failed — defaulting to noise", failed: "error" };
-const NO_BUDGET: Classification = { ...FAILED, reason: "Daily LLM budget exhausted. Resets at midnight UTC.", failed: "budget" };
+const UNREACHABLE: Classification = { ...ANSWER, status: "noise", entryType: "noise", confidence: 0.1, reason: "Classification failed — defaulting to noise", failed: "unreachable" };
+const INVALID: Classification = { ...UNREACHABLE, failed: "invalid" };
+const NO_BUDGET: Classification = { ...UNREACHABLE, reason: "Daily LLM budget exhausted. Resets at midnight UTC.", failed: "budget" };
 
 describe("Pipeline: when the model gives no answer", () => {
   let db: Database;
@@ -33,10 +34,20 @@ describe("Pipeline: when the model gives no answer", () => {
   let classify: ReturnType<typeof vi.fn>;
   let readThreads: ReturnType<typeof vi.fn>;
   let pipeline: Pipeline;
+  let clock: number;
   const T1 = "2026-10-15T05:00:00.000Z";
   const T2 = "2026-10-15T05:10:00.000Z";
+  // Polls far enough apart that any backoff has passed
+  const pollLater = async () => {
+    clock += 31 * 60 * 1000;
+    vi.setSystemTime(clock);
+    await pipeline.processOnce();
+  };
 
   beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    clock = Date.parse("2026-10-15T08:00:00.000Z");
+    vi.setSystemTime(clock);
     db = new Database(":memory:");
     graph = new ContextGraph(db);
     const linker = new WorkItemLinker(graph, [new DefaultExtractor({ ticketPatterns: [], prPatterns: [] })]);
@@ -51,7 +62,7 @@ describe("Pipeline: when the model gives no answer", () => {
   });
 
   it("stores nothing for it and keeps the channel before its thread, so the next poll tries again", async () => {
-    classify.mockResolvedValueOnce(FAILED).mockResolvedValueOnce(ANSWER);
+    classify.mockResolvedValueOnce(UNREACHABLE).mockResolvedValueOnce(ANSWER);
 
     await pipeline.processOnce();
 
@@ -61,38 +72,72 @@ describe("Pipeline: when the model gives no answer", () => {
     expect(graph.getPollCursor("C1")!.lastTimestamp).toBe("2026-10-15T04:59:59.999Z");
 
     classify.mockResolvedValueOnce(ANSWER);
-    await pipeline.processOnce();
+    await pipeline.processOnce(); // the first retry is on the very next poll
 
     expect(graph.getEventByMessageId("T1-m1", "T1")!.reason).toBe("working on it");
     // Past T1 now (T2, already classified, is skipped and re-read cheaply)
     expect(graph.getPollCursor("C1")!.lastTimestamp).toBe(T1);
   });
 
-  it("stores it as noise after three tries that failed while other messages got through", async () => {
+  it("gives up after three unusable replies, even when nothing else is posted", async () => {
+    readThreads.mockResolvedValue([thread("T1", T1)]);
+    classify.mockResolvedValue(INVALID);
+
+    await pipeline.processOnce();
+    await pollLater();
+    await pollLater();
+    expect(graph.hasEvent("T1-m1", "T1")).toBe(false);
+    await pollLater();
+
+    expect(graph.getEventByMessageId("T1-m1", "T1")!.status).toBe("noise");
+    expect(classify).toHaveBeenCalledTimes(4);
+  });
+
+  it("backs off, so a message that keeps failing costs few calls", async () => {
+    readThreads.mockResolvedValue([thread("T1", T1)]);
+    classify.mockResolvedValue(UNREACHABLE);
+
+    for (let i = 0; i < 20; i++) {
+      clock += 30_000; // a poll every 30s for 10 minutes
+      vi.setSystemTime(clock);
+      await pipeline.processOnce();
+    }
+
+    expect(classify.mock.calls.length).toBeLessThanOrEqual(6);
+  });
+
+  it("gives up on 'couldn't reach the model' only when other messages got real answers", async () => {
     let poll = 0;
     // Each poll brings a new message that the model answers, so the model is clearly up
     readThreads.mockImplementation(async () => [thread("T1", T1), thread(`N${poll}`, `2026-10-15T06:0${poll}:00.000Z`)]);
-    classify.mockImplementation(async (text: string) => (text.includes("T1") ? FAILED : ANSWER));
+    classify.mockImplementation(async (text: string) => (text.includes("T1") ? UNREACHABLE : ANSWER));
 
-    for (poll = 0; poll < 3; poll++) await pipeline.processOnce();
-    expect(graph.hasEvent("T1-m1", "T1")).toBe(false);
     await pipeline.processOnce();
+    for (poll = 1; poll < 3; poll++) await pollLater();
+    expect(graph.hasEvent("T1-m1", "T1")).toBe(false);
+    await pollLater();
 
     expect(graph.getEventByMessageId("T1-m1", "T1")!.status).toBe("noise");
   });
 
-  it("doesn't use up tries during an outage, when nothing gets through", async () => {
-    classify.mockResolvedValue(FAILED);
-    for (let i = 0; i < 5; i++) await pipeline.processOnce();
+  it("doesn't use up tries during an outage, even if messages that skip the model are stored", async () => {
+    // A thread on a completed item: its new messages are stored without a model call each poll
+    graph.upsertWorkItem({ id: "OPS-9", source: "jira", title: "Done", currentAtcStatus: "completed" });
+    graph.upsertThread({ id: "T9", channelId: "C9", channelName: "fleet-ops", platform: "slack", workItemId: "OPS-9" });
+    let poll = 0;
+    readThreads.mockImplementation(async () => [thread("T1", T1), { ...thread("T9", `2026-10-15T07:0${poll}:00.000Z`, "C9"), messages: [message(`T9-r${poll}`, "T9", "C9", `2026-10-15T07:0${poll}:00.000Z`)] }]);
+    classify.mockResolvedValue(UNREACHABLE);
+
+    await pipeline.processOnce();
+    for (poll = 1; poll < 6; poll++) await pollLater();
     expect(graph.hasEvent("T1-m1", "T1")).toBe(false);
 
     classify.mockResolvedValue(ANSWER); // the model is back
-    await pipeline.processOnce();
+    await pollLater();
     expect(graph.getEventByMessageId("T1-m1", "T1")!.reason).toBe("working on it");
   });
 
   it("pauses polling until the budget resets, then picks up where it stopped", async () => {
-    vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date("2026-10-15T12:00:00.000Z"));
     classify.mockResolvedValue(NO_BUDGET);
 
@@ -112,7 +157,6 @@ describe("Pipeline: when the model gives no answer", () => {
   });
 
   it("doesn't let another channel's cursor skip a thread the budget stop never reached", async () => {
-    vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date("2026-10-15T12:00:00.000Z"));
     // B1 (channel B) starts first but has a late reply; A1 (channel A) hits the budget; B2 is never reached
     readThreads.mockResolvedValue([
