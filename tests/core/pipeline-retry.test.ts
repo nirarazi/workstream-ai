@@ -76,8 +76,9 @@ describe("Pipeline: when the model gives no answer", () => {
     await pipeline.processOnce(); // the first retry is on the very next poll
 
     expect(graph.getEventByMessageId("T1-m1", "T1")!.reason).toBe("working on it");
-    // Past T1, and up to just before T2: T2 is already classified, and stays in the window for later replies
-    expect(graph.getPollCursor("C1")!.lastTimestamp).toBe("2026-10-15T05:09:59.999Z");
+    // Past T1 (classified this poll); T2, already classified, doesn't push it past its own start
+    const cursor = graph.getPollCursor("C1")!.lastTimestamp;
+    expect(cursor >= T1 && cursor < T2).toBe(true);
   });
 
   it("gives up after three unusable replies, even when nothing else is posted", async () => {
@@ -453,7 +454,7 @@ describe("Pipeline: poll cursors", () => {
 
     // Up to just before the classified thread, so a later reply to it is still read
     expect(graph.getPollCursor("C1")!.lastTimestamp).toBe("2026-10-12T04:59:59.999Z");
-    expect(graph.getPollCursor("C2")!.lastTimestamp).toBe("2026-10-15T04:59:59.999Z"); // still before the held one
+    expect(graph.getPollCursor("C2")!.lastTimestamp < "2026-10-15T05:00:00.000Z").toBe(true); // still before the held one
     db.close();
   });
 });
@@ -477,9 +478,43 @@ describe("Pipeline: replies to a classified thread", () => {
     graph.upsertThread({ id: "X", channelId: "C1", channelName: "fleet-ops", platform: "slack" });
     graph.insertEvent({ threadId: "X", messageId: "X-m1", workItemId: null, agentId: null, status: "in_progress", confidence: 0.9, reason: "", rawText: "", timestamp: xStart, targetedAtOperator: false });
 
-    await pipeline.processOnce(); // X is fully classified: the cursor moves, but only to just before X
-    expect(graph.getPollCursor("C1")!.lastTimestamp).toBe(new Date(Date.parse(xStart) - 1).toISOString());
+    await pipeline.processOnce(); // X is fully classified: the cursor moves, but stays before X (within the day)
+    expect(graph.getPollCursor("C1")!.lastTimestamp < xStart).toBe(true);
     replies = [...replies, message("X-m2", "X", "C1", ago(1))]; // a later reply
+    await pipeline.processOnce();
+
+    expect(graph.hasEvent("X-m2", "X")).toBe(true);
+    db.close();
+  });
+});
+
+describe("Pipeline: replies to an older classified thread", () => {
+  it("are still read when a newer classified thread exists in the same quiet channel", async () => {
+    const db = new Database(":memory:");
+    const graph = new ContextGraph(db);
+    const ago = (h: number) => new Date(Date.now() - h * 3_600_000).toISOString();
+    const threads: Record<string, Message[]> = {
+      X: [message("X-m1", "X", "C1", ago(10))],
+      Y: [message("Y-m1", "Y", "C1", ago(6)), message("Y-m2", "Y", "C1", ago(5))],
+    };
+    const readThreads = vi.fn(async (since: Date, _ch?: string[], perChannel?: Map<string, Date>) => {
+      const from = (perChannel?.get("C1") ?? since).toISOString();
+      return Object.entries(threads)
+        .filter(([, msgs]) => msgs[0].timestamp > from)
+        .map(([id, msgs]) => ({ ...thread(id, msgs[0].timestamp), messages: msgs }));
+    });
+    const classify = vi.fn().mockResolvedValue(ANSWER);
+    const pipeline = new Pipeline({ name: "fake", readThreads, getThreadMessages: vi.fn(async () => []) } as any, { classify } as any, graph,
+      new WorkItemLinker(graph, [new DefaultExtractor({ ticketPatterns: [], prPatterns: [] })]), undefined, CONFIG);
+    for (const [id, msgs] of Object.entries(threads)) {
+      graph.upsertThread({ id, channelId: "C1", channelName: "fleet-ops", platform: "slack" });
+      for (const m of msgs) {
+        graph.insertEvent({ threadId: id, messageId: m.id, workItemId: null, agentId: null, status: "completed", confidence: 0.9, reason: "", rawText: "", timestamp: m.timestamp, targetedAtOperator: false });
+      }
+    }
+
+    await pipeline.processOnce(); // both classified already: the cursor moves, but not past the last day
+    threads.X = [...threads.X, message("X-m2", "X", "C1", ago(1))]; // "blocked: need your approval" on the older thread
     await pipeline.processOnce();
 
     expect(graph.hasEvent("X-m2", "X")).toBe(true);

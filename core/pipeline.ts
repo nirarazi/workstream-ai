@@ -35,6 +35,9 @@ const MAX_HOLD_MS = 6 * 60 * 60 * 1000;
 const RETRY_BASE_MS = 30_000;
 const RETRY_MAX_MS = 30 * 60 * 1000;
 
+/** Classified threads that started within this long stay in the history window, so late replies to them are read */
+const REPLY_WINDOW_MS = 24 * 60 * 60 * 1000;
+
 /** While the model looks unavailable, read the platform no more often than this (new messages wait at most this) */
 const OUTAGE_READ_MAX_WAIT_MS = 60 * 1000;
 
@@ -339,13 +342,15 @@ export class Pipeline {
 
     // Threads already fully classified (often picked up by the active-thread re-poll) move their channel's cursor
     // too, otherwise a quiet channel's cursor stays days old and every quiet-channel read re-fetches that whole
-    // window and its replies. Only to just before the thread's first message, though: the thread stays in the
-    // window, so a later reply to it is still read. Held and deferred threads still win below.
+    // window and its replies. But never later than REPLY_WINDOW_MS ago, nor past a thread's own start: threads
+    // from the last day stay in the history window, so a late reply to any of them (not on the re-poll list,
+    // e.g. a finished item) is still read. Held and deferred threads still win below.
+    const replyWindowStart = Date.now() - REPLY_WINDOW_MS;
     for (const t of threads) {
       if (pendingKey.has(t) || t.messages.length === 0) continue;
       const before = Date.parse(threadStart(t)) - 1;
       if (Number.isNaN(before)) continue;
-      const at = new Date(before).toISOString();
+      const at = new Date(Math.min(before, replyWindowStart)).toISOString();
       const existing = latestTimestamps.get(t.channelId);
       if (!existing || at > existing) latestTimestamps.set(t.channelId, at);
     }
