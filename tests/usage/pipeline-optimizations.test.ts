@@ -28,27 +28,6 @@ function setup() {
 }
 
 describe("Pipeline optimizations", () => {
-  it("skips classification when work item is completed", async () => {
-    const { db, graph, classifyFn, pipeline } = setup();
-
-    graph.upsertWorkItem({ id: "OPS-100", source: "jira", currentAtcStatus: "completed" });
-    graph.upsertThread({ id: "t1", channelId: "C1", platform: "test", workItemId: "OPS-100" });
-
-    const msg: Message = {
-      id: "m-new",
-      text: "OPS-100: Confirming deployment is stable",
-      userId: "u1",
-      userName: "Relay",
-      platform: "test",
-      timestamp: new Date().toISOString(),
-    };
-
-    await pipeline.processMessage(msg, "t1", "C1");
-
-    expect(classifyFn).not.toHaveBeenCalled();
-    db.close();
-  });
-
   it("skips classification for duplicate message content within same thread", async () => {
     const { db, graph, classifyFn, pipeline } = setup();
 

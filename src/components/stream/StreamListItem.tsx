@@ -97,6 +97,9 @@ export default function StreamListItem({ item, selected, actionState, resolving,
           )}
         </div>
         <div className="flex items-center gap-2 shrink-0">
+          {workItem.reopenedAt && status !== "completed" && (
+            <span className="text-[10px] text-purple-300" title="Was completed; a later message brought it back">Reopened</span>
+          )}
           <StatusBadge
             status={status}
             actionState={actionState}

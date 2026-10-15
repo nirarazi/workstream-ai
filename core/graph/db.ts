@@ -302,6 +302,12 @@ export class Database {
       log.info("Migration: added status_at column to work_items");
     }
 
+    // Add reopened_at: when a completed work item was brought back by a later message (cleared when it's closed)
+    if (!wiColsMerge.some((c) => c.name === "reopened_at")) {
+      this.db.exec("ALTER TABLE work_items ADD COLUMN reopened_at TEXT DEFAULT NULL");
+      log.info("Migration: added reopened_at column to work_items");
+    }
+
     // Backfill thread_work_items junction table from existing data
     const twiCount = (this.db.prepare("SELECT COUNT(*) AS n FROM thread_work_items").get() as { n: number }).n;
     if (twiCount === 0) {

@@ -865,7 +865,10 @@ export function createApp(state: EngineState): Hono {
             id: body.workItemId,
             source: workItem.source,
             currentAtcStatus: "completed",
+            // Closed now: a message posted before this, classified later, mustn't reopen it
+            statusAt: new Date().toISOString(),
           });
+          state.graph.setReopened(body.workItemId, null);
           break;
 
         case "snooze": {
@@ -914,6 +917,7 @@ export function createApp(state: EngineState): Hono {
             source: workItem.source,
             currentAtcStatus: "noise",
           });
+          state.graph.setReopened(body.workItemId, null);
           const noiseThread = findThreadForWorkItem(body.workItemId);
           state.graph.insertEvent({
             threadId: noiseThread?.id ?? null,

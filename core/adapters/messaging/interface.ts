@@ -1,9 +1,23 @@
 // core/adapters/messaging/interface.ts — MessagingAdapter interface
 
-import type { Credentials, Thread, Message } from "../../types.js";
+import type { Credentials, Thread, Message, KnownThread } from "../../types.js";
 import type { ContextGraph } from "../../graph/index.js";
 import type { Database } from "../../graph/db.js";
 import type { AdapterSetupInfo } from "../setup.js";
+
+/** Optional hints for readThreads; an adapter that ignores them still works, it just misses late replies. */
+export interface ReadThreadsOptions {
+  /**
+   * Threads already processed, keyed by thread id. The adapter returns a known thread again, with all its
+   * messages, when it has a reply after `latestAt` or more messages than `messageCount` (one was missed, e.g. it
+   * failed to classify), even if the thread started before the channel's cursor. A known thread with nothing new
+   * may be returned without its replies, to save platform calls. Unknown threads older than the cursor are never
+   * returned.
+   */
+  knownThreads?: Map<string, KnownThread>;
+  /** How far back (thread start) to look for late replies to known threads. */
+  replyWindowStart?: Date;
+}
 
 export interface MessagingAdapter {
   name: string;
@@ -19,7 +33,12 @@ export interface MessagingAdapter {
    * making platform calls and reject; the engine never uses an adapter whose connect didn't finish.
    */
   connect(credentials: Credentials, signal?: AbortSignal): Promise<void>;
-  readThreads(since: Date, channels?: string[], perChannelSince?: Map<string, Date>): Promise<Thread[]>;
+  readThreads(
+    since: Date,
+    channels?: string[],
+    perChannelSince?: Map<string, Date>,
+    options?: ReadThreadsOptions,
+  ): Promise<Thread[]>;
   replyToThread(threadId: string, channelId: string, message: string): Promise<void>;
   /** Post a new top-level message in a channel (not a reply) */
   postMessage(channelId: string, message: string): Promise<{ threadId: string }>;

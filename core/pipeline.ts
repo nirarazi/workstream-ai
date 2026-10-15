@@ -3,7 +3,7 @@
 import { createHash } from "node:crypto";
 import { createLogger } from "./logger.js";
 import type { Config } from "./config.js";
-import type { Classification, Message, OperatorIdentityMap, Thread, ThreadContext } from "./types.js";
+import type { Classification, Message, OperatorIdentityMap, StatusCategory, Thread, ThreadContext } from "./types.js";
 import type { MessagingAdapter } from "./adapters/messaging/interface.js";
 import type { TaskAdapter } from "./adapters/tasks/interface.js";
 import type { Classifier } from "./classifier/index.js";
@@ -37,6 +37,18 @@ const RETRY_MAX_MS = 30 * 60 * 1000;
 
 /** Classified threads that started within this long stay in the history window, so late replies to them are read */
 const REPLY_WINDOW_MS = 24 * 60 * 60 * 1000;
+/**
+ * Whether a message on a completed work item brings it back: a blocker or a decision does (it needs the operator
+ * again), and so does another human saying work resumed. An agent reporting progress after completion doesn't, nor
+ * does the operator's own message (e.g. the note sent with Approve, which comes back as in_progress).
+ */
+function reopens(status: StatusCategory, message: Message, fromOperator: boolean): boolean {
+  if (status === "blocked_on_human" || status === "needs_decision") return true;
+  return status === "in_progress" && message.senderType === "human" && !fromOperator;
+}
+
+/** Known threads that started within this long are checked for late replies, whatever their status */
+const LATE_REPLY_WINDOW_MS = 3 * 24 * 60 * 60 * 1000;
 
 /** While the model looks unavailable, read the platform no more often than this (new messages wait at most this) */
 const OUTAGE_READ_MAX_WAIT_MS = 60 * 1000;
@@ -115,15 +127,20 @@ export class Pipeline {
     this.operatorIdentities = operatorIdentities ?? null;
   }
 
+  /** Whether a message was posted by the operator (any of their platform identities) */
+  private isOperator(message: Message): boolean {
+    return [...(this.operatorIdentities?.values() ?? [])].some((id) => id.userId === message.userId);
+  }
+
   /** Why classification is paused right now, if it is: shown as a degraded model status */
   pauseReason(): "budget" | "auth" | null {
     return Date.now() < this.pausedUntil ? this.pausedFor : null;
   }
 
   /**
-   * Whether the item's status was last set by a message posted after this one. Only messages set status_at, so an
-   * operator action (approve, close, reply) or a mere mention elsewhere never stops an earlier-posted message, for
-   * example a block the operator hadn't seen yet, from updating the status.
+   * Whether the item's status was last set by a message posted after this one, or by Approve/Close after it was
+   * posted. Other operator actions (reply, snooze) and mere mentions elsewhere don't set status_at, so they never stop
+   * an earlier-posted message, for example a block the operator hadn't seen yet, from updating the status.
    */
   private isOlderThanStatus(item: { statusAt: string | null } | null, message: Message): boolean {
     return Boolean(item?.statusAt && message.timestamp < item.statusAt);
@@ -217,10 +234,14 @@ export class Pipeline {
 
     let threads: Thread[];
     try {
+      const lateReplyWindowStart = new Date(Date.now() - LATE_REPLY_WINDOW_MS);
+      // A thread with a message waiting for a retry has fewer messages processed than it has, so it comes back in full
+      const knownThreads = this.graph.getKnownThreads(lateReplyWindowStart.toISOString());
       threads = await this.messagingAdapter.readThreads(
         globalSince,
         channels.length > 0 ? channels : undefined,
         perChannelSince.size > 0 ? perChannelSince : undefined,
+        { knownThreads, replyWindowStart: lateReplyWindowStart },
       );
     } catch (err) {
       log.error("Failed to read threads from messaging adapter", err);
@@ -262,11 +283,20 @@ export class Pipeline {
       log.info(`Capped threads with new messages from ${sortedThreads.length} to ${cappedThreads.length} (maxThreadsPerPoll=${maxThreads})`);
     }
 
-    // Track thread IDs covered by this channel history poll
-    const polledThreadIds = new Set<string>();
+    // Track thread IDs covered by this channel history poll. That includes threads it returned with nothing new: the
+    // adapter has just checked them (a thread with a message to retry always comes back in full, so it's pending).
+    const polledThreadIds = new Set<string>(threads.filter((t) => !pendingKey.has(t)).map((t) => t.id));
+
+    // A thread that started before its channel's cursor came back for a late reply. It's found again the same way
+    // if it has to be retried, so it never moves the cursor, in either direction.
+    const behindCursor = (t: Thread) => {
+      const stored = perChannelSince.get(t.channelId);
+      return stored !== undefined && Date.parse(threadStart(t)) < stored.getTime();
+    };
 
     // Keep a channel's cursor just before a thread that has to be read again
     const holdBack = (t: Thread) => {
+      if (behindCursor(t)) return;
       const before = Date.parse(threadStart(t)) - 1;
       const prior = heldBack.get(t.channelId);
       const at = Number.isNaN(before) ? null : new Date(before).toISOString();
@@ -327,6 +357,7 @@ export class Pipeline {
         continue;
       }
 
+      if (behindCursor(thread)) continue;
       // Track the latest timestamp for poll cursor updates
       // (a deferred channel advances only to this thread's start; later replies come back via re-polls)
       const cursorTs = deferredChannels.has(channelId)
@@ -545,8 +576,8 @@ export class Pipeline {
    * kept the item in the operator's inbox with their own message as the reason.
    */
   private fromOperator(message: Message, classification: Classification): Classification {
+    if (!this.isOperator(message)) return classification;
     const operatorIds = new Set([...(this.operatorIdentities?.values() ?? [])].map((id) => id.userId));
-    if (!operatorIds.has(message.userId)) return classification;
     // "@Dana please approve X" from the operator is still blocked — on Dana. Keep that status; just untarget it.
     const namesSomeoneElse = (classification.actionRequiredFrom ?? []).some((id) => !operatorIds.has(id));
     const waitingOnOperator =
@@ -596,7 +627,14 @@ export class Pipeline {
       this.failedMessages.delete(key);
       return "done";
     } catch (err) {
-      if (!(err instanceof ClassificationFailed)) throw err;
+      if (err instanceof PipelineStopped) throw err;
+      if (!(err instanceof ClassificationFailed)) {
+        // Anything else (a database error, a bug in linking) backs off and is given up like an unusable answer.
+        // Rethrown, nothing would be stored, and the thread's missing message would be read and sent to the model
+        // again on every poll.
+        log.error("Failed to process message", message.id, err);
+        return this.holdForRetry(key, rec, now, "invalid", failedThisPoll);
+      }
       if (err.kind === "budget" || err.kind === "auth") {
         this.pausedFor = err.kind;
         this.pausedUntil = err.kind === "budget" ? nextUtcMidnight() : now + AUTH_PAUSE_MS;
@@ -605,17 +643,27 @@ export class Pipeline {
           : "The model provider refused the API key or account; classification is paused. Check Settings.");
         return "paused";
       }
-      // Entries for messages that vanished before a retry
-      if (this.failedMessages.size > 10_000) this.failedMessages.clear();
-      const r = rec ?? { tries: 0, attempts: 0, since: now, nextTryAt: 0 };
-      r.attempts++;
-      r.nextTryAt = now + retryDelay(r.attempts);
-      if (err.kind === "invalid") r.tries++;
-      else failedThisPoll.push(key); // counted at the end of the poll if the model answered anything else
-      this.failedMessages.set(key, r);
       log.warn(`Classification failed for ${message.id} (${err.kind}); trying again later`);
-      return "held";
+      return this.holdForRetry(key, rec, now, err.kind, failedThisPoll);
     }
+  }
+
+  private holdForRetry(
+    key: string,
+    rec: { tries: number; attempts: number; since: number; nextTryAt: number } | undefined,
+    now: number,
+    kind: string,
+    failedThisPoll: string[],
+  ): "held" {
+    // Entries for messages that vanished before a retry
+    if (this.failedMessages.size > 10_000) this.failedMessages.clear();
+    const r = rec ?? { tries: 0, attempts: 0, since: now, nextTryAt: 0 };
+    r.attempts++;
+    r.nextTryAt = now + retryDelay(r.attempts);
+    if (kind === "invalid") r.tries++;
+    else failedThisPoll.push(key); // counted at the end of the poll if the model answered anything else
+    this.failedMessages.set(key, r);
+    return "held";
   }
 
   private getContentHash(text: string, threadId: string): string {
@@ -693,47 +741,6 @@ export class Pipeline {
       if (recurringId) {
         log.debug("Recurring alert joins existing work item", recurringId, thread.id);
         allWorkItemIds.add(recurringId);
-      }
-    }
-
-    // Step 0c: Skip classification if the work item is already completed
-    if (inheritedWorkItemId) {
-      const existingWI = this.graph.getWorkItemById(inheritedWorkItemId);
-      if (existingWI?.currentAtcStatus === "completed") {
-        log.debug("Skipping classification for completed work item", inheritedWorkItemId);
-        // Still record the event so the message isn't lost
-        this.graph.upsertAgent({
-          id: message.userId,
-          name: message.userName,
-          platform: message.platform,
-          platformUserId: message.userId,
-          avatarUrl: message.userAvatarUrl ?? null,
-          isBot: message.senderType === "agent" ? true : message.senderType === "human" ? false : null,
-        });
-        this.graph.insertEvent({
-          threadId: thread.id,
-          messageId: message.id,
-          workItemId: inheritedWorkItemId,
-          agentId: message.userId,
-          status: "noise",
-          confidence: 0,
-          reason: "Work item already completed — skipping classification",
-          rawText: message.text,
-          timestamp: message.timestamp,
-          actionRequiredFrom: null,
-          nextAction: null,
-        });
-        return {
-          status: "noise",
-          entryType: "noise" as const,
-          confidence: 0,
-          reason: "Work item already completed — skipping classification",
-          workItemIds: [inheritedWorkItemId],
-          title: "",
-          targetedAtOperator: false,
-          actionRequiredFrom: null,
-          nextAction: null,
-        };
       }
     }
 
@@ -976,9 +983,12 @@ export class Pipeline {
         const itemTitle = itemClassification?.title ?? classification.title;
 
         // A message classified late (held for a retry) doesn't overwrite the status a newer message already set
-        const shouldUpdate =
-          (!existing.currentConfidence || itemConfidence >= existing.currentConfidence) &&
-          !this.isOlderThanStatus(existing, message);
+        const newer = !this.isOlderThanStatus(existing, message);
+        // Done stays done, except for a blocker or decision (back to the inbox), or a human saying work resumed.
+        // Agent chatter after completion ("thanks, merged") doesn't reopen it, however confident.
+        const shouldUpdate = existing.currentAtcStatus === "completed"
+          ? newer && reopens(itemStatus, message, this.isOperator(message))
+          : (!existing.currentConfidence || itemConfidence >= existing.currentConfidence) && newer;
 
         if (shouldUpdate) {
           this.graph.upsertWorkItem({
@@ -990,6 +1000,10 @@ export class Pipeline {
             // Set LLM title if work item has no title yet (e.g. extracted IDs with no Jira enrichment)
             ...(itemTitle && !existing.title ? { title: itemTitle } : {}),
           });
+          if (existing.currentAtcStatus === "completed") {
+            this.graph.setReopened(workItemId, message.timestamp);
+            log.info("Reopened completed work item", workItemId, itemStatus);
+          }
         }
       }
     }
