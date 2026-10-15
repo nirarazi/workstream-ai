@@ -96,4 +96,20 @@ describe("Pipeline: late replies to threads that started before the cursor", () 
     expect(graph.getPollCursor("C1")?.lastTimestamp).toBe("2026-10-15T11:00:00.000Z");
     db.close();
   });
+
+  it("backs off after an unexpected error storing a message, instead of retrying it every poll", async () => {
+    const classify = vi.fn(async () => ANSWER);
+    const { db, graph, readThreads, pipeline } = setup(classify);
+    readThreads.mockResolvedValue([thread("T1", "2026-10-15T11:50:00.000Z")]);
+    const upsertThread = vi.spyOn(graph, "upsertThread").mockImplementation(() => { throw new Error("SQLITE_BUSY"); });
+
+    for (let i = 0; i < 5; i++) await pipeline.processOnce();
+    expect(upsertThread.mock.calls.length).toBe(2); // the first try and the next-poll retry; then it waits
+
+    upsertThread.mockRestore();
+    vi.setSystemTime(Date.now() + 31 * 60 * 1000);
+    await pipeline.processOnce();
+    expect(graph.hasEvent("T1-m1", "T1")).toBe(true);
+    db.close();
+  });
 });

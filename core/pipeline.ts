@@ -627,7 +627,14 @@ export class Pipeline {
       this.failedMessages.delete(key);
       return "done";
     } catch (err) {
-      if (!(err instanceof ClassificationFailed)) throw err;
+      if (err instanceof PipelineStopped) throw err;
+      if (!(err instanceof ClassificationFailed)) {
+        // Anything else (a database error, a bug in linking) backs off and is given up like an unusable answer.
+        // Rethrown, nothing would be stored, and the thread's missing message would be read and sent to the model
+        // again on every poll.
+        log.error("Failed to process message", message.id, err);
+        return this.holdForRetry(key, rec, now, "invalid", failedThisPoll);
+      }
       if (err.kind === "budget" || err.kind === "auth") {
         this.pausedFor = err.kind;
         this.pausedUntil = err.kind === "budget" ? nextUtcMidnight() : now + AUTH_PAUSE_MS;
@@ -636,17 +643,27 @@ export class Pipeline {
           : "The model provider refused the API key or account; classification is paused. Check Settings.");
         return "paused";
       }
-      // Entries for messages that vanished before a retry
-      if (this.failedMessages.size > 10_000) this.failedMessages.clear();
-      const r = rec ?? { tries: 0, attempts: 0, since: now, nextTryAt: 0 };
-      r.attempts++;
-      r.nextTryAt = now + retryDelay(r.attempts);
-      if (err.kind === "invalid") r.tries++;
-      else failedThisPoll.push(key); // counted at the end of the poll if the model answered anything else
-      this.failedMessages.set(key, r);
       log.warn(`Classification failed for ${message.id} (${err.kind}); trying again later`);
-      return "held";
+      return this.holdForRetry(key, rec, now, err.kind, failedThisPoll);
     }
+  }
+
+  private holdForRetry(
+    key: string,
+    rec: { tries: number; attempts: number; since: number; nextTryAt: number } | undefined,
+    now: number,
+    kind: string,
+    failedThisPoll: string[],
+  ): "held" {
+    // Entries for messages that vanished before a retry
+    if (this.failedMessages.size > 10_000) this.failedMessages.clear();
+    const r = rec ?? { tries: 0, attempts: 0, since: now, nextTryAt: 0 };
+    r.attempts++;
+    r.nextTryAt = now + retryDelay(r.attempts);
+    if (kind === "invalid") r.tries++;
+    else failedThisPoll.push(key); // counted at the end of the poll if the model answered anything else
+    this.failedMessages.set(key, r);
+    return "held";
   }
 
   private getContentHash(text: string, threadId: string): string {
