@@ -67,6 +67,18 @@ function hostName(host: string): string {
   return host.startsWith("[") ? host.slice(0, host.indexOf("]") + 1) : host.split(":")[0];
 }
 
+/** How long a settings save waits for an adapter to connect. Saves run one at a time, so a hung connect must
+ * not hold up the next save (say, one rotating a leaked token). */
+const CONNECT_DEADLINE_MS = 60_000;
+
+export function withDeadline<T>(work: Promise<T>, ms: number, what: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${what} timed out after ${ms / 1000}s`)), ms);
+  });
+  return Promise.race([work, deadline]).finally(() => clearTimeout(timer));
+}
+
 /** Whether a settings save changed anything beyond the inbox settings, which the pipeline reads at each poll. */
 export function settingsNeedRestart(previous: Config, next: Config, envChanged: boolean): boolean {
   if (envChanged) return true;
@@ -1286,7 +1298,7 @@ export function createApp(state: EngineState): Hono {
         const creds = adapter.prepareCredentials
           ? adapter.prepareCredentials(body.messaging.fields)
           : body.messaging.fields;
-        await adapter.connect(creds as Record<string, string> & { token: string });
+        await withDeadline(adapter.connect(creds as Record<string, string> & { token: string }), CONNECT_DEADLINE_MS, `${adapter.name} connect`);
         state.messagingAdapter = adapter;
         const msgIdentity = adapter.getAuthenticatedUser?.();
         if (msgIdentity) {
@@ -1304,7 +1316,7 @@ export function createApp(state: EngineState): Hono {
         const creds = adapter.prepareCredentials
           ? adapter.prepareCredentials(body.task.fields)
           : body.task.fields;
-        await adapter.connect(creds as Record<string, string> & { token: string });
+        await withDeadline(adapter.connect(creds as Record<string, string> & { token: string }), CONNECT_DEADLINE_MS, `${adapter.name} connect`);
         state.taskAdapter = adapter;
         const taskIdentity = adapter.getAuthenticatedUser?.();
         if (taskIdentity) {

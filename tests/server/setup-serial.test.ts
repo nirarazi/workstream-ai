@@ -26,7 +26,7 @@ vi.mock("../../core/config.js", async (importOriginal) => ({
 const { Database } = await import("../../core/graph/db.js");
 const { ContextGraph } = await import("../../core/graph/index.js");
 const { Pipeline } = await import("../../core/pipeline.js");
-const { createApp } = await import("../../core/server.js");
+const { createApp, withDeadline } = await import("../../core/server.js");
 const { registerMessagingAdapter } = await import("../../core/adapters/registry.js");
 
 // A stand-in chat adapter whose connect takes a moment, like a real platform, and records overlap
@@ -75,5 +75,16 @@ describe("POST /api/setup", () => {
     delete process.env.SLOWCHAT_TOKEN;
     vi.restoreAllMocks();
     db.close();
+  });
+});
+
+describe("withDeadline", () => {
+  it("fails a connect that never finishes, so it can't hold up later saves", async () => {
+    const never = new Promise<void>(() => {});
+    await expect(withDeadline(never, 20, "slowchat connect")).rejects.toThrow("slowchat connect timed out");
+  });
+
+  it("passes a result through", async () => {
+    await expect(withDeadline(Promise.resolve("ok"), 1000, "x")).resolves.toBe("ok");
   });
 });
