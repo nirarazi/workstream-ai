@@ -76,8 +76,8 @@ describe("Pipeline: when the model gives no answer", () => {
     await pipeline.processOnce(); // the first retry is on the very next poll
 
     expect(graph.getEventByMessageId("T1-m1", "T1")!.reason).toBe("working on it");
-    // Past both now: T2 was already classified, so it moves the cursor too
-    expect(graph.getPollCursor("C1")!.lastTimestamp).toBe(T2);
+    // Past T1, and up to just before T2: T2 is already classified, and stays in the window for later replies
+    expect(graph.getPollCursor("C1")!.lastTimestamp).toBe("2026-10-15T05:09:59.999Z");
   });
 
   it("gives up after three unusable replies, even when nothing else is posted", async () => {
@@ -451,8 +451,38 @@ describe("Pipeline: poll cursors", () => {
 
     await pipeline.processOnce();
 
-    expect(graph.getPollCursor("C1")!.lastTimestamp).toBe("2026-10-15T07:00:00.000Z"); // past the classified thread
+    // Up to just before the classified thread, so a later reply to it is still read
+    expect(graph.getPollCursor("C1")!.lastTimestamp).toBe("2026-10-12T04:59:59.999Z");
     expect(graph.getPollCursor("C2")!.lastTimestamp).toBe("2026-10-15T04:59:59.999Z"); // still before the held one
+    db.close();
+  });
+});
+
+describe("Pipeline: replies to a classified thread", () => {
+  it("are still read after the cursor moves, because the thread stays in the window", async () => {
+    const db = new Database(":memory:");
+    const graph = new ContextGraph(db);
+    const ago = (h: number) => new Date(Date.now() - h * 3_600_000).toISOString();
+    const xStart = ago(5);
+    // Slack returns threads whose first message is after the channel cursor (oldest is exclusive)
+    let replies = [message("X-m1", "X", "C1", xStart)];
+    const readThreads = vi.fn(async (since: Date, _ch?: string[], perChannel?: Map<string, Date>) => {
+      const from = (perChannel?.get("C1") ?? since).toISOString();
+      return replies[0].timestamp > from ? [{ ...thread("X", xStart), messages: replies }] : [];
+    });
+    const classify = vi.fn().mockResolvedValue(ANSWER);
+    const pipeline = new Pipeline({ name: "fake", readThreads, getThreadMessages: vi.fn(async () => []) } as any, { classify } as any, graph,
+      new WorkItemLinker(graph, [new DefaultExtractor({ ticketPatterns: [], prPatterns: [] })]), undefined, CONFIG);
+    // X was classified in an earlier run; the channel has no cursor yet (a quiet channel, read from the lookback)
+    graph.upsertThread({ id: "X", channelId: "C1", channelName: "fleet-ops", platform: "slack" });
+    graph.insertEvent({ threadId: "X", messageId: "X-m1", workItemId: null, agentId: null, status: "in_progress", confidence: 0.9, reason: "", rawText: "", timestamp: xStart, targetedAtOperator: false });
+
+    await pipeline.processOnce(); // X is fully classified: the cursor moves, but only to just before X
+    expect(graph.getPollCursor("C1")!.lastTimestamp).toBe(new Date(Date.parse(xStart) - 1).toISOString());
+    replies = [...replies, message("X-m2", "X", "C1", ago(1))]; // a later reply
+    await pipeline.processOnce();
+
+    expect(graph.hasEvent("X-m2", "X")).toBe(true);
     db.close();
   });
 });
