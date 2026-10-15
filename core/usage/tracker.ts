@@ -248,6 +248,21 @@ export class UsageTracker implements ModelProvider {
     return result.changes;
   }
 
+  /** Record a call made outside this tracker (e.g. a decision provider) with the usage it reported. */
+  recordExternalUsage(caller: string, model: string, inputTokens: number, outputTokens: number, cost: number | null): void {
+    this.insertStmt.run(
+      randomUUID(),
+      caller,
+      new Date().toISOString(),
+      inputTokens,
+      outputTokens,
+      "actual",
+      cost,
+      cost == null ? null : "configured",
+      model,
+    );
+  }
+
   // --- Private ---
 
   private recordUsage(

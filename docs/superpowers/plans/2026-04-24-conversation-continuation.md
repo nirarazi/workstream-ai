@@ -433,7 +433,7 @@ describe("channel context in prompt", () => {
       "No big difference from floating it over",
       [{ id: "thread:ts1", title: "Partner approval", reasons: ["same channel"] }],
       null,
-      { senderName: "Nir", senderType: "human", channelName: "DM: Dana" },
+      { senderName: "Alex", senderType: "human", channelName: "DM: Dana" },
       [],
       // New parameter: channelContext
       [

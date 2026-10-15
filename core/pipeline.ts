@@ -3,7 +3,7 @@
 import { createHash } from "node:crypto";
 import { createLogger } from "./logger.js";
 import type { Config } from "./config.js";
-import type { Classification, Message, OperatorIdentityMap, Thread } from "./types.js";
+import type { Classification, Message, OperatorIdentityMap, Thread, ThreadContext } from "./types.js";
 import type { MessagingAdapter } from "./adapters/messaging/interface.js";
 import type { TaskAdapter } from "./adapters/tasks/interface.js";
 import type { Classifier } from "./classifier/index.js";
@@ -16,6 +16,8 @@ const DEFAULT_POLL_INTERVAL = 30;
 const DEFAULT_LOOKBACK_DAYS = 1;
 const DEFAULT_MAX_THREADS_PER_POLL = 50;
 const DEFAULT_MAX_ACTIVE_THREAD_REPOLLS = 20;
+/** Earlier thread messages shown to the classifier with each new message. */
+const THREAD_CONTEXT_MESSAGES = 4;
 
 export interface ProcessResult {
   processed: number;
@@ -24,6 +26,7 @@ export interface ProcessResult {
 }
 
 export class Pipeline {
+  private catchUpLogged = false;
   private messagingAdapter: MessagingAdapter;
   private classifier: Classifier;
   private graph: ContextGraph;
@@ -32,6 +35,7 @@ export class Pipeline {
   private config?: Config;
   private intervalHandle: ReturnType<typeof setInterval> | null = null;
   private running = false;
+  private polling = false;
   private recentContentHashes = new Map<string, Classification>();
   private readonly MAX_CONTENT_HASHES = 1000;
   private operatorIdentities: OperatorIdentityMap | null = null;
@@ -70,12 +74,17 @@ export class Pipeline {
 
     // Set up the polling interval
     const intervalSeconds = this.config?.messaging?.pollInterval ?? DEFAULT_POLL_INTERVAL;
+    // A catch-up poll can outlast the interval; overlapping polls multiply Slack calls into rate limits.
     this.intervalHandle = setInterval(async () => {
+      if (this.polling) return;
+      this.polling = true;
       try {
         const r = await this.processOnce();
         log.info("Poll complete", r);
       } catch (err) {
         log.error("Poll cycle failed", err);
+      } finally {
+        this.polling = false;
       }
     }, intervalSeconds * 1000);
 
@@ -117,14 +126,20 @@ export class Pipeline {
 
     // Cap threads per poll to avoid LLM call bursts
     const maxThreads = this.config?.lookback?.maxThreadsPerPoll ?? DEFAULT_MAX_THREADS_PER_POLL;
-    const cappedThreads = (maxThreads > 0 ? threads.slice(0, maxThreads) : [...threads]).sort((a, b) => {
-      const aTime = a.messages[0]?.timestamp ?? a.lastActivity;
-      const bTime = b.messages[0]?.timestamp ?? b.lastActivity;
-      return aTime.localeCompare(bTime);
-    });
+    // Oldest first, then cap: adapters return newest first, and capping before sorting dropped the oldest
+    // threads behind a cursor that had already moved past them.
+    const threadStart = (t: Thread) => t.messages[0]?.timestamp ?? t.lastActivity;
+    // Threads with every message already classified (re-read at a cursor boundary) don't take a slot.
+    const sortedThreads = threads
+      .filter((t) => t.messages.some((m) => !this.graph.hasEvent(m.id, t.id)))
+      .sort((a, b) => threadStart(a).localeCompare(threadStart(b)));
+    const cappedThreads = maxThreads > 0 ? sortedThreads.slice(0, maxThreads) : sortedThreads;
 
-    if (threads.length > cappedThreads.length) {
-      log.info(`Capped threads from ${threads.length} to ${cappedThreads.length} (maxThreadsPerPoll=${maxThreads})`);
+    // Channels with threads left for a later poll: their cursor must stay before the first one skipped.
+    const deferredChannels = new Set(sortedThreads.slice(cappedThreads.length).map((t) => t.channelId));
+
+    if (sortedThreads.length > cappedThreads.length) {
+      log.info(`Capped threads with new messages from ${sortedThreads.length} to ${cappedThreads.length} (maxThreadsPerPoll=${maxThreads})`);
     }
 
     // Track thread IDs covered by this channel history poll
@@ -157,11 +172,14 @@ export class Pipeline {
       }
 
       // Track the latest timestamp for poll cursor updates
-      const latestMessage = thread.messages[thread.messages.length - 1];
+      // (a deferred channel advances only to this thread's start; later replies come back via re-polls)
       const channelId = thread.channelId;
+      const cursorTs = deferredChannels.has(channelId)
+        ? threadStart(thread)
+        : thread.messages[thread.messages.length - 1].timestamp;
       const existing = latestTimestamps.get(channelId);
-      if (!existing || latestMessage.timestamp > existing) {
-        latestTimestamps.set(channelId, latestMessage.timestamp);
+      if (!existing || cursorTs > existing) {
+        latestTimestamps.set(channelId, cursorTs);
       }
     }
 
@@ -280,6 +298,31 @@ export class Pipeline {
     return this.validPrefixes;
   }
 
+  /**
+   * The operator's own message is never something the operator has to act on: they just acted, so the
+   * next move is someone else's. Without this, "any news on this?" came back blocked and targeted, and
+   * kept the item in the operator's inbox with their own message as the reason.
+   */
+  private fromOperator(message: Message, classification: Classification): Classification {
+    const operatorIds = new Set([...(this.operatorIdentities?.values() ?? [])].map((id) => id.userId));
+    if (!operatorIds.has(message.userId)) return classification;
+    // "@Dana please approve X" from the operator is still blocked — on Dana. Keep that status; just untarget it.
+    const namesSomeoneElse = (classification.actionRequiredFrom ?? []).some((id) => !operatorIds.has(id));
+    const waitingOnOperator =
+      (classification.status === "blocked_on_human" || classification.status === "needs_decision") && !namesSomeoneElse;
+    return {
+      ...classification,
+      targetedAtOperator: false,
+      ...(waitingOnOperator
+        ? {
+            status: "in_progress" as const,
+            entryType: classification.entryType === "block" ? "progress" as const : classification.entryType,
+            reason: `${classification.reason} [operator's own message: not waiting on the operator]`,
+          }
+        : {}),
+    };
+  }
+
   private isValidWorkItemId(id: string): boolean {
     const prefixes = this.getValidPrefixes();
     if (prefixes.length === 0) return true; // no prefixes configured → accept all
@@ -300,11 +343,24 @@ export class Pipeline {
     const globalSince = new Date();
     globalSince.setDate(globalSince.getDate() - lookbackDays);
 
+    // After a long pause (app closed for weeks), don't replay everything since the old cursor: those
+    // messages are stale, and classifying them floods the inbox with long-resolved "blocks".
+    const catchUpDays = this.config?.lookback?.maxCatchUpDays ?? lookbackDays;
+    const catchUpFloor = new Date();
+    catchUpFloor.setDate(catchUpFloor.getDate() - catchUpDays);
+
     const allCursors = this.graph.getAllPollCursors();
     const perChannelSince = new Map<string, Date>();
+    let clamped = 0;
 
     for (const cursor of allCursors) {
-      perChannelSince.set(cursor.channelId, new Date(cursor.lastTimestamp));
+      const since = new Date(cursor.lastTimestamp);
+      if (since < catchUpFloor) clamped++;
+      perChannelSince.set(cursor.channelId, since < catchUpFloor ? catchUpFloor : since);
+    }
+    if (clamped > 0 && !this.catchUpLogged) {
+      this.catchUpLogged = true;
+      log.info(`${clamped} channel cursor(s) older than ${catchUpDays} day(s) — catching up from ${catchUpFloor.toISOString()} only`);
     }
 
     return { globalSince, perChannelSince };
@@ -334,6 +390,18 @@ export class Pipeline {
     const allWorkItemIds = new Set<string>();
     if (inheritedWorkItemId) {
       allWorkItemIds.add(inheritedWorkItemId);
+    } else if (message.senderType !== "human" && thread.messages[0]?.id === message.id) {
+      // Step 0b': a bot re-posting the same alert as a new top-level message joins the open item
+      const recurringId = this.graph.findRecurringWorkItem({
+        agentId: message.userId,
+        channelId: thread.channelId,
+        text: message.text,
+        before: message.timestamp,
+      });
+      if (recurringId) {
+        log.debug("Recurring alert joins existing work item", recurringId, thread.id);
+        allWorkItemIds.add(recurringId);
+      }
     }
 
     // Step 0c: Skip classification if the work item is already completed
@@ -430,6 +498,7 @@ export class Pipeline {
           windowMinutes: continuationConfig?.channelContextWindow ?? 30,
           limit: continuationConfig?.maxContextMessages ?? 5,
           excludeThreadId: thread.id,
+          before: message.timestamp,
         })
       : [];
 
@@ -464,7 +533,21 @@ export class Pipeline {
       senderType: effectiveSenderType,
       channelName: message.channelName,
     };
-    const classification = await this.classifier.classify(message.text, candidateContext, this.operatorIdentities, senderContext, this.getValidPrefixes(), channelContext);
+    // Step 0h: Thread context — what this message is a reply to. Without it, "approved, go ahead" is unreadable.
+    const threadWorkItem = inheritedWorkItemId ? this.graph.getWorkItemById(inheritedWorkItemId) : null;
+    const threadContext: ThreadContext = {
+      workItem: threadWorkItem
+        ? { id: threadWorkItem.id, title: threadWorkItem.title, status: threadWorkItem.externalStatus }
+        : undefined,
+      messages: thread.messages
+        .filter((m) => m.id !== message.id && m.timestamp < message.timestamp && m.text.trim())
+        .slice(-THREAD_CONTEXT_MESSAGES)
+        .map((m) => ({ senderName: m.userName, text: m.text })),
+    };
+    const classification = this.fromOperator(
+      message,
+      await this.classifier.classify(message.text, candidateContext, this.operatorIdentities, senderContext, this.getValidPrefixes(), channelContext, threadContext),
+    );
 
     // Separate LLM-suggested IDs into verified (match an extracted ID) and unverified
     const extractedSet = new Set(extractedIds);

@@ -236,6 +236,27 @@ describe("getRecentChannelContext", () => {
     db.close();
   });
 
+  it("measures the window from the message's own time during a catch-up", () => {
+    graph.upsertWorkItem({ id: "OPS-20", source: "jira", title: "Earlier item" });
+    graph.upsertWorkItem({ id: "OPS-21", source: "jira", title: "Later item" });
+    const agent = graph.upsertAgent({ id: "agent-1", name: "Relay", platform: "slack", platformUserId: "U001" });
+    for (const [id, wi] of [["thread-old", "OPS-20"], ["thread-after", "OPS-21"]]) {
+      graph.upsertThread({ id, channelId: "C-general", channelName: "general", platform: "slack", workItemId: wi, messageCount: 1 });
+    }
+    // Two days ago: the message being classified, 10 minutes after the earlier one
+    graph.insertEvent({ threadId: "thread-old", messageId: "m-old", workItemId: "OPS-20", agentId: agent.id,
+      status: "in_progress", confidence: 0.9, rawText: "Earlier message", timestamp: minutesAgo(2 * 24 * 60 + 10) });
+    // Posted after the message being classified: not context for it
+    graph.insertEvent({ threadId: "thread-after", messageId: "m-after", workItemId: "OPS-21", agentId: agent.id,
+      status: "in_progress", confidence: 0.9, rawText: "Later message", timestamp: minutesAgo(2 * 24 * 60 - 5) });
+
+    const result = graph.getRecentChannelContext({
+      channelId: "C-general", windowMinutes: 30, excludeThreadId: "thread-current", before: minutesAgo(2 * 24 * 60),
+    });
+
+    expect(result.map((r) => r.workItemId)).toEqual(["OPS-20"]);
+  });
+
   it("returns recent non-threaded messages from the same channel", () => {
     // Set up two standalone threads in the same channel with different work items
     graph.upsertWorkItem({ id: "OPS-10", source: "jira", title: "First work item" });
