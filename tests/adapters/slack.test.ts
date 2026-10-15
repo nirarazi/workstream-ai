@@ -221,6 +221,26 @@ describe("SlackAdapter", () => {
         expect(readChannels()).toEqual(["CBUSY", ...ids.slice(5, 10)]); // the rest, before any is read again
       });
 
+      it("put DMs ahead of channels due at the same time, but not ahead of channels waiting much longer", async () => {
+        const dms = ["DM1", "DM2", "DM3", "DM4", "DM5"];
+        mockConversationsList.mockResolvedValue({
+          channels: [...ids.map((id) => ({ id, name: id })), ...dms.map((id) => ({ id, is_im: true, user: "U-relay" }))],
+          response_metadata: { next_cursor: "" },
+        });
+        at("12:00:00");
+        await adapter.readThreads(since);
+
+        mockConversationsHistory.mockClear();
+        at("12:05:00"); // all 25 due together: the DMs go first, then the oldest channels
+        await adapter.readThreads(since);
+        expect(readChannels()).toEqual([...ids.slice(0, 10), ...dms]); // read in list order; the set is what matters
+
+        mockConversationsHistory.mockClear();
+        at("12:10:00"); // CQ10..19 waited since 12:00; the DMs since 12:05, plus their head start: level, so all 15 fit
+        await adapter.readThreads(since);
+        expect(readChannels()).toEqual([...ids.slice(10), ...dms]);
+      });
+
       it("keep their place in the queue when the poll fails", async () => {
         listChannels(ids);
         at("12:00:00");

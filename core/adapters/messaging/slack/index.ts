@@ -148,6 +148,11 @@ const QUIET_POLL_MS = 5 * 60 * 1000;
  * (they were all first read together), and ~100 history calls at ~50/min hold that poll for minutes.
  */
 const QUIET_READS_PER_POLL = 15;
+/**
+ * In the quiet queue, a DM or group DM counts as this much more overdue than it is: a message there is the likeliest
+ * to be for the operator, so it's read first when many channels are due, yet channels can't be starved by DMs.
+ */
+const DIRECT_HEAD_START_MS = QUIET_POLL_MS;
 /** A channel that failed to read (left, archived, removed) is retried this often, in the quiet queue's slots. */
 const UNREADABLE_RETRY_MS = 30 * 60 * 1000;
 /**
@@ -190,7 +195,7 @@ export class SlackAdapter implements MessagingAdapter {
 
   private client: WebClient | null = null;
   private userInfoMap: Map<string, UserInfo> = new Map();
-  private channelMap: Map<string, { name: string; isPrivate: boolean }> = new Map();
+  private channelMap: Map<string, { name: string; isPrivate: boolean; isDirect?: boolean }> = new Map();
   private messageHandler: ((msg: Message) => void) | null = null;
   private limiter = new SlackRateLimiter();
   private workspaceUrl: string | null = null;
@@ -260,19 +265,20 @@ export class SlackAdapter implements MessagingAdapter {
   }
 
   /**
-   * The slowly-read channels to read this poll, most overdue first, up to the cap: quiet channels not read for
-   * QUIET_POLL_MS, and unreadable ones not tried for UNREADABLE_RETRY_MS (so they can't crowd out readable ones,
-   * yet a channel that's rejoined is still found).
+   * The slowly-read channels to read this poll, most overdue first (DMs with a head start), up to the cap: quiet
+   * channels not read for QUIET_POLL_MS, and unreadable ones not tried for UNREADABLE_RETRY_MS (so they can't crowd
+   * out readable ones, yet a channel that's rejoined is still found).
    */
   private slowChannelsDue(channelIds: string[], now: number): Set<string> {
-    const due: Array<{ id: string; lastRead: number }> = [];
+    const due: Array<{ id: string; order: number }> = [];
     for (const id of channelIds) {
       const lastRead = this.channelLastRead.get(id);
       if (lastRead === undefined || !this.isReadSlowly(id, now)) continue;
       const interval = this.unreadableChannels.has(id) ? UNREADABLE_RETRY_MS : QUIET_POLL_MS;
-      if (now - lastRead >= interval) due.push({ id, lastRead });
+      if (now - lastRead < interval) continue;
+      due.push({ id, order: lastRead - (this.channelMap.get(id)?.isDirect ? DIRECT_HEAD_START_MS : 0) });
     }
-    due.sort((a, b) => a.lastRead - b.lastRead);
+    due.sort((a, b) => a.order - b.order);
     return new Set(due.slice(0, QUIET_READS_PER_POLL).map((c) => c.id));
   }
 
@@ -689,6 +695,7 @@ export class SlackAdapter implements MessagingAdapter {
         this.channelMap.set(ch.id, {
           name,
           isPrivate: ch.is_private ?? ch.is_im ?? ch.is_mpim ?? false,
+          isDirect: Boolean(ch.is_im || ch.is_mpim),
         });
       }
 
