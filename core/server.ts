@@ -67,6 +67,56 @@ function hostName(host: string): string {
   return host.startsWith("[") ? host.slice(0, host.indexOf("]") + 1) : host.split(":")[0];
 }
 
+/**
+ * Saves run one at a time, so a connect that hangs mustn't hold up the next save (say, one rotating a leaked
+ * token). A save gives up its connect as soon as a newer save is waiting, and in any case after this long; a big
+ * Slack workspace can legitimately take minutes to list its users and channels.
+ */
+const CONNECT_DEADLINE_MS = 5 * 60 * 1000;
+
+/** A save gave up because a newer one arrived: the newer save wins (even if it turns out to be invalid). */
+export class SaveSupersededError extends Error {}
+
+/**
+ * Note: the abandoned connect itself keeps running in the background until it settles (adapters can't be
+ * cancelled yet); it's never stored, so nothing uses it, but on a very large Slack workspace its listing calls can
+ * share the token's rate limit with the newer save's connect.
+ */
+export function untilDeadlineOrSuperseded<T>(
+  work: Promise<T>,
+  ms: number,
+  what: string,
+  superseded: () => boolean = () => false,
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let check: ReturnType<typeof setInterval> | undefined;
+  const stop = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${what} timed out after ${ms / 1000}s`)), ms);
+    check = setInterval(() => {
+      if (superseded()) reject(new SaveSupersededError(`${what} abandoned: a newer settings save is waiting`));
+    }, 250);
+  });
+  return Promise.race([work, stop]).finally(() => {
+    clearTimeout(timer);
+    clearInterval(check);
+  });
+}
+
+/** A fresh usage tracker and classifier for the current config (after a settings save). Both are swapped in
+ * together, so a failure part-way leaves the previous pair in place. */
+function rebuildClassifier(state: EngineState): void {
+  const provider = createProvider(state.config);
+  const tracker = new UsageTracker(provider, state.db, state.config.llmBudget);
+  const prompt = loadPrompt(findProjectRoot());
+  const fewShot = buildFewShotMessages(prompt.few_shot_examples);
+  const operatorRole = state.config.operator?.role ?? "";
+  const classifier = new Classifier(tracker, prompt.system, fewShot, undefined, operatorRole, state.operatorIdentities, buildOperatorContext(state.config), hasRemit(state.config));
+  if (state.rateLimiters.llm) classifier.setRateLimiter(state.rateLimiters.llm);
+  classifier.setDecisionGate(createDecisionGate(state.config, tracker));
+  state.usageTracker = tracker;
+  state.classifier = classifier;
+}
+
 /** Whether a settings save changed anything beyond the inbox settings, which the pipeline reads at each poll. */
 export function settingsNeedRestart(previous: Config, next: Config, envChanged: boolean): boolean {
   if (envChanged) return true;
@@ -428,7 +478,9 @@ export function createApp(state: EngineState): Hono {
 
   // --- POST /api/reply ---
   app.post("/api/reply", async (c) => {
-    if (!state.messagingAdapter) {
+    // Read once: a failing settings save can clear it mid-request, after the message was already sent
+    const messaging = state.messagingAdapter;
+    if (!messaging) {
       return c.json({ ok: false, error: "No messaging adapter configured" }, 503);
     }
 
@@ -447,7 +499,7 @@ export function createApp(state: EngineState): Hono {
     try {
       // Case 1: Reply to existing thread (original behavior)
       if (body.threadId && body.channelId) {
-        await state.messagingAdapter.replyToThread(body.threadId, body.channelId, body.message);
+        await messaging.replyToThread(body.threadId, body.channelId, body.message);
         if (body.workItemId) {
           const threads = state.graph.getThreadsForWorkItem(body.workItemId);
           const thread = threads.find((t) => t.id === body.threadId);
@@ -472,14 +524,14 @@ export function createApp(state: EngineState): Hono {
 
       // Case 2: New top-level message in a channel
       if (body.channelId && !body.threadId) {
-        const result = await state.messagingAdapter.postMessage(body.channelId, body.message);
+        const result = await messaging.postMessage(body.channelId, body.message);
         // Proactively link to work item if provided
         if (body.workItemId) {
           state.graph.upsertThread({
             id: result.threadId,
             channelId: body.channelId,
             channelName: "",
-            platform: state.messagingAdapter.name,
+            platform: messaging.name,
             workItemId: body.workItemId,
             lastActivity: new Date().toISOString(),
             messageCount: 1,
@@ -490,13 +542,13 @@ export function createApp(state: EngineState): Hono {
 
       // Case 3: DM to a user
       if (body.targetUserId) {
-        const result = await state.messagingAdapter.sendDirectMessage(body.targetUserId, body.message);
+        const result = await messaging.sendDirectMessage(body.targetUserId, body.message);
         if (body.workItemId) {
           state.graph.upsertThread({
             id: result.threadId,
             channelId: result.channelId,
             channelName: "",
-            platform: state.messagingAdapter.name,
+            platform: messaging.name,
             workItemId: body.workItemId,
             lastActivity: new Date().toISOString(),
             messageCount: 1,
@@ -620,7 +672,9 @@ export function createApp(state: EngineState): Hono {
     if (!state.graph.getWorkItemById(id)) {
       return c.json({ error: "Work item not found" }, 404);
     }
-    if (!state.messagingAdapter) {
+    // Read once: a failing settings save can clear it mid-request, after the message was already sent
+    const messaging = state.messagingAdapter;
+    if (!messaging) {
       return c.json({ error: "No messaging adapter configured" }, 503);
     }
     const body = await c.req.json<{ url: string }>();
@@ -629,7 +683,7 @@ export function createApp(state: EngineState): Hono {
     }
 
     // Delegate URL parsing to the messaging adapter
-    const parsed = state.messagingAdapter.parseThreadUrl?.(body.url);
+    const parsed = messaging.parseThreadUrl?.(body.url);
     if (!parsed) {
       return c.json({ error: "Unrecognized thread URL format" }, 400);
     }
@@ -638,12 +692,12 @@ export function createApp(state: EngineState): Hono {
     // Fetch thread if not already in graph
     if (!state.graph.getThreadById(threadTs)) {
       try {
-        const messages = await state.messagingAdapter.getThreadMessages(threadTs, channelId);
+        const messages = await messaging.getThreadMessages(threadTs, channelId);
         state.graph.upsertThread({
           id: threadTs,
           channelId,
           channelName: "",
-          platform: state.messagingAdapter.name,
+          platform: messaging.name,
           lastActivity: messages[0]?.timestamp ?? new Date().toISOString(),
           messageCount: messages.length,
         });
@@ -659,7 +713,9 @@ export function createApp(state: EngineState): Hono {
 
   // --- POST /api/forward ---
   app.post("/api/forward", async (c) => {
-    if (!state.messagingAdapter) {
+    // Read once: a failing settings save can clear it mid-request, after the message was already sent
+    const messaging = state.messagingAdapter;
+    if (!messaging) {
       return c.json({ ok: false, error: "No messaging adapter configured" }, 503);
     }
 
@@ -699,7 +755,7 @@ export function createApp(state: EngineState): Hono {
           parts.push(`> Forwarded from #${channelName}:\n> "${lastEvent.rawText}"`);
         }
       } else {
-        const messages = await state.messagingAdapter.getThreadMessages(
+        const messages = await messaging.getThreadMessages(
           body.sourceThreadId, body.sourceChannelId,
         );
         const quoted = messages
@@ -719,10 +775,10 @@ export function createApp(state: EngineState): Hono {
 
       let result: { threadId: string; channelId: string };
       if (body.targetType === "channel") {
-        const r = await state.messagingAdapter.postMessage(body.targetId, composedMessage);
+        const r = await messaging.postMessage(body.targetId, composedMessage);
         result = { threadId: r.threadId, channelId: body.targetId };
       } else {
-        const r = await state.messagingAdapter.sendDirectMessage(body.targetId, composedMessage);
+        const r = await messaging.sendDirectMessage(body.targetId, composedMessage);
         result = { threadId: r.threadId, channelId: r.channelId };
       }
 
@@ -732,7 +788,7 @@ export function createApp(state: EngineState): Hono {
           id: result.threadId,
           channelId: result.channelId,
           channelName: "",
-          platform: state.messagingAdapter.name,
+          platform: messaging.name,
           workItemId: sourceThread.workItemId,
           lastActivity: new Date().toISOString(),
           messageCount: 1,
@@ -868,7 +924,9 @@ export function createApp(state: EngineState): Hono {
         }
 
         case "create_ticket": {
-          if (!state.taskAdapter?.createWorkItem) {
+          // Read once: a failing settings save can clear it mid-request, after the ticket was already created
+          const tasks = state.taskAdapter;
+          if (!tasks?.createWorkItem) {
             return c.json({ ok: false, error: "No task adapter with ticket creation support" }, 400);
           }
           const projectKey = body.projectKey ?? state.config.taskAdapter?.defaultProject;
@@ -888,7 +946,7 @@ export function createApp(state: EngineState): Hono {
             description = events.slice(-5).map((e) => e.rawText).filter(Boolean).join("\n\n");
           }
 
-          const ticket = await state.taskAdapter.createWorkItem({
+          const ticket = await tasks.createWorkItem({
             title,
             description,
             projectKey,
@@ -897,7 +955,7 @@ export function createApp(state: EngineState): Hono {
           // Create the real work item first (threads and junction rows FK-reference it)
           state.graph.upsertWorkItem({
             id: ticket.id,
-            source: state.taskAdapter.name,
+            source: tasks.name,
             title: ticket.title,
             externalStatus: ticket.status,
             assignee: ticket.assignee,
@@ -1006,7 +1064,26 @@ export function createApp(state: EngineState): Hono {
   });
 
   // --- POST /api/setup ---
+  // One save at a time: a save stops the pipeline, awaits adapter connects, then starts a new one, so two
+  // overlapping saves (a double click) each started a pipeline and the first was never stopped
+  let settingsSave: Promise<unknown> = Promise.resolve();
+  let savesRequested = 0;
+  let savesStarted = 0;
+  app.use("/api/setup", async (c, next) => {
+    if (c.req.method !== "POST") return next();
+    savesRequested++;
+    const run = settingsSave.then(() => {
+      savesStarted++;
+      return next();
+    });
+    settingsSave = run.catch(() => undefined);
+    await run;
+  });
   app.post("/api/setup", async (c) => {
+    // Saves start in arrival order, so this save is superseded once a later one has arrived
+    const thisSave = savesStarted;
+    const superseded = () => savesRequested > thisSave;
+    const reconnecting = new Set<"messaging" | "task">();
     const body = await c.req.json<{
       messaging?: {
         adapter: string;
@@ -1268,6 +1345,11 @@ export function createApp(state: EngineState): Hono {
       }
       state.rateLimiters = newLimiters;
 
+      // Adapters being reconnected with new credentials: if a connect fails or gives way to a newer save, the old
+      // adapter must not stay in place, or a later save would restart polling on credentials that were replaced
+      if (body.messaging) reconnecting.add("messaging");
+      if (body.task) reconnecting.add("task");
+
       // Reconnect messaging adapter
       if (body.messaging) {
         const adapter = createMessagingAdapter(body.messaging.adapter);
@@ -1277,8 +1359,9 @@ export function createApp(state: EngineState): Hono {
         const creds = adapter.prepareCredentials
           ? adapter.prepareCredentials(body.messaging.fields)
           : body.messaging.fields;
-        await adapter.connect(creds as Record<string, string> & { token: string });
+        await untilDeadlineOrSuperseded(adapter.connect(creds as Record<string, string> & { token: string }), CONNECT_DEADLINE_MS, `${adapter.name} connect`, superseded);
         state.messagingAdapter = adapter;
+        reconnecting.delete("messaging");
         const msgIdentity = adapter.getAuthenticatedUser?.();
         if (msgIdentity) {
           state.operatorIdentities.set(adapter.name, msgIdentity);
@@ -1295,8 +1378,9 @@ export function createApp(state: EngineState): Hono {
         const creds = adapter.prepareCredentials
           ? adapter.prepareCredentials(body.task.fields)
           : body.task.fields;
-        await adapter.connect(creds as Record<string, string> & { token: string });
+        await untilDeadlineOrSuperseded(adapter.connect(creds as Record<string, string> & { token: string }), CONNECT_DEADLINE_MS, `${adapter.name} connect`, superseded);
         state.taskAdapter = adapter;
+        reconnecting.delete("task");
         const taskIdentity = adapter.getAuthenticatedUser?.();
         if (taskIdentity) {
           state.operatorIdentities.set(adapter.name, taskIdentity);
@@ -1316,15 +1400,7 @@ export function createApp(state: EngineState): Hono {
       }
 
       // Recreate classifier with new config, wired through a fresh UsageTracker
-      const newProvider = createProvider(state.config);
-      const newUsageTracker = new UsageTracker(newProvider, state.db, state.config.llmBudget);
-      state.usageTracker = newUsageTracker;
-      const newPrompt = loadPrompt(findProjectRoot());
-      const newFewShot = buildFewShotMessages(newPrompt.few_shot_examples);
-      const operatorRole = state.config.operator?.role ?? "";
-      state.classifier = new Classifier(newUsageTracker, newPrompt.system, newFewShot, undefined, operatorRole, state.operatorIdentities, buildOperatorContext(state.config), hasRemit(state.config));
-      if (newLimiters.llm) state.classifier.setRateLimiter(newLimiters.llm);
-      state.classifier.setDecisionGate(createDecisionGate(state.config, newUsageTracker));
+      rebuildClassifier(state);
 
       // Restart pipeline if we have a messaging adapter
       if (state.messagingAdapter) {
@@ -1346,6 +1422,18 @@ export function createApp(state: EngineState): Hono {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       log.error("Setup failed", message);
+      if (reconnecting.has("messaging")) state.messagingAdapter = null;
+      if (reconnecting.has("task")) state.taskAdapter = null;
+      // The old tracker was retired before the reconnect; don't leave a dead one in place (summaries, Sidekick)
+      if (state.usageTracker?.isDisposed) {
+        try {
+          rebuildClassifier(state);
+        } catch (rebuildErr) {
+          log.error("Couldn't rebuild the classifier after a failed save", rebuildErr);
+        }
+      }
+      // Replaced by a newer save: not an error for the operator, who sees the newer save's result
+      if (err instanceof SaveSupersededError) return c.json({ ok: false, superseded: true, error: message }, 409);
       return c.json({ ok: false, error: message }, 500);
     }
   });
