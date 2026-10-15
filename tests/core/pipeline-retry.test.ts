@@ -521,3 +521,24 @@ describe("Pipeline: replies to an older classified thread", () => {
     db.close();
   });
 });
+
+describe("Pipeline: a recent cursor", () => {
+  it("isn't moved back by the reply window", async () => {
+    const db = new Database(":memory:");
+    const graph = new ContextGraph(db);
+    const ago = (h: number) => new Date(Date.now() - h * 3_600_000).toISOString();
+    graph.setPollCursor("C1", ago(2));
+    const y = thread("Y", ago(1));
+    graph.upsertThread({ id: "Y", channelId: "C1", channelName: "fleet-ops", platform: "slack" });
+    graph.insertEvent({ threadId: "Y", messageId: "Y-m1", workItemId: null, agentId: null, status: "in_progress", confidence: 0.9, reason: "", rawText: "", timestamp: y.messages[0].timestamp, targetedAtOperator: false });
+    const pipeline = new Pipeline({ name: "fake", readThreads: vi.fn(async () => [y]), getThreadMessages: vi.fn(async () => []) } as any,
+      { classify: vi.fn().mockResolvedValue(ANSWER) } as any, graph,
+      new WorkItemLinker(graph, [new DefaultExtractor({ ticketPatterns: [], prPatterns: [] })]), undefined, CONFIG);
+    const before = graph.getPollCursor("C1")!.lastTimestamp;
+
+    await pipeline.processOnce(); // only an already classified thread
+
+    expect(graph.getPollCursor("C1")!.lastTimestamp >= before).toBe(true);
+    db.close();
+  });
+});
