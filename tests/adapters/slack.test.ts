@@ -255,6 +255,28 @@ describe("SlackAdapter", () => {
         await adapter.readThreads(since);
         expect(readChannels()).toEqual(ids.slice(5));
       });
+
+      it("retry a channel that couldn't be read every 30 minutes, even with a backlog of due quiet channels", async () => {
+        let gone = true;
+        mockConversationsHistory.mockImplementation(async ({ channel }: { channel: string }) => {
+          if (channel === "CGONE" && gone) throw Object.assign(new Error("not_in_channel"), { data: { ok: false, error: "not_in_channel" } });
+          return { messages: [], response_metadata: { next_cursor: "" } };
+        });
+        listChannels(["CGONE", ...ids]);
+        at("12:00:00");
+        await adapter.readThreads(since);
+        gone = false; // e.g. the operator is invited back
+
+        const goneReads: string[] = [];
+        for (const time of ["12:01:00", "12:06:00", "12:11:00", "12:16:00", "12:21:00", "12:26:00", "12:31:00"]) {
+          mockConversationsHistory.mockClear();
+          at(time);
+          await adapter.readThreads(since);
+          if (readChannels().includes("CGONE")) goneReads.push(time);
+          expect(readChannels().length).toBeLessThanOrEqual(15);
+        }
+        expect(goneReads).toEqual(["12:31:00"]); // not every poll, and not never
+      });
     });
 
     it("still fails the poll on errors that aren't about one channel", async () => {

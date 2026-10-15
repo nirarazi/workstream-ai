@@ -146,6 +146,8 @@ const QUIET_POLL_MS = 5 * 60 * 1000;
  * (they were all first read together), and ~100 history calls at ~50/min hold that poll for minutes.
  */
 const QUIET_READS_PER_POLL = 15;
+/** A channel that failed to read (left, archived, removed) is retried this often, in the quiet queue's slots. */
+const UNREADABLE_RETRY_MS = 30 * 60 * 1000;
 
 export class SlackAdapter implements MessagingAdapter {
   /** Channels that error on read (deleted, archived, left) — skipped and logged once each. */
@@ -241,18 +243,25 @@ export class SlackAdapter implements MessagingAdapter {
     return now - (this.channelLastActivity.get(channelId) ?? 0) > QUIET_AFTER_MS;
   }
 
+  /** Quiet and unreadable channels aren't read every poll, only when due and given one of the capped slots. */
+  private isReadSlowly(channelId: string, now: number): boolean {
+    return this.isQuiet(channelId, now) || (this.unreadableChannels.has(channelId) && this.channelLastRead.has(channelId));
+  }
+
   /**
-   * The quiet channels to read this poll: those not read for QUIET_POLL_MS, most overdue first, up to the cap.
-   * Channels that failed to read last time go after the readable ones, so they can't crowd them out.
+   * The slowly-read channels to read this poll, most overdue first, up to the cap: quiet channels not read for
+   * QUIET_POLL_MS, and unreadable ones not tried for UNREADABLE_RETRY_MS (so they can't crowd out readable ones,
+   * yet a channel that's rejoined is still found).
    */
   private quietChannelsDue(channelIds: string[], now: number): Set<string> {
-    const due: Array<{ id: string; lastRead: number; unreadable: boolean }> = [];
+    const due: Array<{ id: string; lastRead: number }> = [];
     for (const id of channelIds) {
       const lastRead = this.channelLastRead.get(id);
-      if (lastRead === undefined || !this.isQuiet(id, now) || now - lastRead < QUIET_POLL_MS) continue;
-      due.push({ id, lastRead, unreadable: this.unreadableChannels.has(id) });
+      if (lastRead === undefined || !this.isReadSlowly(id, now)) continue;
+      const interval = this.unreadableChannels.has(id) ? UNREADABLE_RETRY_MS : QUIET_POLL_MS;
+      if (now - lastRead >= interval) due.push({ id, lastRead });
     }
-    due.sort((a, b) => Number(a.unreadable) - Number(b.unreadable) || a.lastRead - b.lastRead);
+    due.sort((a, b) => a.lastRead - b.lastRead);
     return new Set(due.slice(0, QUIET_READS_PER_POLL).map((c) => c.id));
   }
 
@@ -284,7 +293,7 @@ export class SlackAdapter implements MessagingAdapter {
         // Use per-channel cursor if available, otherwise fall back to global
         const channelSince = perChannelSince?.get(channelId);
 
-        if (this.isQuiet(channelId, pollStart) && !quietDue.has(channelId)) continue;
+        if (this.isReadSlowly(channelId, pollStart) && !quietDue.has(channelId)) continue;
         lastReadBefore.set(channelId, this.channelLastRead.get(channelId));
         this.channelLastRead.set(channelId, Date.now());
         const oldest = channelSince
