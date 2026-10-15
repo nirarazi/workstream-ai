@@ -1040,6 +1040,8 @@ export function createApp(state: EngineState): Hono {
         ? (parseYaml(readFileSync(localPath, "utf-8")) as Record<string, unknown>) ?? {}
         : {};
       const envLines: string[] = [];
+      // A credential that isn't kept in an env var can't be compared below, so a save with one always reconnects
+      let untrackedCredential = false;
 
       // --- LLM ---
       if (body.llm) {
@@ -1087,6 +1089,8 @@ export function createApp(state: EngineState): Hono {
         for (const fieldDef of setupInfo.fields) {
           if (fieldDef.envVar && fields[fieldDef.key]) {
             envLines.push(`${fieldDef.envVar}=${fields[fieldDef.key]}`);
+          } else if (fields[fieldDef.key]) {
+            untrackedCredential = true;
           }
         }
       }
@@ -1103,6 +1107,8 @@ export function createApp(state: EngineState): Hono {
         for (const fieldDef of setupInfo.fields) {
           if (fieldDef.envVar && fields[fieldDef.key]) {
             envLines.push(`${fieldDef.envVar}=${fields[fieldDef.key]}`);
+          } else if (fields[fieldDef.key]) {
+            untrackedCredential = true;
           }
         }
 
@@ -1193,13 +1199,22 @@ export function createApp(state: EngineState): Hono {
       // Apply auto-dismiss now rather than at the end of the next poll, which can be minutes away
       const expireAfterDays = state.config.inbox?.expireAfterDays;
       if (expireAfterDays) {
-        const expired = state.graph.expireInactiveItems(expireAfterDays);
-        if (expired > 0) log.info(`Auto-dismissed ${expired} item(s) with no activity for ${expireAfterDays} day(s)`);
+        try {
+          const expired = state.graph.expireInactiveItems(expireAfterDays);
+          if (expired > 0) log.info(`Auto-dismissed ${expired} item(s) with no activity for ${expireAfterDays} day(s)`);
+        } catch (err) {
+          // The settings are already saved; the next poll retries this
+          log.error("Failed to expire inactive items", err);
+        }
       }
 
       // Only inbox settings changed: hand the running pipeline the new config instead of reconnecting
-      // everything and catching up again
-      if (state.pipeline && !settingsNeedRestart(previousConfig, state.config, envChanged)) {
+      // everything and catching up again. Save is also how the operator retries a failed connection or a
+      // stalled pipeline, so anything the form describes that isn't live still gets the full restart.
+      const allLive = Boolean(state.pipeline?.isPolling())
+        && (!body.messaging || state.messagingAdapter !== null)
+        && (!body.task || state.taskAdapter !== null);
+      if (state.pipeline && allLive && !untrackedCredential && !settingsNeedRestart(previousConfig, state.config, envChanged)) {
         state.pipeline.setConfig(state.config);
         log.info("Inbox settings applied without restarting the pipeline");
         return c.json({ ok: true });
