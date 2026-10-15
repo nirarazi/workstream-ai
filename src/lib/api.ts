@@ -261,11 +261,11 @@ async function getBaseUrl(): Promise<string> {
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 
-async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
+async function apiFetch<T>(path: string, options?: RequestInit, timeoutMs = DEFAULT_TIMEOUT_MS): Promise<T> {
   const base = await getBaseUrl();
   const url = `${base}${path}`;
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS);
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
     const res = await fetch(url, {
@@ -283,7 +283,7 @@ async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
     return res.json() as Promise<T>;
   } catch (err) {
     if (err instanceof DOMException && err.name === "AbortError") {
-      throw new Error(`Request timed out after ${DEFAULT_TIMEOUT_MS / 1000}s: ${path}`);
+      throw new Error(`Request timed out after ${timeoutMs / 1000}s: ${path}`);
     }
     throw err;
   } finally {
@@ -519,11 +519,14 @@ export function postForward(params: {
   });
 }
 
+// A save can wait behind another save and then connect to Slack and Jira, which on a big workspace takes minutes
+const SETUP_TIMEOUT_MS = 12 * 60 * 1000;
+
 export function postSetup(config: SetupPayload): Promise<{ ok: boolean }> {
   return apiFetch("/api/setup", {
     method: "POST",
     body: JSON.stringify(config),
-  });
+  }, SETUP_TIMEOUT_MS);
 }
 
 export function fetchSetupPrefill(): Promise<SetupPrefill> {
