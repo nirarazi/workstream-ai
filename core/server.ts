@@ -478,7 +478,9 @@ export function createApp(state: EngineState): Hono {
 
   // --- POST /api/reply ---
   app.post("/api/reply", async (c) => {
-    if (!state.messagingAdapter) {
+    // Read once: a failing settings save can clear it mid-request, after the message was already sent
+    const messaging = state.messagingAdapter;
+    if (!messaging) {
       return c.json({ ok: false, error: "No messaging adapter configured" }, 503);
     }
 
@@ -497,7 +499,7 @@ export function createApp(state: EngineState): Hono {
     try {
       // Case 1: Reply to existing thread (original behavior)
       if (body.threadId && body.channelId) {
-        await state.messagingAdapter.replyToThread(body.threadId, body.channelId, body.message);
+        await messaging.replyToThread(body.threadId, body.channelId, body.message);
         if (body.workItemId) {
           const threads = state.graph.getThreadsForWorkItem(body.workItemId);
           const thread = threads.find((t) => t.id === body.threadId);
@@ -522,14 +524,14 @@ export function createApp(state: EngineState): Hono {
 
       // Case 2: New top-level message in a channel
       if (body.channelId && !body.threadId) {
-        const result = await state.messagingAdapter.postMessage(body.channelId, body.message);
+        const result = await messaging.postMessage(body.channelId, body.message);
         // Proactively link to work item if provided
         if (body.workItemId) {
           state.graph.upsertThread({
             id: result.threadId,
             channelId: body.channelId,
             channelName: "",
-            platform: state.messagingAdapter.name,
+            platform: messaging.name,
             workItemId: body.workItemId,
             lastActivity: new Date().toISOString(),
             messageCount: 1,
@@ -540,13 +542,13 @@ export function createApp(state: EngineState): Hono {
 
       // Case 3: DM to a user
       if (body.targetUserId) {
-        const result = await state.messagingAdapter.sendDirectMessage(body.targetUserId, body.message);
+        const result = await messaging.sendDirectMessage(body.targetUserId, body.message);
         if (body.workItemId) {
           state.graph.upsertThread({
             id: result.threadId,
             channelId: result.channelId,
             channelName: "",
-            platform: state.messagingAdapter.name,
+            platform: messaging.name,
             workItemId: body.workItemId,
             lastActivity: new Date().toISOString(),
             messageCount: 1,
@@ -670,7 +672,9 @@ export function createApp(state: EngineState): Hono {
     if (!state.graph.getWorkItemById(id)) {
       return c.json({ error: "Work item not found" }, 404);
     }
-    if (!state.messagingAdapter) {
+    // Read once: a failing settings save can clear it mid-request, after the message was already sent
+    const messaging = state.messagingAdapter;
+    if (!messaging) {
       return c.json({ error: "No messaging adapter configured" }, 503);
     }
     const body = await c.req.json<{ url: string }>();
@@ -679,7 +683,7 @@ export function createApp(state: EngineState): Hono {
     }
 
     // Delegate URL parsing to the messaging adapter
-    const parsed = state.messagingAdapter.parseThreadUrl?.(body.url);
+    const parsed = messaging.parseThreadUrl?.(body.url);
     if (!parsed) {
       return c.json({ error: "Unrecognized thread URL format" }, 400);
     }
@@ -688,12 +692,12 @@ export function createApp(state: EngineState): Hono {
     // Fetch thread if not already in graph
     if (!state.graph.getThreadById(threadTs)) {
       try {
-        const messages = await state.messagingAdapter.getThreadMessages(threadTs, channelId);
+        const messages = await messaging.getThreadMessages(threadTs, channelId);
         state.graph.upsertThread({
           id: threadTs,
           channelId,
           channelName: "",
-          platform: state.messagingAdapter.name,
+          platform: messaging.name,
           lastActivity: messages[0]?.timestamp ?? new Date().toISOString(),
           messageCount: messages.length,
         });
@@ -709,7 +713,9 @@ export function createApp(state: EngineState): Hono {
 
   // --- POST /api/forward ---
   app.post("/api/forward", async (c) => {
-    if (!state.messagingAdapter) {
+    // Read once: a failing settings save can clear it mid-request, after the message was already sent
+    const messaging = state.messagingAdapter;
+    if (!messaging) {
       return c.json({ ok: false, error: "No messaging adapter configured" }, 503);
     }
 
@@ -749,7 +755,7 @@ export function createApp(state: EngineState): Hono {
           parts.push(`> Forwarded from #${channelName}:\n> "${lastEvent.rawText}"`);
         }
       } else {
-        const messages = await state.messagingAdapter.getThreadMessages(
+        const messages = await messaging.getThreadMessages(
           body.sourceThreadId, body.sourceChannelId,
         );
         const quoted = messages
@@ -769,10 +775,10 @@ export function createApp(state: EngineState): Hono {
 
       let result: { threadId: string; channelId: string };
       if (body.targetType === "channel") {
-        const r = await state.messagingAdapter.postMessage(body.targetId, composedMessage);
+        const r = await messaging.postMessage(body.targetId, composedMessage);
         result = { threadId: r.threadId, channelId: body.targetId };
       } else {
-        const r = await state.messagingAdapter.sendDirectMessage(body.targetId, composedMessage);
+        const r = await messaging.sendDirectMessage(body.targetId, composedMessage);
         result = { threadId: r.threadId, channelId: r.channelId };
       }
 
@@ -782,7 +788,7 @@ export function createApp(state: EngineState): Hono {
           id: result.threadId,
           channelId: result.channelId,
           channelName: "",
-          platform: state.messagingAdapter.name,
+          platform: messaging.name,
           workItemId: sourceThread.workItemId,
           lastActivity: new Date().toISOString(),
           messageCount: 1,
@@ -918,7 +924,9 @@ export function createApp(state: EngineState): Hono {
         }
 
         case "create_ticket": {
-          if (!state.taskAdapter?.createWorkItem) {
+          // Read once: a failing settings save can clear it mid-request, after the ticket was already created
+          const tasks = state.taskAdapter;
+          if (!tasks?.createWorkItem) {
             return c.json({ ok: false, error: "No task adapter with ticket creation support" }, 400);
           }
           const projectKey = body.projectKey ?? state.config.taskAdapter?.defaultProject;
@@ -938,7 +946,7 @@ export function createApp(state: EngineState): Hono {
             description = events.slice(-5).map((e) => e.rawText).filter(Boolean).join("\n\n");
           }
 
-          const ticket = await state.taskAdapter.createWorkItem({
+          const ticket = await tasks.createWorkItem({
             title,
             description,
             projectKey,
@@ -947,7 +955,7 @@ export function createApp(state: EngineState): Hono {
           // Create the real work item first (threads and junction rows FK-reference it)
           state.graph.upsertWorkItem({
             id: ticket.id,
-            source: state.taskAdapter.name,
+            source: tasks.name,
             title: ticket.title,
             externalStatus: ticket.status,
             assignee: ticket.assignee,
