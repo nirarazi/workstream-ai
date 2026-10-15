@@ -116,27 +116,27 @@ Add to `tests/graph/db.test.ts`:
 ```typescript
 describe("summaries CRUD", () => {
   it("upserts and retrieves a summary", () => {
-    graph.upsertWorkItem({ id: "AI-1", source: "jira" });
-    graph.upsertThread({ id: "t1", channelId: "C1", platform: "slack", workItemId: "AI-1" });
+    graph.upsertWorkItem({ id: "OPS-1", source: "jira" });
+    graph.upsertThread({ id: "t1", channelId: "C1", platform: "slack", workItemId: "OPS-1" });
     graph.insertEvent({
       threadId: "t1",
       messageId: "m1",
-      workItemId: "AI-1",
+      workItemId: "OPS-1",
       status: "in_progress",
       confidence: 0.9,
       timestamp: "2026-03-31T10:00:00Z",
     });
 
-    const events = graph.getEventsForWorkItem("AI-1");
+    const events = graph.getEventsForWorkItem("OPS-1");
     const latestEventId = events[events.length - 1].id;
 
     graph.upsertSummary({
-      workItemId: "AI-1",
+      workItemId: "OPS-1",
       summaryText: "- Agent started work\n- Waiting for PR review",
       latestEventId,
     });
 
-    const summary = graph.getSummary("AI-1");
+    const summary = graph.getSummary("OPS-1");
     expect(summary).not.toBeNull();
     expect(summary!.summaryText).toContain("Agent started work");
     expect(summary!.latestEventId).toBe(latestEventId);
@@ -147,29 +147,29 @@ describe("summaries CRUD", () => {
   });
 
   it("overwrites existing summary on upsert", () => {
-    graph.upsertWorkItem({ id: "AI-1", source: "jira" });
-    graph.upsertThread({ id: "t1", channelId: "C1", platform: "slack", workItemId: "AI-1" });
+    graph.upsertWorkItem({ id: "OPS-1", source: "jira" });
+    graph.upsertThread({ id: "t1", channelId: "C1", platform: "slack", workItemId: "OPS-1" });
     graph.insertEvent({
       threadId: "t1",
       messageId: "m1",
-      workItemId: "AI-1",
+      workItemId: "OPS-1",
       status: "in_progress",
       confidence: 0.9,
       timestamp: "2026-03-31T10:00:00Z",
     });
 
     graph.upsertSummary({
-      workItemId: "AI-1",
+      workItemId: "OPS-1",
       summaryText: "Old summary",
       latestEventId: "evt-old",
     });
     graph.upsertSummary({
-      workItemId: "AI-1",
+      workItemId: "OPS-1",
       summaryText: "New summary",
       latestEventId: "evt-new",
     });
 
-    const summary = graph.getSummary("AI-1");
+    const summary = graph.getSummary("OPS-1");
     expect(summary!.summaryText).toBe("New summary");
     expect(summary!.latestEventId).toBe("evt-new");
   });
@@ -270,7 +270,7 @@ describe("getThreadMessages", () => {
     const mockReplies = {
       ok: true,
       messages: [
-        { ts: "1711900000.000000", user: "U1", text: "Starting work on AI-382" },
+        { ts: "1711900000.000000", user: "U1", text: "Starting work on OPS-382" },
         { ts: "1711900100.000000", user: "U2", text: "PR submitted for review" },
         { ts: "1711900200.000000", user: "U1", text: "Approved and merged" },
       ],
@@ -291,15 +291,15 @@ describe("getThreadMessages", () => {
     (adapter as any).client = mockClient;
     (adapter as any).channelMap = new Map([["C123", { name: "test", isPrivate: false }]]);
     (adapter as any).userInfoMap = new Map([
-      ["U1", { name: "Byte", avatar: "" }],
-      ["U2", { name: "Pixel", avatar: "" }],
+      ["U1", { name: "Relay", avatar: "" }],
+      ["U2", { name: "Prism", avatar: "" }],
     ]);
 
     const messages = await adapter.getThreadMessages("1711900000.000000", "C123");
 
     expect(messages).toHaveLength(3);
-    expect(messages[0].userName).toBe("Byte");
-    expect(messages[0].text).toBe("Starting work on AI-382");
+    expect(messages[0].userName).toBe("Relay");
+    expect(messages[0].text).toBe("Starting work on OPS-382");
     expect(messages[2].text).toBe("Approved and merged");
   });
 });
@@ -424,7 +424,7 @@ describe("getComments", () => {
 
     const adapter = new JiraAdapter();
     await adapter.connect({ token: "dGVzdDp0ZXN0", baseUrl: "https://test.atlassian.net" });
-    const comments = await adapter.getComments("AI-382");
+    const comments = await adapter.getComments("OPS-382");
 
     expect(comments).toHaveLength(2);
     expect(comments[0].author).toBe("Alice");
@@ -557,12 +557,12 @@ const sampleEvents: Event[] = [
     id: "e1",
     threadId: "t1",
     messageId: "m1",
-    workItemId: "AI-382",
+    workItemId: "OPS-382",
     agentId: "a1",
     status: "in_progress",
     confidence: 0.9,
     reason: "Agent started work",
-    rawText: "Starting work on AI-382. Will submit PR shortly.",
+    rawText: "Starting work on OPS-382. Will submit PR shortly.",
     timestamp: "2026-03-31T08:00:00Z",
     createdAt: "2026-03-31T08:00:00Z",
   },
@@ -570,7 +570,7 @@ const sampleEvents: Event[] = [
     id: "e2",
     threadId: "t1",
     messageId: "m2",
-    workItemId: "AI-382",
+    workItemId: "OPS-382",
     agentId: "a1",
     status: "blocked_on_human",
     confidence: 0.95,
@@ -583,7 +583,7 @@ const sampleEvents: Event[] = [
 
 describe("Summarizer", () => {
   it("generates a summary from events using the LLM", async () => {
-    const summaryText = "- Agent started work on AI-382\n- PR #716 submitted, awaiting review\n- Currently blocked: needs human approval to merge";
+    const summaryText = "- Agent started work on OPS-382\n- PR #716 submitted, awaiting review\n- Currently blocked: needs human approval to merge";
 
     // The Summarizer uses the provider's raw text generation, not classify.
     // We mock the underlying fetch since Summarizer calls the provider directly.
@@ -602,9 +602,9 @@ describe("Summarizer", () => {
       apiKey: "test-key",
     });
 
-    const result = await summarizer.summarize(sampleEvents, "AI-382");
+    const result = await summarizer.summarize(sampleEvents, "OPS-382");
 
-    expect(result).toContain("AI-382");
+    expect(result).toContain("OPS-382");
     expect(typeof result).toBe("string");
     expect(result.length).toBeGreaterThan(0);
 
@@ -622,9 +622,9 @@ describe("Summarizer", () => {
       apiKey: "test-key",
     });
 
-    const result = await summarizer.summarize(sampleEvents, "AI-382");
+    const result = await summarizer.summarize(sampleEvents, "OPS-382");
 
-    expect(result).toContain("AI-382");
+    expect(result).toContain("OPS-382");
     // Should still return something useful from the event data
     expect(result.length).toBeGreaterThan(0);
 
@@ -647,12 +647,12 @@ describe("Summarizer", () => {
       apiKey: "test-key",
     });
 
-    await summarizer.summarize(sampleEvents, "AI-382");
+    await summarizer.summarize(sampleEvents, "OPS-382");
 
     const body = JSON.parse((fetchSpy.mock.calls[0][1] as RequestInit).body as string);
     const userMessage = body.messages.find((m: { role: string }) => m.role === "user");
-    expect(userMessage.content).toContain("AI-382");
-    expect(userMessage.content).toContain("Starting work on AI-382");
+    expect(userMessage.content).toContain("OPS-382");
+    expect(userMessage.content).toContain("Starting work on OPS-382");
     expect(userMessage.content).toContain("blocked_on_human");
 
     fetchSpy.mockRestore();
@@ -985,12 +985,12 @@ describe("GET /api/work-item/:id/context", () => {
     // Set up test data
     state.graph.upsertAgent({
       id: "a1",
-      name: "Byte",
+      name: "Relay",
       platform: "slack",
       platformUserId: "U1",
     });
     state.graph.upsertWorkItem({
-      id: "AI-382",
+      id: "OPS-382",
       source: "jira",
       title: "Fix login bug",
       currentAtcStatus: "blocked_on_human",
@@ -999,26 +999,26 @@ describe("GET /api/work-item/:id/context", () => {
     state.graph.upsertThread({
       id: "t1",
       channelId: "C123",
-      channelName: "agent-orchestrator",
+      channelName: "fleet-ops",
       platform: "slack",
-      workItemId: "AI-382",
+      workItemId: "OPS-382",
       messageCount: 3,
     });
     state.graph.insertEvent({
       threadId: "t1",
       messageId: "m1",
-      workItemId: "AI-382",
+      workItemId: "OPS-382",
       agentId: "a1",
       status: "in_progress",
       confidence: 0.9,
       reason: "Agent started work",
-      rawText: "Starting work on AI-382",
+      rawText: "Starting work on OPS-382",
       timestamp: "2026-03-31T08:00:00Z",
     });
     state.graph.insertEvent({
       threadId: "t1",
       messageId: "m2",
-      workItemId: "AI-382",
+      workItemId: "OPS-382",
       agentId: "a1",
       status: "blocked_on_human",
       confidence: 0.95,
@@ -1034,14 +1034,14 @@ describe("GET /api/work-item/:id/context", () => {
 
   it("returns context with events, enrichments, and quick replies", async () => {
     const app = createApp(state);
-    const res = await app.request("/api/work-item/AI-382/context");
+    const res = await app.request("/api/work-item/OPS-382/context");
 
     expect(res.status).toBe(200);
     const body = await res.json();
 
-    expect(body.workItem.id).toBe("AI-382");
+    expect(body.workItem.id).toBe("OPS-382");
     expect(body.events).toHaveLength(2);
-    expect(body.events[0].rawText).toBe("Starting work on AI-382");
+    expect(body.events[0].rawText).toBe("Starting work on OPS-382");
     expect(body.threads).toHaveLength(1);
     expect(body.quickReplies).toBeInstanceOf(Array);
     expect(body.quickReplies.length).toBeGreaterThan(0);
@@ -1055,13 +1055,13 @@ describe("GET /api/work-item/:id/context", () => {
 
   it("includes enrichments when available", async () => {
     state.graph.upsertEnrichment({
-      workItemId: "AI-382",
+      workItemId: "OPS-382",
       source: "jira",
       data: { status: "In Review", description: "Fix the login redirect bug" },
     });
 
     const app = createApp(state);
-    const res = await app.request("/api/work-item/AI-382/context");
+    const res = await app.request("/api/work-item/OPS-382/context");
     const body = await res.json();
 
     expect(body.enrichments).toHaveLength(1);
@@ -1153,13 +1153,13 @@ describe("POST /api/work-item/:id/summarize", () => {
 
   beforeEach(() => {
     state = makeState();
-    state.graph.upsertAgent({ id: "a1", name: "Byte", platform: "slack", platformUserId: "U1" });
-    state.graph.upsertWorkItem({ id: "AI-382", source: "jira", title: "Fix login", currentAtcStatus: "blocked_on_human" });
-    state.graph.upsertThread({ id: "t1", channelId: "C1", platform: "slack", workItemId: "AI-382" });
+    state.graph.upsertAgent({ id: "a1", name: "Relay", platform: "slack", platformUserId: "U1" });
+    state.graph.upsertWorkItem({ id: "OPS-382", source: "jira", title: "Fix login", currentAtcStatus: "blocked_on_human" });
+    state.graph.upsertThread({ id: "t1", channelId: "C1", platform: "slack", workItemId: "OPS-382" });
     state.graph.insertEvent({
       threadId: "t1",
       messageId: "m1",
-      workItemId: "AI-382",
+      workItemId: "OPS-382",
       agentId: "a1",
       status: "blocked_on_human",
       confidence: 0.95,
@@ -1181,14 +1181,14 @@ describe("POST /api/work-item/:id/summarize", () => {
     );
 
     const app = createApp(state);
-    const res = await app.request("/api/work-item/AI-382/summarize", { method: "POST" });
+    const res = await app.request("/api/work-item/OPS-382/summarize", { method: "POST" });
 
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.summary).toContain("PR needs approval");
 
     // Verify it was cached
-    const cached = state.graph.getSummary("AI-382");
+    const cached = state.graph.getSummary("OPS-382");
     expect(cached).not.toBeNull();
     expect(cached!.summaryText).toContain("PR needs approval");
 

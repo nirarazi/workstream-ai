@@ -8,7 +8,7 @@ describe("Thread Linking API", () => {
 
   beforeEach(() => {
     mockGraph = {
-      getWorkItemById: vi.fn().mockReturnValue({ id: "AI-100", source: "extracted", title: "Test" }),
+      getWorkItemById: vi.fn().mockReturnValue({ id: "OPS-100", source: "extracted", title: "Test" }),
       getThreadById: vi.fn().mockReturnValue({
         id: "t-1", channelId: "C-1", channelName: "general",
         platform: "slack", workItemId: null, lastActivity: "2026-04-01T10:00:00.000Z",
@@ -25,7 +25,7 @@ describe("Thread Linking API", () => {
       ]),
       upsertThread: vi.fn().mockReturnValue({
         id: "t-new", channelId: "C-1", channelName: "general",
-        platform: "slack", workItemId: "AI-100", lastActivity: "2026-04-05T10:00:00.000Z",
+        platform: "slack", workItemId: "OPS-100", lastActivity: "2026-04-05T10:00:00.000Z",
         messageCount: 1, messages: [], manuallyLinked: true,
       }),
     };
@@ -41,8 +41,8 @@ describe("Thread Linking API", () => {
       }),
       getThreadMessages: vi.fn().mockResolvedValue([
         { id: "msg-1", threadId: "1711900000.000100", channelId: "C001",
-          channelName: "general", userId: "U1", userName: "Byte",
-          text: "Working on AI-100", timestamp: "2026-04-01T10:00:00.000Z", platform: "slack" },
+          channelName: "general", userId: "U1", userName: "Relay",
+          text: "Working on OPS-100", timestamp: "2026-04-01T10:00:00.000Z", platform: "slack" },
       ]),
     };
 
@@ -118,14 +118,14 @@ describe("Thread Linking API", () => {
   });
 
   it("POST /api/work-item/:id/link-thread links a thread", async () => {
-    const res = await app.request("/api/work-item/AI-100/link-thread", {
+    const res = await app.request("/api/work-item/OPS-100/link-thread", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ threadId: "t-1" }),
     });
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ ok: true });
-    expect(mockGraph.linkThread).toHaveBeenCalledWith("t-1", "AI-100");
+    expect(mockGraph.linkThread).toHaveBeenCalledWith("t-1", "OPS-100");
   });
 
   it("POST /api/work-item/:id/link-thread returns 404 for unknown work item", async () => {
@@ -139,7 +139,7 @@ describe("Thread Linking API", () => {
   });
 
   it("POST /api/work-item/:id/unlink-thread unlinks a thread", async () => {
-    const res = await app.request("/api/work-item/AI-100/unlink-thread", {
+    const res = await app.request("/api/work-item/OPS-100/unlink-thread", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ threadId: "t-1" }),
@@ -162,7 +162,7 @@ describe("Thread Linking API", () => {
 
   it("POST /api/work-item/:id/link-url parses Slack URL and links", async () => {
     mockGraph.getThreadById.mockReturnValue(null); // thread not in graph yet
-    const res = await app.request("/api/work-item/AI-100/link-url", {
+    const res = await app.request("/api/work-item/OPS-100/link-url", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ url: "https://team.slack.com/archives/C001/p1711900000000100" }),
@@ -170,11 +170,11 @@ describe("Thread Linking API", () => {
     expect(res.status).toBe(200);
     const data = await res.json() as { ok: boolean; threadId: string };
     expect(data.threadId).toBe("1711900000.000100");
-    expect(mockGraph.linkThread).toHaveBeenCalledWith("1711900000.000100", "AI-100");
+    expect(mockGraph.linkThread).toHaveBeenCalledWith("1711900000.000100", "OPS-100");
   });
 
   it("POST /api/work-item/:id/link-url rejects invalid URLs", async () => {
-    const res = await app.request("/api/work-item/AI-100/link-url", {
+    const res = await app.request("/api/work-item/OPS-100/link-url", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ url: "https://google.com" }),

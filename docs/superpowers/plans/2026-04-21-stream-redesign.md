@@ -85,7 +85,7 @@ describe("pin and dismiss", () => {
     graph = new ContextGraph(db);
     // Seed a work item
     graph.upsertWorkItem({
-      id: "AI-100",
+      id: "OPS-100",
       source: "jira",
       title: "Test item",
       currentAtcStatus: "blocked_on_human",
@@ -96,12 +96,12 @@ describe("pin and dismiss", () => {
       channelId: "C001",
       channelName: "general",
       platform: "slack",
-      workItemId: "AI-100",
+      workItemId: "OPS-100",
     });
     graph.insertEvent({
       threadId: "T001",
       messageId: "msg-1",
-      workItemId: "AI-100",
+      workItemId: "OPS-100",
       agentId: "agent-1",
       status: "blocked_on_human",
       confidence: 0.9,
@@ -113,7 +113,7 @@ describe("pin and dismiss", () => {
     });
     graph.upsertAgent({
       id: "agent-1",
-      name: "ByteAgent",
+      name: "RelayAgent",
       platform: "slack",
       platformUserId: "U001",
     });
@@ -125,17 +125,17 @@ describe("pin and dismiss", () => {
 
   describe("togglePin", () => {
     it("pins an unpinned work item", () => {
-      const result = graph.togglePin("AI-100");
+      const result = graph.togglePin("OPS-100");
       expect(result).toBe(true);
-      const wi = graph.getWorkItemById("AI-100");
+      const wi = graph.getWorkItemById("OPS-100");
       expect(wi?.pinned).toBe(true);
     });
 
     it("unpins a pinned work item", () => {
-      graph.togglePin("AI-100");
-      const result = graph.togglePin("AI-100");
+      graph.togglePin("OPS-100");
+      const result = graph.togglePin("OPS-100");
       expect(result).toBe(false);
-      const wi = graph.getWorkItemById("AI-100");
+      const wi = graph.getWorkItemById("OPS-100");
       expect(wi?.pinned).toBe(false);
     });
 
@@ -147,8 +147,8 @@ describe("pin and dismiss", () => {
 
   describe("dismissWorkItem", () => {
     it("sets dismissed_at timestamp", () => {
-      graph.dismissWorkItem("AI-100");
-      const wi = graph.getWorkItemById("AI-100");
+      graph.dismissWorkItem("OPS-100");
+      const wi = graph.getWorkItemById("OPS-100");
       expect(wi?.dismissedAt).not.toBeNull();
     });
 
@@ -156,21 +156,21 @@ describe("pin and dismiss", () => {
       const before = graph.getActionableItems();
       expect(before.length).toBe(1);
 
-      graph.dismissWorkItem("AI-100");
+      graph.dismissWorkItem("OPS-100");
 
       const after = graph.getActionableItems();
       expect(after.length).toBe(0);
     });
 
     it("re-includes item when new blocking event arrives after dismiss", () => {
-      graph.dismissWorkItem("AI-100");
+      graph.dismissWorkItem("OPS-100");
       expect(graph.getActionableItems().length).toBe(0);
 
       // New blocking event with timestamp after dismissed_at
       graph.insertEvent({
         threadId: "T001",
         messageId: "msg-2",
-        workItemId: "AI-100",
+        workItemId: "OPS-100",
         agentId: "agent-1",
         status: "blocked_on_human",
         confidence: 0.9,
@@ -188,7 +188,7 @@ describe("pin and dismiss", () => {
 
   describe("pinned items in getActionableItems", () => {
     it("returns pinned field on actionable items", () => {
-      graph.togglePin("AI-100");
+      graph.togglePin("OPS-100");
       const items = graph.getActionableItems();
       expect(items[0].workItem.pinned).toBe(true);
     });
@@ -370,7 +370,7 @@ describe("dismiss and noise actions", () => {
     db = new Database(":memory:");
     graph = new ContextGraph(db);
     graph.upsertWorkItem({
-      id: "AI-200",
+      id: "OPS-200",
       source: "jira",
       title: "Test item",
       currentAtcStatus: "blocked_on_human",
@@ -380,12 +380,12 @@ describe("dismiss and noise actions", () => {
       channelId: "C001",
       channelName: "general",
       platform: "slack",
-      workItemId: "AI-200",
+      workItemId: "OPS-200",
     });
     graph.insertEvent({
       threadId: "T001",
       messageId: "msg-1",
-      workItemId: "AI-200",
+      workItemId: "OPS-200",
       agentId: "agent-1",
       status: "blocked_on_human",
       confidence: 0.9,
@@ -397,7 +397,7 @@ describe("dismiss and noise actions", () => {
     });
     graph.upsertAgent({
       id: "agent-1",
-      name: "Byte",
+      name: "Relay",
       platform: "slack",
       platformUserId: "U001",
     });
@@ -414,14 +414,14 @@ describe("dismiss and noise actions", () => {
     const res = await app.request("/api/action", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ workItemId: "AI-200", action: "dismiss" }),
+      body: JSON.stringify({ workItemId: "OPS-200", action: "dismiss" }),
     });
 
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.ok).toBe(true);
 
-    const wi = graph.getWorkItemById("AI-200");
+    const wi = graph.getWorkItemById("OPS-200");
     expect(wi?.dismissedAt).not.toBeNull();
     expect(wi?.currentAtcStatus).toBe("blocked_on_human"); // status unchanged
   });
@@ -433,14 +433,14 @@ describe("dismiss and noise actions", () => {
     const res = await app.request("/api/action", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ workItemId: "AI-200", action: "noise" }),
+      body: JSON.stringify({ workItemId: "OPS-200", action: "noise" }),
     });
 
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.ok).toBe(true);
 
-    const wi = graph.getWorkItemById("AI-200");
+    const wi = graph.getWorkItemById("OPS-200");
     expect(wi?.currentAtcStatus).toBe("noise");
   });
 
@@ -452,7 +452,7 @@ describe("dismiss and noise actions", () => {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        workItemId: "AI-200",
+        workItemId: "OPS-200",
         action: "redirect",
         message: "Done, try again",
       }),
@@ -471,7 +471,7 @@ describe("dismiss and noise actions", () => {
     const res = await app.request("/api/action", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ workItemId: "AI-200", action: "redirect" }),
+      body: JSON.stringify({ workItemId: "OPS-200", action: "redirect" }),
     });
 
     expect(res.status).toBe(200);
@@ -629,15 +629,15 @@ describe("GET /api/stream/all-active", () => {
       reason: "test", rawText: "test", timestamp: new Date().toISOString(),
       entryType: "progress", targetedAtOperator: targeted,
     });
-    graph.upsertAgent({ id: "agent-1", name: "Byte", platform: "slack", platformUserId: "U001" });
+    graph.upsertAgent({ id: "agent-1", name: "Relay", platform: "slack", platformUserId: "U001" });
   }
 
   it("returns all non-completed, non-noise items regardless of targetedAtOperator", async () => {
-    seedItem("AI-1", "blocked_on_human", true);
-    seedItem("AI-2", "in_progress", false);
-    seedItem("AI-3", "completed", false);
-    seedItem("AI-4", "noise", false);
-    seedItem("AI-5", "needs_decision", true);
+    seedItem("OPS-1", "blocked_on_human", true);
+    seedItem("OPS-2", "in_progress", false);
+    seedItem("OPS-3", "completed", false);
+    seedItem("OPS-4", "noise", false);
+    seedItem("OPS-5", "needs_decision", true);
 
     const state = makeState(graph, db);
     const app = createApp(state);
@@ -645,18 +645,18 @@ describe("GET /api/stream/all-active", () => {
 
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body.items).toHaveLength(3); // AI-1, AI-2, AI-5 (not completed, not noise)
+    expect(body.items).toHaveLength(3); // OPS-1, OPS-2, OPS-5 (not completed, not noise)
     const ids = body.items.map((i: any) => i.workItem.id);
-    expect(ids).toContain("AI-1");
-    expect(ids).toContain("AI-2");
-    expect(ids).toContain("AI-5");
-    expect(ids).not.toContain("AI-3");
-    expect(ids).not.toContain("AI-4");
+    expect(ids).toContain("OPS-1");
+    expect(ids).toContain("OPS-2");
+    expect(ids).toContain("OPS-5");
+    expect(ids).not.toContain("OPS-3");
+    expect(ids).not.toContain("OPS-4");
   });
 
   it("includes pinned field on items", async () => {
-    seedItem("AI-1", "in_progress", false);
-    graph.togglePin("AI-1");
+    seedItem("OPS-1", "in_progress", false);
+    graph.togglePin("OPS-1");
 
     const state = makeState(graph, db);
     const app = createApp(state);
@@ -741,13 +741,13 @@ Add to `tests/server/stream-api.test.ts`:
 describe("timeline pagination", () => {
   it("returns hasOlder: true when more events exist before the page", async () => {
     // Seed a work item with 15 events
-    graph.upsertWorkItem({ id: "AI-300", source: "jira", title: "Pagination test", currentAtcStatus: "in_progress" });
-    graph.upsertThread({ id: "T-300", channelId: "C001", channelName: "test", platform: "slack", workItemId: "AI-300" });
-    graph.upsertAgent({ id: "agent-1", name: "Byte", platform: "slack", platformUserId: "U001" });
+    graph.upsertWorkItem({ id: "OPS-300", source: "jira", title: "Pagination test", currentAtcStatus: "in_progress" });
+    graph.upsertThread({ id: "T-300", channelId: "C001", channelName: "test", platform: "slack", workItemId: "OPS-300" });
+    graph.upsertAgent({ id: "agent-1", name: "Relay", platform: "slack", platformUserId: "U001" });
 
     for (let i = 0; i < 15; i++) {
       graph.insertEvent({
-        threadId: "T-300", messageId: `msg-${i}`, workItemId: "AI-300",
+        threadId: "T-300", messageId: `msg-${i}`, workItemId: "OPS-300",
         agentId: "agent-1", status: "in_progress", confidence: 0.9,
         reason: `Event ${i}`, rawText: `Message ${i}`,
         timestamp: new Date(Date.now() - (15 - i) * 60000).toISOString(),
@@ -759,7 +759,7 @@ describe("timeline pagination", () => {
     const app = createApp(state);
 
     // First page (no before param) — should get latest 10
-    const res1 = await app.request("/api/work-item/AI-300/stream?limit=10");
+    const res1 = await app.request("/api/work-item/OPS-300/stream?limit=10");
     const body1 = await res1.json();
     expect(body1.timeline.length).toBe(10);
     expect(body1.hasOlder).toBe(true);
@@ -768,7 +768,7 @@ describe("timeline pagination", () => {
 
     // Second page — use oldest event's timestamp as "before"
     const oldestTimestamp = body1.timeline[0].timestamp;
-    const res2 = await app.request(`/api/work-item/AI-300/stream?limit=10&before=${encodeURIComponent(oldestTimestamp)}`);
+    const res2 = await app.request(`/api/work-item/OPS-300/stream?limit=10&before=${encodeURIComponent(oldestTimestamp)}`);
     const body2 = await res2.json();
     expect(body2.timeline.length).toBe(5);
     expect(body2.hasOlder).toBe(false);

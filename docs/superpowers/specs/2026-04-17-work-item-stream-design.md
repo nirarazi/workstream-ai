@@ -9,7 +9,7 @@
 The context graph is structurally sound but functionally empty. 93.5% of threads are orphaned (544 of 582). 96.3% of events are classified as noise. Only 6.5% of fleet activity is connected to work items. The operator still has to open Slack to understand what's going on.
 
 Root causes:
-1. **Linking depends on ticket IDs.** The linker only connects threads when agents explicitly mention Jira-format IDs (AI-xxx, IT-xxx). Most messages don't.
+1. **Linking depends on ticket IDs.** The linker only connects threads when agents explicitly mention Jira-format IDs (OPS-xxx, ENG-xxx). Most messages don't.
 2. **Context doesn't accumulate.** Each message is classified in isolation. The graph doesn't build a narrative per work item.
 3. **Operator actions aren't tracked.** Replies sent through workstream.ai aren't stored as events, so there's no decision log.
 
@@ -47,7 +47,7 @@ Sits below the snapshot. **Starts collapsed** to keep the view clean. Shows summ
 **Entry types:**
 - ⏳ **Block** — agent waiting on the operator
 - ✅ **Decision** — what the operator said/approved/rejected, with their words quoted. Visually prominent (left border highlight).
-- 🔨 **Progress** — agent completed a step. Collapsible when many in one day ("Byte · 4 progress updates").
+- 🔨 **Progress** — agent completed a step. Collapsible when many in one day ("Relay · 4 progress updates").
 - 📋 **Assignment/handoff** — ownership or responsibility changed
 - 🚩 **Escalation** — agent flagged a problem or exception
 
@@ -66,7 +66,7 @@ Not a separate section. Excerpts are **inline expansions of timeline entries** �
 - Most recent first within expansion
 - "Earlier in thread (N messages)" truncation for the rest
 - Operator's own messages are never truncated away
-- Cross-channel excerpts — a decision in #strategy and a block in #agent-orchestrator both appear under the same work item
+- Cross-channel excerpts — a decision in #strategy and a block in #fleet-ops both appear under the same work item
 
 ### Suggested Actions
 
@@ -74,9 +74,9 @@ Bottom of the stream. Pinned when urgent.
 
 **Principles:**
 - Actions are **pre-drafted** — "Approve" already has a default message. Edit or send.
-- Every action shows **where it goes** — "→ replies to Byte in #agent-orchestrator"
+- Every action shows **where it goes** — "→ replies to Relay in #fleet-ops"
 - Actions are **contextual** — generated from the block reason, not generic buttons
-- Reassign routes through the orchestrator agent (Levy)
+- Reassign routes through the orchestrator agent (Atlas)
 - Snooze is always available (1h, 4h, tomorrow, custom)
 - Free-text reply is always available
 
@@ -128,13 +128,13 @@ Current state: threads link to work items via extracted ticket IDs. 93.5% fail.
 
 Current state: work items link to one agent (via the latest event's agent_id) and threads have a single work_item_id FK.
 
-**Change:** The work item display aggregates across ALL threads and ALL agents that have events for that work item. The status snapshot shows "Byte, Pixel" not just "Byte". The meta shows "#agent-orchestrator, #strategy · 3 threads" not just one channel.
+**Change:** The work item display aggregates across ALL threads and ALL agents that have events for that work item. The status snapshot shows "Relay, Prism" not just "Relay". The meta shows "#fleet-ops, #strategy · 3 threads" not just one channel.
 
 This requires no schema change — it's a query change. Aggregate agents and channels from the events table grouped by work_item_id.
 
 ### Unchanged: Agent roles
 
-Agent `role` field exists but is unpopulated. For suggested actions (e.g., "reassign → notifies Levy"), the system needs to know Levy is the orchestrator. For MVP: hardcode or configure in settings. For v2: infer from message patterns (Levy assigns work → Levy is the orchestrator).
+Agent `role` field exists but is unpopulated. For suggested actions (e.g., "reassign → notifies Atlas"), the system needs to know Atlas is the orchestrator. For MVP: hardcode or configure in settings. For v2: infer from message patterns (Atlas assigns work → Atlas is the orchestrator).
 
 ## Feasibility Assessment
 

@@ -178,7 +178,7 @@ export class Database {
     }
 
     // Fix Jira URLs: convert REST API URLs to browse URLs
-    // e.g. "https://site.atlassian.net/rest/api/3/issue/25937" → "https://site.atlassian.net/browse/AI-320"
+    // e.g. "https://site.atlassian.net/rest/api/3/issue/25937" → "https://site.atlassian.net/browse/OPS-320"
     const jiraApiUrlCount = (
       this.db.prepare("SELECT COUNT(*) AS n FROM work_items WHERE url LIKE '%/rest/api/%'").get() as { n: number }
     ).n;

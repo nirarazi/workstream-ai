@@ -11,11 +11,11 @@ describe("sidekick tools", () => {
     db = new Database(":memory:");
     graph = new ContextGraph(db);
 
-    graph.upsertAgent({ id: "a1", name: "Byte", platform: "slack", platformUserId: "U1" });
-    graph.upsertWorkItem({ id: "AI-100", source: "jira", title: "Fix login", currentAtcStatus: "in_progress" });
-    graph.upsertThread({ id: "t1", channelId: "C1", platform: "slack", workItemId: "AI-100" });
+    graph.upsertAgent({ id: "a1", name: "Relay", platform: "slack", platformUserId: "U1" });
+    graph.upsertWorkItem({ id: "OPS-100", source: "jira", title: "Fix login", currentAtcStatus: "in_progress" });
+    graph.upsertThread({ id: "t1", channelId: "C1", platform: "slack", workItemId: "OPS-100" });
     graph.insertEvent({
-      threadId: "t1", messageId: "m1", workItemId: "AI-100", agentId: "a1",
+      threadId: "t1", messageId: "m1", workItemId: "OPS-100", agentId: "a1",
       status: "in_progress", confidence: 0.9, rawText: "Working on login",
       timestamp: new Date().toISOString(),
     });
@@ -36,18 +36,18 @@ describe("sidekick tools", () => {
   });
 
   it("executes query_work_items tool", () => {
-    const result = executeTool(graph, "query_work_items", { query: "AI-100" });
-    expect(result).toContain("AI-100");
+    const result = executeTool(graph, "query_work_items", { query: "OPS-100" });
+    expect(result).toContain("OPS-100");
   });
 
   it("executes query_agents tool", () => {
-    const result = executeTool(graph, "query_agents", { name: "Byte" });
-    expect(result).toContain("Byte");
+    const result = executeTool(graph, "query_agents", { name: "Relay" });
+    expect(result).toContain("Relay");
   });
 
   it("executes query_events tool", () => {
     const result = executeTool(graph, "query_events", { since_hours: 24 });
-    expect(result).toContain("AI-100");
+    expect(result).toContain("OPS-100");
   });
 
   it("executes get_fleet_stats tool", () => {

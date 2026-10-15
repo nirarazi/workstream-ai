@@ -6,7 +6,7 @@ Thread inheritance, manual thread management, forward/dispatch, and new thread c
 
 ATC's thread-to-work-item linking relies on ticket IDs appearing in message text. This breaks in three common scenarios:
 
-1. **Reply inheritance (#11):** An agent starts a thread mentioning `AI-382`, but subsequent replies don't re-mention the ticket. ATC processes only the latest message, misses the link, and creates a duplicate synthetic work item.
+1. **Reply inheritance (#11):** An agent starts a thread mentioning `OPS-382`, but subsequent replies don't re-mention the ticket. ATC processes only the latest message, misses the link, and creates a duplicate synthetic work item.
 2. **Combining threads (#10):** Multiple threads relate to the same effort but have no shared ticket ID. The operator knows they're connected but has no way to tell ATC.
 3. **Forwarding context (#9):** The operator sees a blocked thread and wants to dispatch it to another agent or pull someone in — without leaving ATC to open Slack.
 

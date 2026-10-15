@@ -89,8 +89,8 @@ accuracy on the reference fleet) has never been measured.
 
    - OpenAI's Decisions API (public beta since 2026-10-06) is the most precise and best calibrated backend
      (calibration error 0.07), and it is fast (p50 0.3 s) at about $0.00012 per message (input tokens only).
-     It missed the same 2 items as Jev, both Levy status posts that hide a stuck agent (a ticket waiting,
-     Chess not running). Haiku caught both.
+     It missed the same 2 items as Jev, both Atlas status posts that hide a stuck agent (a ticket waiting,
+     Quill not running). Haiku caught both.
    - After adding "an agent reported as stuck, waiting or not running is mine, even inside a routine status
      post" to the remit, the result was 1 unnecessary / 1 missed. With the status threshold lowered to 0.3
      it was 4 unnecessary / 0 missed, against Haiku's 11 / 0.
@@ -166,7 +166,7 @@ accuracy on the reference fleet) has never been measured.
    human responds:
    - **Action (`blocked_on_human`)** — the human has to examine or produce something (credentials, a
      call, approving a draft, reviewing a PR). They hold responsibility until they respond.
-     **Track ownership:** who holds which item and for how long ("you've held AI-401 for 2 days").
+     **Track ownership:** who holds which item and for how long ("you've held OPS-401 for 2 days").
      The item closes when the agent confirms the action is done, not when someone replies.
    - **Decision (`needs_decision`)** — the human chooses a direction with no work product to inspect,
      and the work returns to the agent straight away. **Log the decision:** work item, question,
@@ -215,10 +215,10 @@ accuracy on the reference fleet) has never been measured.
 
 ## Then — strategic
 
-9. **MCP over Streamable HTTP, on spec 2026-07-28.** The reference fleet runs on EC2, so the stdio-only
+9. **MCP over Streamable HTTP, on spec 2026-07-28.** The reference fleet runs on a cloud VM, so the stdio-only
    push path never reaches it. Have `workstream_request_approval` block until the operator answers,
    using the Tasks extension or multi-round-trip requests.
-10. **Runtime sources beyond chat.** Read events from the OpenClaw gateway, Claude Code / Codex sessions
+10. **Runtime sources beyond chat.** Read events from the agent gateway, Claude Code / Codex sessions
    or OTel GenAI traces, which gives structured status and avoids Slack rate limits. Slack stays the
    channel for replies.
 11. **GitHub/Bitbucket task adapter.** Agent work mostly ends in a PR, so show PR state next to the item.

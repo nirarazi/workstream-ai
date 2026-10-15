@@ -173,7 +173,7 @@ If a work item's status is `completed` (operator approved/closed it), new messag
 
 ### 3b. Message content hash deduplication
 
-Agents sometimes post identical status updates ("Still working on AI-382..."). Before classifying, hash the message text (SHA-256) and check if the same hash exists for the same work item within the last hour.
+Agents sometimes post identical status updates ("Still working on OPS-382..."). Before classifying, hash the message text (SHA-256) and check if the same hash exists for the same work item within the last hour.
 
 **Where:** In-memory LRU cache in the pipeline, keyed by `{workItemId}:{contentHash}`. TTL: 1 hour. Max entries: 1,000.
 **Savings:** Eliminates redundant classifications for repetitive agent updates.

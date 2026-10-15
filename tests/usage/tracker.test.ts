@@ -118,15 +118,15 @@ describe("UsageTracker", () => {
       status: "completed",
       confidence: 0.95,
       reason: "done",
-      workItemIds: ["AI-1"],
+      workItemIds: ["OPS-1"],
       title: "Deploy fix",
     });
 
     const tracker = new UsageTracker(provider, db, DEFAULT_CONFIG);
-    const result = await tracker.classify("AI-1: PR merged", "system prompt", [], "classifier");
+    const result = await tracker.classify("OPS-1: PR merged", "system prompt", [], "classifier");
 
     expect(result.status).toBe("completed");
-    expect(provider.classify).toHaveBeenCalledWith("AI-1: PR merged", "system prompt", []);
+    expect(provider.classify).toHaveBeenCalledWith("OPS-1: PR merged", "system prompt", []);
 
     // Check a record was persisted
     const rows = db.db.prepare("SELECT * FROM llm_usage").all() as Array<Record<string, unknown>>;
@@ -283,7 +283,7 @@ describe("Classifier with UsageTracker", () => {
   it("classify() goes through the tracker and records usage", async () => {
     const db = new Database(":memory:");
     const provider = mockProvider({
-      status: "in_progress", confidence: 0.9, reason: "working", workItemIds: ["AI-5"], title: "Build feature",
+      status: "in_progress", confidence: 0.9, reason: "working", workItemIds: ["OPS-5"], title: "Build feature",
     });
     const tracker = new UsageTracker(provider, db, DEFAULT_CONFIG);
     const classifier = new Classifier(tracker, "You are a classifier.", [
@@ -291,7 +291,7 @@ describe("Classifier with UsageTracker", () => {
       { role: "assistant", content: '{"status":"noise"}' },
     ]);
 
-    const result = await classifier.classify("AI-5: still working on the feature");
+    const result = await classifier.classify("OPS-5: still working on the feature");
     expect(result.status).toBe("in_progress");
 
     // Verify usage was recorded

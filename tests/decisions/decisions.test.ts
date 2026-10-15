@@ -148,8 +148,8 @@ describe("TypeSafeDecisionProvider", () => {
 describe("classification questions", () => {
   it("adds a work item question with a none option only when candidates exist", () => {
     expect(buildClassificationQuestions({ message: "hi" })).not.toHaveProperty("workItem");
-    const q = buildClassificationQuestions({ message: "hi", candidateWorkItems: [{ id: "AI-1", title: "Fix login" }] });
-    expect(Object.keys(q.workItem!.options)).toEqual(["AI-1", NO_MATCH]);
+    const q = buildClassificationQuestions({ message: "hi", candidateWorkItems: [{ id: "OPS-1", title: "Fix login" }] });
+    expect(Object.keys(q.workItem!.options)).toEqual(["OPS-1", NO_MATCH]);
   });
 
   function stubProvider(answers: Record<string, unknown>): DecisionProvider {
@@ -181,10 +181,10 @@ describe("classification questions", () => {
   it("puts the thread's work item and earlier messages in the state", () => {
     const state = buildState({
       message: "go ahead",
-      threadContext: { workItem: { id: "AI-102", title: "Feature rollout", status: "Backlog" }, messages: [{ senderName: "Levy", text: "Ship it?" }] },
+      threadContext: { workItem: { id: "OPS-102", title: "Feature rollout", status: "Backlog" }, messages: [{ senderName: "Atlas", text: "Ship it?" }] },
     });
-    expect(state).toContain("Thread is about: AI-102 — Feature rollout (Backlog)");
-    expect(state).toContain("- [Levy] Ship it?");
+    expect(state).toContain("Thread is about: OPS-102 — Feature rollout (Backlog)");
+    expect(state).toContain("- [Atlas] Ship it?");
     expect(state.indexOf("Ship it?")).toBeLessThan(state.indexOf("go ahead"));
   });
 
@@ -202,7 +202,7 @@ describe("classification questions", () => {
       status: { type: "choice", choice: "in_progress", confidence: 0.6, probabilities: {} },
       targeted: { type: "yesno", probability: 0.2 },
       workItem: { type: "choice", choice: NO_MATCH, confidence: 0.9, probabilities: {} },
-    }), { message: "working on it", candidateWorkItems: [{ id: "AI-1", title: "x" }] });
+    }), { message: "working on it", candidateWorkItems: [{ id: "OPS-1", title: "x" }] });
     expect(result.targetedAtOperator).toBe(false);
     expect(result.workItemId).toBeNull();
   });

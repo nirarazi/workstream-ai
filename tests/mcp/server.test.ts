@@ -33,24 +33,24 @@ describe("MCP Server", () => {
       const result = await client.callTool({
         name: "workstream_report_status",
         arguments: {
-          workItemId: "AI-100",
+          workItemId: "OPS-100",
           status: "in_progress",
           message: "Working on authentication module",
         },
       });
 
       const parsed = JSON.parse((result.content as Array<{ text: string }>)[0].text);
-      expect(parsed).toEqual({ ok: true, workItemId: "AI-100" });
+      expect(parsed).toEqual({ ok: true, workItemId: "OPS-100" });
 
       // Verify work item was created
-      const workItem = graph.getWorkItemById("AI-100");
+      const workItem = graph.getWorkItemById("OPS-100");
       expect(workItem).not.toBeNull();
       expect(workItem!.source).toBe("mcp");
       expect(workItem!.currentAtcStatus).toBe("in_progress");
       expect(workItem!.currentConfidence).toBe(1.0);
 
       // Verify event was inserted
-      const events = graph.getEventsForWorkItem("AI-100");
+      const events = graph.getEventsForWorkItem("OPS-100");
       expect(events).toHaveLength(1);
       expect(events[0].status).toBe("in_progress");
       expect(events[0].reason).toBe("Working on authentication module");
@@ -63,7 +63,7 @@ describe("MCP Server", () => {
       await client.callTool({
         name: "workstream_report_status",
         arguments: {
-          workItemId: "AI-200",
+          workItemId: "OPS-200",
           status: "in_progress",
           message: "Started work",
         },
@@ -73,16 +73,16 @@ describe("MCP Server", () => {
       await client.callTool({
         name: "workstream_report_status",
         arguments: {
-          workItemId: "AI-200",
+          workItemId: "OPS-200",
           status: "blocked_on_human",
           message: "Need API keys",
         },
       });
 
-      const workItem = graph.getWorkItemById("AI-200");
+      const workItem = graph.getWorkItemById("OPS-200");
       expect(workItem!.currentAtcStatus).toBe("blocked_on_human");
 
-      const events = graph.getEventsForWorkItem("AI-200");
+      const events = graph.getEventsForWorkItem("OPS-200");
       expect(events).toHaveLength(2);
       expect(events[0].status).toBe("in_progress");
       expect(events[1].status).toBe("blocked_on_human");
@@ -115,20 +115,20 @@ describe("MCP Server", () => {
       const result = await client.callTool({
         name: "workstream_request_approval",
         arguments: {
-          workItemId: "AI-300",
+          workItemId: "OPS-300",
           description: "Which database should we use?",
           options: ["PostgreSQL", "MySQL", "SQLite"],
         },
       });
 
       const parsed = JSON.parse((result.content as Array<{ text: string }>)[0].text);
-      expect(parsed).toEqual({ ok: true, workItemId: "AI-300" });
+      expect(parsed).toEqual({ ok: true, workItemId: "OPS-300" });
 
-      const workItem = graph.getWorkItemById("AI-300");
+      const workItem = graph.getWorkItemById("OPS-300");
       expect(workItem).not.toBeNull();
       expect(workItem!.currentAtcStatus).toBe("needs_decision");
 
-      const events = graph.getEventsForWorkItem("AI-300");
+      const events = graph.getEventsForWorkItem("OPS-300");
       expect(events).toHaveLength(1);
       expect(events[0].status).toBe("needs_decision");
       expect(events[0].rawText).toBe("Which database should we use?");
@@ -139,7 +139,7 @@ describe("MCP Server", () => {
       const result = await client.callTool({
         name: "workstream_request_approval",
         arguments: {
-          workItemId: "AI-301",
+          workItemId: "OPS-301",
           description: "Please approve the deployment",
         },
       });
@@ -147,7 +147,7 @@ describe("MCP Server", () => {
       const parsed = JSON.parse((result.content as Array<{ text: string }>)[0].text);
       expect(parsed.ok).toBe(true);
 
-      const events = graph.getEventsForWorkItem("AI-301");
+      const events = graph.getEventsForWorkItem("OPS-301");
       expect(events).toHaveLength(1);
       expect(events[0].reason).toBe("");
       expect(events[0].rawText).toBe("Please approve the deployment");
@@ -160,7 +160,7 @@ describe("MCP Server", () => {
       await client.callTool({
         name: "workstream_report_status",
         arguments: {
-          workItemId: "AI-400",
+          workItemId: "OPS-400",
           status: "in_progress",
           message: "Working on it",
         },
@@ -170,18 +170,18 @@ describe("MCP Server", () => {
       const result = await client.callTool({
         name: "workstream_complete",
         arguments: {
-          workItemId: "AI-400",
+          workItemId: "OPS-400",
           summary: "Authentication module deployed successfully",
         },
       });
 
       const parsed = JSON.parse((result.content as Array<{ text: string }>)[0].text);
-      expect(parsed).toEqual({ ok: true, workItemId: "AI-400" });
+      expect(parsed).toEqual({ ok: true, workItemId: "OPS-400" });
 
-      const workItem = graph.getWorkItemById("AI-400");
+      const workItem = graph.getWorkItemById("OPS-400");
       expect(workItem!.currentAtcStatus).toBe("completed");
 
-      const events = graph.getEventsForWorkItem("AI-400");
+      const events = graph.getEventsForWorkItem("OPS-400");
       expect(events).toHaveLength(2);
       expect(events[1].status).toBe("completed");
       expect(events[1].reason).toBe("Authentication module deployed successfully");
@@ -192,7 +192,7 @@ describe("MCP Server", () => {
       const result = await client.callTool({
         name: "workstream_complete",
         arguments: {
-          workItemId: "AI-500",
+          workItemId: "OPS-500",
           summary: "Quick fix applied",
         },
       });
@@ -200,7 +200,7 @@ describe("MCP Server", () => {
       const parsed = JSON.parse((result.content as Array<{ text: string }>)[0].text);
       expect(parsed.ok).toBe(true);
 
-      const workItem = graph.getWorkItemById("AI-500");
+      const workItem = graph.getWorkItemById("OPS-500");
       expect(workItem).not.toBeNull();
       expect(workItem!.currentAtcStatus).toBe("completed");
     });

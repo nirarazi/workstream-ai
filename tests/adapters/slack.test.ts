@@ -200,7 +200,7 @@ describe("SlackAdapter", () => {
       mockConversationsList.mockResolvedValue({
         channels: [
           { id: "C001", name: "general" },
-          { id: "C002", name: "agent-orchestrator" },
+          { id: "C002", name: "fleet-ops" },
         ],
         response_metadata: { next_cursor: "" },
       });
@@ -209,7 +209,7 @@ describe("SlackAdapter", () => {
         response_metadata: { next_cursor: "" },
       });
 
-      await adapter.readThreads(new Date("2024-01-01"), ["#agent-orchestrator"]);
+      await adapter.readThreads(new Date("2024-01-01"), ["#fleet-ops"]);
 
       // Should only fetch history for C002
       expect(mockConversationsHistory).toHaveBeenCalledOnce();
@@ -431,7 +431,7 @@ describe("SlackAdapter", () => {
       const mockReplies = {
         ok: true,
         messages: [
-          { ts: "1711900000.000000", user: "U1", text: "Starting work on AI-382" },
+          { ts: "1711900000.000000", user: "U1", text: "Starting work on OPS-382" },
           { ts: "1711900100.000000", user: "U2", text: "PR submitted for review" },
           { ts: "1711900200.000000", user: "U1", text: "Approved and merged" },
         ],
@@ -452,15 +452,15 @@ describe("SlackAdapter", () => {
       (adapter as any).client = mockClient;
       (adapter as any).channelMap = new Map([["C123", { name: "test", isPrivate: false }]]);
       (adapter as any).userInfoMap = new Map([
-        ["U1", { name: "Byte", avatar: "" }],
-        ["U2", { name: "Pixel", avatar: "" }],
+        ["U1", { name: "Relay", avatar: "" }],
+        ["U2", { name: "Prism", avatar: "" }],
       ]);
 
       const messages = await adapter.getThreadMessages("1711900000.000000", "C123");
 
       expect(messages).toHaveLength(3);
-      expect(messages[0].userName).toBe("Byte");
-      expect(messages[0].text).toBe("Starting work on AI-382");
+      expect(messages[0].userName).toBe("Relay");
+      expect(messages[0].text).toBe("Starting work on OPS-382");
       expect(messages[2].text).toBe("Approved and merged");
     });
   });
@@ -535,8 +535,8 @@ describe("SlackAdapter", () => {
       // Re-connect with bot and human users pre-loaded
       mockUsersList.mockResolvedValueOnce({
         members: [
-          { id: "U001", name: "byte", is_bot: true, profile: { display_name: "Byte" } },
-          { id: "U002", name: "nir", is_bot: false, profile: { display_name: "Alex" } },
+          { id: "U001", name: "relay", is_bot: true, profile: { display_name: "Relay" } },
+          { id: "U002", name: "alex", is_bot: false, profile: { display_name: "Alex" } },
         ],
         response_metadata: { next_cursor: "" },
       });
@@ -606,7 +606,7 @@ describe("SlackAdapter", () => {
       };
       (localAdapter as any).channelMap = new Map([["C123", { name: "test", isPrivate: false }]]);
       (localAdapter as any).userInfoMap = new Map([
-        ["U_BOT", { name: "Byte", avatar: "", isBot: true }],
+        ["U_BOT", { name: "Relay", avatar: "", isBot: true }],
         ["U_HUMAN", { name: "Alex", avatar: "", isBot: false }],
       ]);
 

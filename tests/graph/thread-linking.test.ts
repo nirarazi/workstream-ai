@@ -11,7 +11,7 @@ describe("Thread Linking", () => {
     graph = new ContextGraph(db);
 
     // Seed a work item and two threads
-    graph.upsertWorkItem({ id: "AI-100", source: "extracted", title: "Test work item" });
+    graph.upsertWorkItem({ id: "OPS-100", source: "extracted", title: "Test work item" });
     graph.upsertThread({
       id: "t-1", channelId: "C-1", channelName: "general",
       platform: "slack", lastActivity: "2026-04-01T10:00:00.000Z",
@@ -28,34 +28,34 @@ describe("Thread Linking", () => {
 
   describe("linkThread", () => {
     it("sets work_item_id and manually_linked on the thread", () => {
-      graph.linkThread("t-1", "AI-100");
+      graph.linkThread("t-1", "OPS-100");
 
       const thread = graph.getThreadById("t-1");
       expect(thread).not.toBeNull();
-      expect(thread!.workItemId).toBe("AI-100");
+      expect(thread!.workItemId).toBe("OPS-100");
       expect(thread!.manuallyLinked).toBe(true);
     });
 
     it("overwrites an existing auto-linked work item", () => {
       // Auto-link t-1 to a different work item
-      graph.upsertWorkItem({ id: "AI-200", source: "extracted", title: "Other" });
+      graph.upsertWorkItem({ id: "OPS-200", source: "extracted", title: "Other" });
       graph.upsertThread({
         id: "t-1", channelId: "C-1", channelName: "general",
-        platform: "slack", workItemId: "AI-200",
+        platform: "slack", workItemId: "OPS-200",
       });
 
-      // Manually link to AI-100
-      graph.linkThread("t-1", "AI-100");
+      // Manually link to OPS-100
+      graph.linkThread("t-1", "OPS-100");
 
       const thread = graph.getThreadById("t-1");
-      expect(thread!.workItemId).toBe("AI-100");
+      expect(thread!.workItemId).toBe("OPS-100");
       expect(thread!.manuallyLinked).toBe(true);
     });
   });
 
   describe("unlinkThread", () => {
     it("clears work_item_id and resets manually_linked", () => {
-      graph.linkThread("t-1", "AI-100");
+      graph.linkThread("t-1", "OPS-100");
       graph.unlinkThread("t-1");
 
       const thread = graph.getThreadById("t-1");
@@ -71,7 +71,7 @@ describe("Thread Linking", () => {
     });
 
     it("excludes manually linked threads", () => {
-      graph.linkThread("t-1", "AI-100");
+      graph.linkThread("t-1", "OPS-100");
       const unlinked = graph.getUnlinkedThreads(20);
       expect(unlinked).toHaveLength(1);
       expect(unlinked[0].id).toBe("t-2");

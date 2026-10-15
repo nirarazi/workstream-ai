@@ -14,18 +14,18 @@ Messages reach a work item through three paths, tried in order:
 
 ### Path 1: Regex Extraction (High Confidence)
 
-The `DefaultExtractor` scans message text for patterns matching configured ticket prefixes (e.g., `AI-382`, `IT-205`). Only IDs whose prefix appears in `config.taskAdapter.ticketPrefixes` are accepted.
+The `DefaultExtractor` scans message text for patterns matching configured ticket prefixes (e.g., `OPS-382`, `ENG-205`). Only IDs whose prefix appears in `config.taskAdapter.ticketPrefixes` are accepted.
 
 **Strengths:** Deterministic, zero false positives when prefixes are configured, fast.
-**Weaknesses:** Only works when the message contains a literal ticket ID. Many messages don't mention one — agents say "working on the deployment" not "working on AI-382."
+**Weaknesses:** Only works when the message contains a literal ticket ID. Many messages don't mention one — agents say "working on the deployment" not "working on OPS-382."
 
 ### Path 2: LLM Classification (Medium Confidence)
 
 The classifier receives the message plus a list of currently open work items (`getOpenWorkItemSummaries()`). The prompt instructs it to return matching IDs in `workItemIds` — either ticket IDs it spotted in context, or existing open work item IDs that match the topic.
 
-LLM-suggested IDs are validated against known ticket prefixes before being accepted. Invalid IDs (e.g., `Q-456` when only `AI-`, `IT-`, `MS-` are configured) are discarded.
+LLM-suggested IDs are validated against known ticket prefixes before being accepted. Invalid IDs (e.g., `Q-456` when only `OPS-`, `ENG-`, `MKT-` are configured) are discarded.
 
-**Strengths:** Semantic understanding — can link "the deployment is blocked" to `AI-382` if it appears in the open items list. Handles follow-up messages that don't repeat the ticket ID.
+**Strengths:** Semantic understanding — can link "the deployment is blocked" to `OPS-382` if it appears in the open items list. Handles follow-up messages that don't repeat the ticket ID.
 **Weaknesses:** Non-deterministic. Limited by context window (100 open items max). Can hallucinate IDs. Expensive per message (one LLM call each).
 
 ### Path 3: Synthetic Work Item (Fallback)
@@ -51,11 +51,11 @@ The root cause: **the system has no concept of "message type" or "stream categor
 
 ### Problem 2: Cross-Thread Continuity
 
-An agent posts about `AI-382` in thread A on Monday. On Wednesday, the same agent posts a follow-up in thread B without mentioning the ticket ID. The LLM _might_ link it via the open items list, but only if the title is similar enough and the item is still in the top 100.
+An agent posts about `OPS-382` in thread A on Monday. On Wednesday, the same agent posts a follow-up in thread B without mentioning the ticket ID. The LLM _might_ link it via the open items list, but only if the title is similar enough and the item is still in the top 100.
 
 ### Problem 3: No Feedback Loop
 
-When the operator dismisses a work item, that signal is lost. The system doesn't learn that "lead alerts from InsureTax Sync are noise to this operator." Every new lead alert is classified from scratch.
+When the operator dismisses a work item, that signal is lost. The system doesn't learn that "lead alerts from Example Co Sync are noise to this operator." Every new lead alert is classified from scratch.
 
 ### Problem 4: Sender Identity is Underused
 
@@ -111,7 +111,7 @@ Score(work_item, message) =
 
 **Signal definitions:**
 
-- **`agent_match`** (0 or 1): Has this agent posted events against this work item before? Query: `SELECT DISTINCT work_item_id FROM events WHERE agent_id = ?`. This is the strongest signal — if Byte was working on AI-382 yesterday, a new message from Byte is likely about AI-382.
+- **`agent_match`** (0 or 1): Has this agent posted events against this work item before? Query: `SELECT DISTINCT work_item_id FROM events WHERE agent_id = ?`. This is the strongest signal — if Relay was working on OPS-382 yesterday, a new message from Relay is likely about OPS-382.
 
 - **`channel_match`** (0 or 1): Does this work item have threads in the same channel? Query: `SELECT DISTINCT work_item_id FROM threads WHERE channel_id = ?`. Weaker than agent match, but useful — work items tend to live in specific channels.
 
@@ -147,9 +147,9 @@ The classifier prompt changes from:
 
 ```
 ## Open Work Items
-- AI-382: Deploy payment service to staging
-- AI-383: Refactor auth middleware
-- IT-205: Payment webhook handler
+- OPS-382: Deploy payment service to staging
+- OPS-383: Refactor auth middleware
+- ENG-205: Payment webhook handler
 ... (97 more)
 ```
 
@@ -157,9 +157,9 @@ To:
 
 ```
 ## Candidate Work Items (ranked by relevance)
-1. AI-382: "Deploy payment service to staging" — same agent (Byte), last active 2h ago, channel match
-2. IT-205: "Payment webhook handler" — keyword overlap ("payment"), same channel
-3. thread:abc.123: "Missing API key for Anthropic" — same agent (Byte)
+1. OPS-382: "Deploy payment service to staging" — same agent (Relay), last active 2h ago, channel match
+2. ENG-205: "Payment webhook handler" — keyword overlap ("payment"), same channel
+3. thread:abc.123: "Missing API key for Anthropic" — same agent (Relay)
 
 If the message is about one of these items, return its ID. If none match, return an empty workItemIds array.
 ```
@@ -226,7 +226,7 @@ Replace `getOpenWorkItemSummaries()` (100 items, no ranking) with `findCandidate
 
 ### 2. Operator Feedback on Dismiss (Near-term)
 
-When the operator dismisses a work item, offer: **"Silence similar items from this sender?"** This creates a rule: `{sender: "InsureTax Sync", channel: "C09..."} -> auto-resolve`. No ML, no pattern matching — just a sender-level mute. Covers the 52-leads case directly.
+When the operator dismisses a work item, offer: **"Silence similar items from this sender?"** This creates a rule: `{sender: "Example Co Sync", channel: "C09..."} -> auto-resolve`. No ML, no pattern matching — just a sender-level mute. Covers the 52-leads case directly.
 
 ### 3. Better Sender Classification (Near-term)
 

@@ -16,10 +16,10 @@ function makeMessage(overrides: Partial<Message> = {}): Message {
     id: "msg-1",
     threadId: "t-1",
     channelId: "C-1",
-    channelName: "agent-orchestrator",
+    channelName: "fleet-ops",
     userId: "U-agent1",
-    userName: "Byte",
-    text: "Completed AI-382. PR #716 is ready for review.",
+    userName: "Relay",
+    text: "Completed OPS-382. PR #716 is ready for review.",
     timestamp: "2026-03-30T10:00:00.000Z",
     platform: "slack",
     ...overrides,
@@ -31,7 +31,7 @@ function makeThread(overrides: Partial<Thread> = {}, messages?: Message[]): Thre
   return {
     id: "t-1",
     channelId: "C-1",
-    channelName: "agent-orchestrator",
+    channelName: "fleet-ops",
     platform: "slack",
     workItemId: null,
     lastActivity: "2026-03-30T10:00:00.000Z",
@@ -97,7 +97,7 @@ function createMockGraph(): ContextGraph {
   return {
     upsertAgent: vi.fn().mockReturnValue({
       id: "U-agent1",
-      name: "Byte",
+      name: "Relay",
       platform: "slack",
       platformUserId: "U-agent1",
       role: null,
@@ -127,7 +127,7 @@ function createMockGraph(): ContextGraph {
     upsertThread: vi.fn().mockReturnValue({
       id: "t-1",
       channelId: "C-1",
-      channelName: "agent-orchestrator",
+      channelName: "fleet-ops",
       platform: "slack",
       workItemId: null,
       lastActivity: "2026-03-30T10:00:00.000Z",
@@ -221,7 +221,7 @@ describe("Pipeline", () => {
         thread.messages[0].text,
         expect.any(Array),
         null,
-        { senderName: "Byte", senderType: "unknown", channelName: "agent-orchestrator" },
+        { senderName: "Relay", senderType: "unknown", channelName: "fleet-ops" },
         [],
         [],
         expect.objectContaining({ messages: expect.any(Array) }),
@@ -229,17 +229,17 @@ describe("Pipeline", () => {
     });
 
     it("upserts agent from message metadata", async () => {
-      const msg = makeMessage({ userId: "U-byte", userName: "Byte" });
+      const msg = makeMessage({ userId: "U-relay", userName: "Relay" });
       vi.mocked(adapter.readThreads).mockResolvedValue([makeThread({}, [msg])]);
 
       await pipeline.processOnce();
 
       expect(graph.upsertAgent).toHaveBeenCalledWith(
         expect.objectContaining({
-          id: "U-byte",
-          name: "Byte",
+          id: "U-relay",
+          name: "Relay",
           platform: "slack",
-          platformUserId: "U-byte",
+          platformUserId: "U-relay",
         }),
       );
     });
@@ -290,11 +290,11 @@ describe("Pipeline", () => {
 
     it("updates work item status when confidence is higher", async () => {
       // Linker returns a work item ID
-      vi.mocked(linker.linkMessage).mockReturnValue(["AI-382"]);
+      vi.mocked(linker.linkMessage).mockReturnValue(["OPS-382"]);
 
       // Existing work item has lower confidence
       const existingWi: WorkItem = {
-        id: "AI-382",
+        id: "OPS-382",
         source: "extracted",
         title: "",
         externalStatus: null,
@@ -318,7 +318,7 @@ describe("Pipeline", () => {
 
       expect(graph.upsertWorkItem).toHaveBeenCalledWith(
         expect.objectContaining({
-          id: "AI-382",
+          id: "OPS-382",
           currentAtcStatus: "completed",
           currentConfidence: 0.95,
         }),
@@ -326,10 +326,10 @@ describe("Pipeline", () => {
     });
 
     it("does not update work item status when confidence is lower", async () => {
-      vi.mocked(linker.linkMessage).mockReturnValue(["AI-382"]);
+      vi.mocked(linker.linkMessage).mockReturnValue(["OPS-382"]);
 
       const existingWi: WorkItem = {
-        id: "AI-382",
+        id: "OPS-382",
         source: "extracted",
         title: "",
         externalStatus: null,
@@ -353,7 +353,7 @@ describe("Pipeline", () => {
       // upsertWorkItem should NOT be called with the new status
       const calls = vi.mocked(graph.upsertWorkItem).mock.calls;
       const statusUpdateCalls = calls.filter(
-        (c) => c[0].id === "AI-382" && c[0].currentAtcStatus !== undefined,
+        (c) => c[0].id === "OPS-382" && c[0].currentAtcStatus !== undefined,
       );
       expect(statusUpdateCalls).toHaveLength(0);
     });
@@ -512,10 +512,10 @@ describe("Pipeline", () => {
     it("continues when task adapter enrichment fails", async () => {
       const taskAdapter = createMockTaskAdapter();
       vi.mocked(taskAdapter.getWorkItem).mockRejectedValue(new Error("Jira timeout"));
-      vi.mocked(linker.linkMessage).mockReturnValue(["AI-382"]);
+      vi.mocked(linker.linkMessage).mockReturnValue(["OPS-382"]);
 
       const existingWi: WorkItem = {
-        id: "AI-382",
+        id: "OPS-382",
         source: "extracted",
         title: "",
         externalStatus: null,
@@ -544,18 +544,18 @@ describe("Pipeline", () => {
     it("enriches work items when task adapter returns data", async () => {
       const taskAdapter = createMockTaskAdapter();
       vi.mocked(taskAdapter.getWorkItem).mockResolvedValue({
-        id: "AI-382",
+        id: "OPS-382",
         title: "Fix login bug",
         status: "In Progress",
-        assignee: "byte@agents.com",
-        url: "https://jira.example.com/AI-382",
+        assignee: "relay@agents.com",
+        url: "https://jira.example.com/OPS-382",
         labels: ["bug"],
         description: "Login page crashes on submit",
       });
-      vi.mocked(linker.linkMessage).mockReturnValue(["AI-382"]);
+      vi.mocked(linker.linkMessage).mockReturnValue(["OPS-382"]);
 
       const existingWi: WorkItem = {
-        id: "AI-382",
+        id: "OPS-382",
         source: "extracted",
         title: "",
         externalStatus: null,
@@ -576,7 +576,7 @@ describe("Pipeline", () => {
 
       expect(graph.upsertEnrichment).toHaveBeenCalledWith(
         expect.objectContaining({
-          workItemId: "AI-382",
+          workItemId: "OPS-382",
           source: "mock-jira",
         }),
       );
@@ -584,11 +584,11 @@ describe("Pipeline", () => {
       // Should also update work item with external data
       expect(graph.upsertWorkItem).toHaveBeenCalledWith(
         expect.objectContaining({
-          id: "AI-382",
+          id: "OPS-382",
           title: "Fix login bug",
           externalStatus: "In Progress",
-          assignee: "byte@agents.com",
-          url: "https://jira.example.com/AI-382",
+          assignee: "relay@agents.com",
+          url: "https://jira.example.com/OPS-382",
         }),
       );
     });
@@ -596,10 +596,10 @@ describe("Pipeline", () => {
     it("does not enrich when task adapter returns null", async () => {
       const taskAdapter = createMockTaskAdapter();
       vi.mocked(taskAdapter.getWorkItem).mockResolvedValue(null);
-      vi.mocked(linker.linkMessage).mockReturnValue(["AI-999"]);
+      vi.mocked(linker.linkMessage).mockReturnValue(["OPS-999"]);
 
       const existingWi: WorkItem = {
-        id: "AI-999",
+        id: "OPS-999",
         source: "extracted",
         title: "",
         externalStatus: null,
@@ -635,7 +635,7 @@ describe("Pipeline", () => {
         msg.text,
         expect.any(Array),
         null,
-        { senderName: "Byte", senderType: "unknown", channelName: "agent-orchestrator" },
+        { senderName: "Relay", senderType: "unknown", channelName: "fleet-ops" },
         [],
         [],
         expect.objectContaining({ messages: expect.any(Array) }),
@@ -726,13 +726,13 @@ describe("Pipeline", () => {
 
   describe("thread-to-work-item inheritance", () => {
     it("inherits work item ID from existing thread when message has no ticket", async () => {
-      // Thread already linked to AI-382 in the graph
+      // Thread already linked to OPS-382 in the graph
       vi.mocked(graph.getThreadById).mockReturnValue({
         id: "t-1",
         channelId: "C-1",
-        channelName: "agent-orchestrator",
+        channelName: "fleet-ops",
         platform: "slack",
-        workItemId: "AI-382",
+        workItemId: "OPS-382",
         lastActivity: "2026-03-30T09:00:00.000Z",
         messageCount: 1,
         messages: [],
@@ -751,7 +751,7 @@ describe("Pipeline", () => {
 
       // Set up existing work item so status update path works
       const existingWi: WorkItem = {
-        id: "AI-382",
+        id: "OPS-382",
         source: "extracted",
         title: "Auth refactor",
         externalStatus: null,
@@ -770,53 +770,53 @@ describe("Pipeline", () => {
       // Event should be linked to the inherited work item
       expect(graph.insertEvent).toHaveBeenCalledWith(
         expect.objectContaining({
-          workItemId: "AI-382",
+          workItemId: "OPS-382",
         }),
       );
 
-      // Thread upsert should preserve AI-382 as the work item
+      // Thread upsert should preserve OPS-382 as the work item
       expect(graph.upsertThread).toHaveBeenCalledWith(
         expect.objectContaining({
-          workItemId: "AI-382",
+          workItemId: "OPS-382",
         }),
       );
     });
 
     it("merges inherited work item with newly extracted IDs", async () => {
-      // Thread already linked to AI-382
+      // Thread already linked to OPS-382
       vi.mocked(graph.getThreadById).mockReturnValue({
         id: "t-1",
         channelId: "C-1",
-        channelName: "agent-orchestrator",
+        channelName: "fleet-ops",
         platform: "slack",
-        workItemId: "AI-382",
+        workItemId: "OPS-382",
         lastActivity: "2026-03-30T09:00:00.000Z",
         messageCount: 1,
         messages: [],
       });
 
       // Message mentions a DIFFERENT ticket
-      const msg = makeMessage({ text: "Also related to IT-200" });
+      const msg = makeMessage({ text: "Also related to ENG-200" });
       const thread = makeThread({}, [msg]);
       vi.mocked(adapter.readThreads).mockResolvedValue([thread]);
 
-      vi.mocked(linker.linkMessage).mockReturnValue(["IT-200"]);
+      vi.mocked(linker.linkMessage).mockReturnValue(["ENG-200"]);
       vi.mocked(classifier.classify).mockResolvedValue(
         makeClassification({ status: "in_progress", workItemIds: [] }),
       );
 
       const existingAI382: WorkItem = {
-        id: "AI-382", source: "extracted", title: "Auth refactor",
+        id: "OPS-382", source: "extracted", title: "Auth refactor",
         externalStatus: null, assignee: null, url: null,
         currentAtcStatus: "in_progress", currentConfidence: 0.8,
         snoozedUntil: null, createdAt: "2026-03-29T10:00:00.000Z",
         updatedAt: "2026-03-29T10:00:00.000Z",
       };
-      const existingIT200: WorkItem = { ...existingAI382, id: "IT-200", title: "Related work" };
+      const existingIT200: WorkItem = { ...existingAI382, id: "ENG-200", title: "Related work" };
 
       vi.mocked(graph.getWorkItemById).mockImplementation((id: string) => {
-        if (id === "AI-382") return existingAI382;
-        if (id === "IT-200") return existingIT200;
+        if (id === "OPS-382") return existingAI382;
+        if (id === "ENG-200") return existingIT200;
         return null;
       });
 
@@ -824,29 +824,29 @@ describe("Pipeline", () => {
 
       // Primary (inherited) work item gets status update
       const upsertCalls = vi.mocked(graph.upsertWorkItem).mock.calls;
-      const aiUpdate = upsertCalls.find((c) => c[0].id === "AI-382" && c[0].currentAtcStatus);
+      const aiUpdate = upsertCalls.find((c) => c[0].id === "OPS-382" && c[0].currentAtcStatus);
       expect(aiUpdate).toBeDefined();
 
       // Mentioned item does NOT inherit top-level status (no breakdown entry)
-      const itUpdate = upsertCalls.find((c) => c[0].id === "IT-200" && c[0].currentAtcStatus);
+      const itUpdate = upsertCalls.find((c) => c[0].id === "ENG-200" && c[0].currentAtcStatus);
       expect(itUpdate).toBeUndefined();
 
       // But junction row IS still written for the mentioned item
       expect(graph.linkThreadWorkItem).toHaveBeenCalledWith(
-        expect.anything(), "IT-200", "mentioned",
+        expect.anything(), "ENG-200", "mentioned",
       );
     });
   });
 
   describe("manually linked thread protection", () => {
     it("does not overwrite work_item_id on manually linked threads", async () => {
-      // Thread is manually linked to AI-100
+      // Thread is manually linked to OPS-100
       vi.mocked(graph.getThreadById).mockReturnValue({
         id: "t-1",
         channelId: "C-1",
-        channelName: "agent-orchestrator",
+        channelName: "fleet-ops",
         platform: "slack",
-        workItemId: "AI-100",
+        workItemId: "OPS-100",
         lastActivity: "2026-03-30T09:00:00.000Z",
         messageCount: 1,
         messages: [],
@@ -854,36 +854,36 @@ describe("Pipeline", () => {
       });
 
       // Message mentions a DIFFERENT ticket
-      const msg = makeMessage({ text: "Working on IT-200 now" });
+      const msg = makeMessage({ text: "Working on ENG-200 now" });
       const thread = makeThread({}, [msg]);
       vi.mocked(adapter.readThreads).mockResolvedValue([thread]);
 
-      vi.mocked(linker.linkMessage).mockReturnValue(["IT-200"]);
+      vi.mocked(linker.linkMessage).mockReturnValue(["ENG-200"]);
       vi.mocked(classifier.classify).mockResolvedValue(
         makeClassification({ status: "in_progress", workItemIds: [] }),
       );
 
       const existingAI100: WorkItem = {
-        id: "AI-100", source: "extracted", title: "Manual work",
+        id: "OPS-100", source: "extracted", title: "Manual work",
         externalStatus: null, assignee: null, url: null,
         currentAtcStatus: null, currentConfidence: null,
         snoozedUntil: null, createdAt: "2026-03-29T10:00:00.000Z",
         updatedAt: "2026-03-29T10:00:00.000Z",
       };
-      const existingIT200: WorkItem = { ...existingAI100, id: "IT-200", title: "Other" };
+      const existingIT200: WorkItem = { ...existingAI100, id: "ENG-200", title: "Other" };
 
       vi.mocked(graph.getWorkItemById).mockImplementation((id: string) => {
-        if (id === "AI-100") return existingAI100;
-        if (id === "IT-200") return existingIT200;
+        if (id === "OPS-100") return existingAI100;
+        if (id === "ENG-200") return existingIT200;
         return null;
       });
 
       await pipeline.processOnce();
 
-      // Thread upsert should keep AI-100 (the manually linked ID), NOT IT-200
+      // Thread upsert should keep OPS-100 (the manually linked ID), NOT ENG-200
       expect(graph.upsertThread).toHaveBeenCalledWith(
         expect.objectContaining({
-          workItemId: "AI-100",
+          workItemId: "OPS-100",
         }),
       );
     });
@@ -891,15 +891,15 @@ describe("Pipeline", () => {
 
   describe("work item ID merging", () => {
     it("merges work item IDs from linker and classifier", async () => {
-      // Linker extracts AI-382
-      vi.mocked(linker.linkMessage).mockReturnValue(["AI-382"]);
-      // Classifier also references IT-100
+      // Linker extracts OPS-382
+      vi.mocked(linker.linkMessage).mockReturnValue(["OPS-382"]);
+      // Classifier also references ENG-100
       vi.mocked(classifier.classify).mockResolvedValue(
-        makeClassification({ workItemIds: ["IT-100"] }),
+        makeClassification({ workItemIds: ["ENG-100"] }),
       );
 
       const existingAI382: WorkItem = {
-        id: "AI-382",
+        id: "OPS-382",
         source: "extracted",
         title: "",
         externalStatus: null,
@@ -913,12 +913,12 @@ describe("Pipeline", () => {
       };
       const existingIT100: WorkItem = {
         ...existingAI382,
-        id: "IT-100",
+        id: "ENG-100",
       };
 
       vi.mocked(graph.getWorkItemById).mockImplementation((id: string) => {
-        if (id === "AI-382") return existingAI382;
-        if (id === "IT-100") return existingIT100;
+        if (id === "OPS-382") return existingAI382;
+        if (id === "ENG-100") return existingIT100;
         return null;
       });
 
@@ -929,50 +929,50 @@ describe("Pipeline", () => {
       // Event should reference the primary work item (first from combined set)
       expect(graph.insertEvent).toHaveBeenCalledWith(
         expect.objectContaining({
-          workItemId: "AI-382",
+          workItemId: "OPS-382",
         }),
       );
 
       // Primary work item gets status update
       const upsertCalls = vi.mocked(graph.upsertWorkItem).mock.calls;
-      const aiUpdate = upsertCalls.find((c) => c[0].id === "AI-382" && c[0].currentAtcStatus);
+      const aiUpdate = upsertCalls.find((c) => c[0].id === "OPS-382" && c[0].currentAtcStatus);
       expect(aiUpdate).toBeDefined();
 
       // Mentioned item does NOT inherit top-level status (no breakdown entry)
-      const itUpdate = upsertCalls.find((c) => c[0].id === "IT-100" && c[0].currentAtcStatus);
+      const itUpdate = upsertCalls.find((c) => c[0].id === "ENG-100" && c[0].currentAtcStatus);
       expect(itUpdate).toBeUndefined();
 
       // But junction row IS still written
       expect(graph.linkThreadWorkItem).toHaveBeenCalledWith(
-        expect.anything(), "IT-100", "mentioned",
+        expect.anything(), "ENG-100", "mentioned",
       );
     });
 
     it("updates mentioned item status when breakdown entry exists", async () => {
-      vi.mocked(linker.linkMessage).mockReturnValue(["AI-382"]);
+      vi.mocked(linker.linkMessage).mockReturnValue(["OPS-382"]);
       vi.mocked(classifier.classify).mockResolvedValue(
         makeClassification({
           status: "noise",
-          workItemIds: ["IT-100"],
+          workItemIds: ["ENG-100"],
           breakdown: [
-            { workItemId: "AI-382", status: "completed", confidence: 0.95, reason: "Done", title: "Done", targetedAtOperator: false, actionRequiredFrom: null, nextAction: null },
-            { workItemId: "IT-100", status: "blocked_on_human", confidence: 0.9, reason: "Repo missing", title: "Blocked", targetedAtOperator: true, actionRequiredFrom: [], nextAction: "Confirm status" },
+            { workItemId: "OPS-382", status: "completed", confidence: 0.95, reason: "Done", title: "Done", targetedAtOperator: false, actionRequiredFrom: null, nextAction: null },
+            { workItemId: "ENG-100", status: "blocked_on_human", confidence: 0.9, reason: "Repo missing", title: "Blocked", targetedAtOperator: true, actionRequiredFrom: [], nextAction: "Confirm status" },
           ],
         }),
       );
 
       const existingAI382: WorkItem = {
-        id: "AI-382", source: "extracted", title: "Auth refactor",
+        id: "OPS-382", source: "extracted", title: "Auth refactor",
         externalStatus: null, assignee: null, url: null,
         currentAtcStatus: null, currentConfidence: null,
         snoozedUntil: null, createdAt: "2026-03-29T10:00:00.000Z",
         updatedAt: "2026-03-29T10:00:00.000Z",
       };
-      const existingIT100: WorkItem = { ...existingAI382, id: "IT-100", title: "Other" };
+      const existingIT100: WorkItem = { ...existingAI382, id: "ENG-100", title: "Other" };
 
       vi.mocked(graph.getWorkItemById).mockImplementation((id: string) => {
-        if (id === "AI-382") return existingAI382;
-        if (id === "IT-100") return existingIT100;
+        if (id === "OPS-382") return existingAI382;
+        if (id === "ENG-100") return existingIT100;
         return null;
       });
 
@@ -983,11 +983,11 @@ describe("Pipeline", () => {
       const upsertCalls = vi.mocked(graph.upsertWorkItem).mock.calls;
 
       // Primary gets breakdown status (completed), not top-level (noise)
-      const aiUpdate = upsertCalls.find((c) => c[0].id === "AI-382" && c[0].currentAtcStatus === "completed");
+      const aiUpdate = upsertCalls.find((c) => c[0].id === "OPS-382" && c[0].currentAtcStatus === "completed");
       expect(aiUpdate).toBeDefined();
 
       // Mentioned item gets its own breakdown status (blocked_on_human)
-      const itUpdate = upsertCalls.find((c) => c[0].id === "IT-100" && c[0].currentAtcStatus === "blocked_on_human");
+      const itUpdate = upsertCalls.find((c) => c[0].id === "ENG-100" && c[0].currentAtcStatus === "blocked_on_human");
       expect(itUpdate).toBeDefined();
     });
   });
@@ -1049,7 +1049,7 @@ describe("Pipeline", () => {
         expect.any(String),
         expect.any(Array),
         operatorIdentities,
-        expect.objectContaining({ senderName: "Byte" }),
+        expect.objectContaining({ senderName: "Relay" }),
         [],
         [],
         expect.objectContaining({ messages: expect.any(Array) }),
@@ -1066,7 +1066,7 @@ describe("Pipeline", () => {
         expect.any(String),
         expect.any(Array),
         null,
-        expect.objectContaining({ senderName: "Byte" }),
+        expect.objectContaining({ senderName: "Relay" }),
         [],
         [],
         expect.objectContaining({ messages: expect.any(Array) }),
@@ -1074,7 +1074,7 @@ describe("Pipeline", () => {
     });
 
     it("passes sender context from message metadata", async () => {
-      const msg = makeMessage({ userName: "Pixel", senderType: "agent", channelName: "#design" });
+      const msg = makeMessage({ userName: "Prism", senderType: "agent", channelName: "#design" });
       vi.mocked(adapter.readThreads).mockResolvedValue([makeThread({}, [msg])]);
 
       await pipeline.processOnce();
@@ -1083,7 +1083,7 @@ describe("Pipeline", () => {
         expect.any(String),
         expect.any(Array),
         null,
-        { senderName: "Pixel", senderType: "agent", channelName: "#design" },
+        { senderName: "Prism", senderType: "agent", channelName: "#design" },
         [],
         [],
         expect.objectContaining({ messages: expect.any(Array) }),
@@ -1131,7 +1131,7 @@ describe("Pipeline", () => {
         channelId: "C001",
         channelName: "general",
         userId: "U001",
-        userName: "Byte",
+        userName: "Relay",
         text: "Working on it",
         timestamp: new Date().toISOString(),
         platform: "slack",
@@ -1208,7 +1208,7 @@ describe("Pipeline", () => {
       // Return scored candidates from graph
       (graph as any).findCandidateWorkItems = vi.fn().mockReturnValue([
         { id: "thread:existing.123", title: "Missing API key for Anthropic", score: 7.5, reasons: ["same agent", "keyword overlap: api, key"] },
-        { id: "AI-200", title: "Deploy to staging", score: 3.0, reasons: ["same channel"] },
+        { id: "OPS-200", title: "Deploy to staging", score: 3.0, reasons: ["same channel"] },
       ]);
 
       await pipeline.processOnce();
@@ -1218,10 +1218,10 @@ describe("Pipeline", () => {
         msg.text,
         [
           { id: "thread:existing.123", title: "Missing API key for Anthropic", reasons: ["same agent", "keyword overlap: api, key"] },
-          { id: "AI-200", title: "Deploy to staging", reasons: ["same channel"] },
+          { id: "OPS-200", title: "Deploy to staging", reasons: ["same channel"] },
         ],
         null,
-        expect.objectContaining({ senderName: "Byte" }),
+        expect.objectContaining({ senderName: "Relay" }),
         [],
         [],
         expect.objectContaining({ messages: expect.any(Array) }),
@@ -1231,7 +1231,7 @@ describe("Pipeline", () => {
     it("discards LLM-suggested IDs that don't match configured ticket prefixes", async () => {
       // Create a pipeline with ticket prefixes configured
       const configWithPrefixes = makeConfig({
-        taskAdapter: { enabled: true, ticketPrefixes: ["AI-", "IT-", "MS-"] },
+        taskAdapter: { enabled: true, ticketPrefixes: ["OPS-", "ENG-", "MKT-"] },
       });
       const pipelineWithPrefixes = new Pipeline(adapter, classifier, graph, linker, undefined, configWithPrefixes);
 
@@ -1260,7 +1260,7 @@ describe("Pipeline", () => {
 
     it("accepts LLM-suggested IDs that match configured ticket prefixes", async () => {
       const configWithPrefixes = makeConfig({
-        taskAdapter: { enabled: true, ticketPrefixes: ["AI-", "IT-", "MS-"] },
+        taskAdapter: { enabled: true, ticketPrefixes: ["OPS-", "ENG-", "MKT-"] },
       });
       const pipelineWithPrefixes = new Pipeline(adapter, classifier, graph, linker, undefined, configWithPrefixes);
 
@@ -1268,21 +1268,21 @@ describe("Pipeline", () => {
       const thread = makeThread({}, [msg]);
       vi.mocked(adapter.readThreads).mockResolvedValue([thread]);
 
-      // LLM returns AI-500 — valid prefix
+      // LLM returns OPS-500 — valid prefix
       vi.mocked(classifier.classify).mockResolvedValue(
         makeClassification({
           status: "in_progress",
-          workItemIds: ["AI-500"],
+          workItemIds: ["OPS-500"],
           title: "Deployment in progress",
         }),
       );
 
       await pipelineWithPrefixes.processOnce();
 
-      // AI-500 should have been created as an inferred work item
+      // OPS-500 should have been created as an inferred work item
       const upsertWorkItemCalls = vi.mocked(graph.upsertWorkItem).mock.calls;
       const createdIds = upsertWorkItemCalls.map((c: any[]) => c[0].id);
-      expect(createdIds).toContain("AI-500");
+      expect(createdIds).toContain("OPS-500");
     });
 
     it("links thread to existing work item when classifier returns existing ID", async () => {
@@ -1351,13 +1351,13 @@ describe("Pipeline", () => {
 
   describe("junction rows and no breakdown events", () => {
     it("writes a primary junction row for the primary work item", async () => {
-      vi.mocked(linker.linkMessage).mockReturnValue(["AI-382"]);
+      vi.mocked(linker.linkMessage).mockReturnValue(["OPS-382"]);
       vi.mocked(classifier.classify).mockResolvedValue(
         makeClassification({ status: "completed", workItemIds: [] }),
       );
 
       const existingWi: WorkItem = {
-        id: "AI-382",
+        id: "OPS-382",
         source: "extracted",
         title: "",
         externalStatus: null,
@@ -1374,11 +1374,11 @@ describe("Pipeline", () => {
 
       await pipeline.processOnce();
 
-      expect(graph.linkThreadWorkItem).toHaveBeenCalledWith("t-1", "AI-382", "primary");
+      expect(graph.linkThreadWorkItem).toHaveBeenCalledWith("t-1", "OPS-382", "primary");
     });
 
     it("writes mentioned junction rows for secondary work items", async () => {
-      vi.mocked(linker.linkMessage).mockReturnValue(["AI-382", "IT-200"]);
+      vi.mocked(linker.linkMessage).mockReturnValue(["OPS-382", "ENG-200"]);
       vi.mocked(classifier.classify).mockResolvedValue(
         makeClassification({ status: "in_progress", workItemIds: [] }),
       );
@@ -1401,34 +1401,34 @@ describe("Pipeline", () => {
 
       await pipeline.processOnce();
 
-      expect(graph.linkThreadWorkItem).toHaveBeenCalledWith("t-1", "AI-382", "primary");
-      expect(graph.linkThreadWorkItem).toHaveBeenCalledWith("t-1", "IT-200", "mentioned");
+      expect(graph.linkThreadWorkItem).toHaveBeenCalledWith("t-1", "OPS-382", "primary");
+      expect(graph.linkThreadWorkItem).toHaveBeenCalledWith("t-1", "ENG-200", "mentioned");
     });
 
     it("does not create breakdown events (no insertEvent calls with composite messageId)", async () => {
-      vi.mocked(linker.linkMessage).mockReturnValue(["AI-382", "IT-200"]);
+      vi.mocked(linker.linkMessage).mockReturnValue(["OPS-382", "ENG-200"]);
 
       const breakdownClassification = makeClassification({
         status: "completed",
-        workItemIds: ["AI-382", "IT-200"],
+        workItemIds: ["OPS-382", "ENG-200"],
         breakdown: [
           {
-            workItemId: "AI-382",
+            workItemId: "OPS-382",
             status: "completed",
             entryType: "progress",
             confidence: 0.95,
-            reason: "AI-382 is done",
+            reason: "OPS-382 is done",
             title: "Auth refactor",
             targetedAtOperator: false,
             actionRequiredFrom: null,
             nextAction: null,
           },
           {
-            workItemId: "IT-200",
+            workItemId: "ENG-200",
             status: "blocked_on_human",
             entryType: "request",
             confidence: 0.9,
-            reason: "IT-200 needs review",
+            reason: "ENG-200 needs review",
             title: "Related work",
             targetedAtOperator: true,
             actionRequiredFrom: ["U-operator"],
@@ -1456,7 +1456,7 @@ describe("Pipeline", () => {
 
       await pipeline.processOnce();
 
-      // No insertEvent calls should have a composite messageId (e.g. "msg-1:AI-382")
+      // No insertEvent calls should have a composite messageId (e.g. "msg-1:OPS-382")
       const insertEventCalls = vi.mocked(graph.insertEvent).mock.calls;
       const compositeIdCalls = insertEventCalls.filter((c) =>
         typeof c[0].messageId === "string" && c[0].messageId.includes(":"),
@@ -1464,8 +1464,8 @@ describe("Pipeline", () => {
       expect(compositeIdCalls).toHaveLength(0);
 
       // Junction rows should have been written for both work items
-      expect(graph.linkThreadWorkItem).toHaveBeenCalledWith("t-1", "AI-382", "primary");
-      expect(graph.linkThreadWorkItem).toHaveBeenCalledWith("t-1", "IT-200", "mentioned");
+      expect(graph.linkThreadWorkItem).toHaveBeenCalledWith("t-1", "OPS-382", "primary");
+      expect(graph.linkThreadWorkItem).toHaveBeenCalledWith("t-1", "ENG-200", "mentioned");
     });
   });
 

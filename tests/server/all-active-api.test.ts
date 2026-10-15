@@ -40,7 +40,7 @@ describe("GET /api/stream/all-active", () => {
   });
 
   function seedItem(id: string, status: string, targeted: boolean) {
-    graph.upsertAgent({ id: "agent-1", name: "Byte", platform: "slack", platformUserId: "U001" });
+    graph.upsertAgent({ id: "agent-1", name: "Relay", platform: "slack", platformUserId: "U001" });
     graph.upsertWorkItem({ id, source: "jira", title: `Item ${id}`, currentAtcStatus: status as any });
     graph.upsertThread({ id: `T-${id}`, channelId: "C001", channelName: "general", platform: "slack", workItemId: id });
     graph.insertEvent({
@@ -52,11 +52,11 @@ describe("GET /api/stream/all-active", () => {
   }
 
   it("returns all non-completed, non-noise items regardless of targetedAtOperator", async () => {
-    seedItem("AI-1", "blocked_on_human", true);
-    seedItem("AI-2", "in_progress", false);
-    seedItem("AI-3", "completed", false);
-    seedItem("AI-4", "noise", false);
-    seedItem("AI-5", "needs_decision", true);
+    seedItem("OPS-1", "blocked_on_human", true);
+    seedItem("OPS-2", "in_progress", false);
+    seedItem("OPS-3", "completed", false);
+    seedItem("OPS-4", "noise", false);
+    seedItem("OPS-5", "needs_decision", true);
 
     const state = makeState(graph, db);
     const app = createApp(state);
@@ -64,18 +64,18 @@ describe("GET /api/stream/all-active", () => {
 
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body.items).toHaveLength(3); // AI-1, AI-2, AI-5 (not completed, not noise)
+    expect(body.items).toHaveLength(3); // OPS-1, OPS-2, OPS-5 (not completed, not noise)
     const ids = body.items.map((i: any) => i.workItem.id);
-    expect(ids).toContain("AI-1");
-    expect(ids).toContain("AI-2");
-    expect(ids).toContain("AI-5");
-    expect(ids).not.toContain("AI-3");
-    expect(ids).not.toContain("AI-4");
+    expect(ids).toContain("OPS-1");
+    expect(ids).toContain("OPS-2");
+    expect(ids).toContain("OPS-5");
+    expect(ids).not.toContain("OPS-3");
+    expect(ids).not.toContain("OPS-4");
   });
 
   it("includes pinned field on items", async () => {
-    seedItem("AI-1", "in_progress", false);
-    graph.togglePin("AI-1");
+    seedItem("OPS-1", "in_progress", false);
+    graph.togglePin("OPS-1");
 
     const state = makeState(graph, db);
     const app = createApp(state);

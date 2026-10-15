@@ -24,8 +24,8 @@ function failingProvider(error: Error): ModelProvider {
 
 const SYSTEM_PROMPT = "You are a status classifier.";
 const FEW_SHOT: Array<{ role: string; content: string }> = [
-  { role: "user", content: "AI-382 is done" },
-  { role: "assistant", content: '{"status":"completed","confidence":0.95,"reason":"done","workItemIds":["AI-382"]}' },
+  { role: "user", content: "OPS-382 is done" },
+  { role: "assistant", content: '{"status":"completed","confidence":0.95,"reason":"done","workItemIds":["OPS-382"]}' },
 ];
 
 // --- Classifier orchestrator tests ---
@@ -36,16 +36,16 @@ describe("Classifier", () => {
       status: "completed",
       confidence: 0.95,
       reason: "Agent said done",
-      workItemIds: ["AI-382"],
+      workItemIds: ["OPS-382"],
     });
     const classifier = new Classifier(provider, SYSTEM_PROMPT, FEW_SHOT);
 
-    const result = await classifier.classify("AI-382: PR merged and deployed.");
+    const result = await classifier.classify("OPS-382: PR merged and deployed.");
 
     expect(result.status).toBe("completed");
     expect(result.confidence).toBe(0.95);
     expect(result.reason).toBe("Agent said done");
-    expect(result.workItemIds).toEqual(["AI-382"]);
+    expect(result.workItemIds).toEqual(["OPS-382"]);
   });
 
   it("passes system prompt and few-shot examples to the provider", async () => {
@@ -109,7 +109,7 @@ describe("Classifier", () => {
     const provider = failingProvider(new Error("API timeout"));
     const classifier = new Classifier(provider, SYSTEM_PROMPT, FEW_SHOT);
 
-    const result = await classifier.classify("AI-100 is done");
+    const result = await classifier.classify("OPS-100 is done");
 
     expect(result.status).toBe("noise");
     expect(result.confidence).toBe(0.1);
@@ -122,11 +122,11 @@ describe("Classifier", () => {
       status: "noise",
       confidence: 0.9,
       reason: "Morning summary",
-      workItemIds: ["AI-382", "IT-205"],
+      workItemIds: ["OPS-382", "ENG-205"],
       title: "Morning briefing",
       breakdown: [
-        { workItemId: "AI-382", status: "completed", confidence: 0.95, reason: "PR merged", title: "PR done" },
-        { workItemId: "IT-205", status: "invalid_status", confidence: 1.5, reason: "Bad status", title: "Test" },
+        { workItemId: "OPS-382", status: "completed", confidence: 0.95, reason: "PR merged", title: "PR done" },
+        { workItemId: "ENG-205", status: "invalid_status", confidence: 1.5, reason: "Bad status", title: "Test" },
       ],
     });
     const classifier = new Classifier(provider, SYSTEM_PROMPT, FEW_SHOT);
@@ -169,7 +169,7 @@ describe("Classifier", () => {
 
     const context = [
       { id: "thread:existing.123", title: "Missing API key for Anthropic" },
-      { id: "AI-100", title: "Fix login bug" },
+      { id: "OPS-100", title: "Fix login bug" },
     ];
 
     await classifier.classify("Missing API key error again", context);
@@ -179,7 +179,7 @@ describe("Classifier", () => {
     const userTurn = callArgs[0] as string;
     expect(userTurn).toContain("thread:existing.123");
     expect(userTurn).toContain("Missing API key for Anthropic");
-    expect(userTurn).toContain("AI-100");
+    expect(userTurn).toContain("OPS-100");
     expect(userTurn).toContain("Fix login bug");
     expect(userTurn).toContain("## New Message to Classify\n\nMissing API key error again");
     expect(callArgs[1]).toBe(SYSTEM_PROMPT);
@@ -208,22 +208,22 @@ describe("Classifier", () => {
       status: "in_progress",
       confidence: 0.9,
       reason: "continuation",
-      workItemIds: ["AI-382"],
+      workItemIds: ["OPS-382"],
     });
     const classifier = new Classifier(provider, SYSTEM_PROMPT, FEW_SHOT);
 
     const channelContext = [
       {
-        workItemId: "AI-382",
+        workItemId: "OPS-382",
         workItemTitle: "Deploy new auth service",
-        senderName: "Byte",
+        senderName: "Relay",
         text: "Starting the deployment now",
         timestamp: new Date(Date.now() - 5 * 60 * 1000).toISOString(), // 5 minutes ago
       },
       {
-        workItemId: "IT-205",
+        workItemId: "ENG-205",
         workItemTitle: "Fix login bug",
-        senderName: "Pixel",
+        senderName: "Prism",
         text: "Login issue is resolved",
         timestamp: new Date(Date.now() - 30 * 60 * 1000).toISOString(), // 30 minutes ago
       },
@@ -242,11 +242,11 @@ describe("Classifier", () => {
     const userTurn = callArgs[0] as string;
     expect(userTurn).toContain("Recent Messages from the Same Channel");
     expect(userTurn).toContain("Starting the deployment now");
-    expect(userTurn).toContain("AI-382");
-    expect(userTurn).toContain("Byte");
+    expect(userTurn).toContain("OPS-382");
+    expect(userTurn).toContain("Relay");
     expect(userTurn).toContain("Login issue is resolved");
-    expect(userTurn).toContain("IT-205");
-    expect(userTurn).toContain("Pixel");
+    expect(userTurn).toContain("ENG-205");
+    expect(userTurn).toContain("Prism");
   });
 
   it("does not include channel context section when channelContext is empty or undefined", async () => {
@@ -291,7 +291,7 @@ describe("action_required_from → targetedAtOperator (with OperatorIdentityMap)
       status: "blocked_on_human",
       confidence: 0.9,
       reason: "Needs operator review",
-      workItemIds: ["AI-100"],
+      workItemIds: ["OPS-100"],
       title: "Review needed",
       action_required_from: ["U0OPERATOR1"],
       next_action: "Review and approve the PR",
@@ -309,7 +309,7 @@ describe("action_required_from → targetedAtOperator (with OperatorIdentityMap)
       status: "blocked_on_human",
       confidence: 0.9,
       reason: "Needs operator review",
-      workItemIds: ["AI-100"],
+      workItemIds: ["OPS-100"],
       title: "Review needed",
       action_required_from: ["operator@example.com"],
       next_action: "Review the ticket",
@@ -325,7 +325,7 @@ describe("action_required_from → targetedAtOperator (with OperatorIdentityMap)
       status: "blocked_on_human",
       confidence: 0.9,
       reason: "Needs Dana to review",
-      workItemIds: ["AI-100"],
+      workItemIds: ["OPS-100"],
       title: "Review needed",
       action_required_from: ["U0TEAMMATE1"],
       next_action: "Dana should review",
@@ -341,7 +341,7 @@ describe("action_required_from → targetedAtOperator (with OperatorIdentityMap)
       status: "in_progress",
       confidence: 0.9,
       reason: "Agent working",
-      workItemIds: ["AI-100"],
+      workItemIds: ["OPS-100"],
       title: "In progress",
       action_required_from: null,
       next_action: null,
@@ -374,7 +374,7 @@ describe("action_required_from → targetedAtOperator (with OperatorIdentityMap)
       status: "blocked_on_human",
       confidence: 0.9,
       reason: "Blocked on infra",
-      workItemIds: ["AI-100"],
+      workItemIds: ["OPS-100"],
       title: "IAM permissions",
       action_required_from: [],
       next_action: "Fix IAM role",
@@ -391,7 +391,7 @@ describe("action_required_from → targetedAtOperator (with OperatorIdentityMap)
       status: "blocked_on_human",
       confidence: 0.9,
       reason: "Waiting for client",
-      workItemIds: ["IT-200"],
+      workItemIds: ["ENG-200"],
       title: "Client credentials",
       action_required_from: [],
       next_action: "Client provides API key",
@@ -409,7 +409,7 @@ describe("action_required_from → targetedAtOperator (with OperatorIdentityMap)
       status: "blocked_on_human",
       confidence: 0.9,
       reason: "Blocked on something",
-      workItemIds: ["AI-100"],
+      workItemIds: ["OPS-100"],
       title: "Blocked",
       action_required_from: [],
       next_action: "Resolve block",
@@ -425,7 +425,7 @@ describe("action_required_from → targetedAtOperator (with OperatorIdentityMap)
       status: "blocked_on_human",
       confidence: 0.9,
       reason: "Needs review",
-      workItemIds: ["AI-100"],
+      workItemIds: ["OPS-100"],
       title: "Review",
       targeted_at_operator: false,
     });
@@ -441,7 +441,7 @@ describe("action_required_from → targetedAtOperator (with OperatorIdentityMap)
       status: "blocked_on_human",
       confidence: 0.9,
       reason: "Needs multiple reviewers",
-      workItemIds: ["AI-100"],
+      workItemIds: ["OPS-100"],
       title: "Multi-review needed",
       action_required_from: ["U0TEAMMATE1", "U0OPERATOR1", "UOTHERUSER"],
       next_action: "Multiple people need to review",
@@ -459,7 +459,7 @@ describe("action_required_from → targetedAtOperator (with OperatorIdentityMap)
       status: "blocked_on_human",
       confidence: 0.9,
       reason: "Needs human review",
-      workItemIds: ["AI-100"],
+      workItemIds: ["OPS-100"],
       title: "Review needed",
       targeted_at_operator: true,
     });
@@ -475,7 +475,7 @@ describe("action_required_from → targetedAtOperator (with OperatorIdentityMap)
       status: "blocked_on_human",
       confidence: 0.9,
       reason: "Needs someone else",
-      workItemIds: ["AI-100"],
+      workItemIds: ["OPS-100"],
       title: "Review needed",
       targeted_at_operator: false,
     });
@@ -495,13 +495,13 @@ describe("thread context", () => {
     const classifier = new Classifier(provider, SYSTEM_PROMPT, FEW_SHOT);
     await classifier.classify("approved, go ahead", undefined, undefined, undefined, undefined, undefined, {
       workItem: { id: "thread:1777", title: "Partner outreach email", status: null },
-      messages: [{ senderName: "Norma", text: "Draft ready for review" }],
+      messages: [{ senderName: "Echo", text: "Draft ready for review" }],
     });
     const userTurn = (provider.classify as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
     expect(userTurn).toContain("## This Thread");
     expect(userTurn).toContain('a thread about "Partner outreach email"');
     expect(userTurn).not.toContain("thread:1777");
-    expect(userTurn).toContain('- [Norma] "Draft ready for review"');
+    expect(userTurn).toContain('- [Echo] "Draft ready for review"');
   });
 });
 
@@ -576,15 +576,15 @@ describe("Operator profile and sender context", () => {
     const classifier = new Classifier(provider, SYSTEM_PROMPT, FEW_SHOT, undefined, undefined, OPERATOR_MAP);
 
     await classifier.classify("Need help", undefined, undefined, {
-      senderName: "Byte",
+      senderName: "Relay",
       senderType: "agent",
-      channelName: "#agent-orchestrator",
+      channelName: "#fleet-ops",
     });
 
     const callArgs = (provider.classify as ReturnType<typeof vi.fn>).mock.calls[0];
     const messageText = callArgs[0] as string;
-    expect(messageText).toContain("[Sender: Byte (agent)");
-    expect(messageText).toContain("Channel: #agent-orchestrator]");
+    expect(messageText).toContain("[Sender: Relay (agent)");
+    expect(messageText).toContain("Channel: #fleet-ops]");
   });
 
   it("does not prepend sender context when not provided", async () => {
@@ -631,7 +631,7 @@ describe("OpenAICompatibleProvider", () => {
       status: "completed",
       confidence: 0.95,
       reason: "Task done",
-      workItemIds: ["AI-100"],
+      workItemIds: ["OPS-100"],
       title: "Task completion",
     };
 
@@ -651,7 +651,7 @@ describe("OpenAICompatibleProvider", () => {
       apiKey: "test-key",
     });
 
-    const result = await provider.classify("AI-100 is done", "System prompt", []);
+    const result = await provider.classify("OPS-100 is done", "System prompt", []);
 
     expect(result).toEqual({ ...mockResponse, action_required_from: null, next_action: null });
     expect(fetchSpy).toHaveBeenCalledTimes(1);
@@ -663,7 +663,7 @@ describe("OpenAICompatibleProvider", () => {
     expect(body.temperature).toBe(0);
     expect(body.messages[0].role).toBe("system");
     expect(body.messages[0].content).toBe("System prompt");
-    expect(body.messages[body.messages.length - 1].content).toBe("AI-100 is done");
+    expect(body.messages[body.messages.length - 1].content).toBe("OPS-100 is done");
 
     fetchSpy.mockRestore();
   });
@@ -673,7 +673,7 @@ describe("OpenAICompatibleProvider", () => {
       status: "blocked_on_human",
       confidence: 0.9,
       reason: "Needs approval",
-      workItemIds: ["IT-200"],
+      workItemIds: ["ENG-200"],
       title: "Approval needed",
     };
 
@@ -693,7 +693,7 @@ describe("OpenAICompatibleProvider", () => {
       apiKey: "sk-ant-test",
     });
 
-    const result = await provider.classify("Need approval for IT-200", "System prompt", []);
+    const result = await provider.classify("Need approval for ENG-200", "System prompt", []);
 
     expect(result).toEqual({ ...mockResponse, action_required_from: null, next_action: null });
 
@@ -764,7 +764,7 @@ describe("OpenAICompatibleProvider", () => {
   });
 
   it("handles markdown-wrapped JSON response", async () => {
-    const jsonContent = '{"status":"completed","confidence":0.9,"reason":"done","workItemIds":["AI-1"]}';
+    const jsonContent = '{"status":"completed","confidence":0.9,"reason":"done","workItemIds":["OPS-1"]}';
     const wrappedContent = "```json\n" + jsonContent + "\n```";
 
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
@@ -784,7 +784,7 @@ describe("OpenAICompatibleProvider", () => {
 
     const result = await provider.classify("test", "sys", []);
     expect(result.status).toBe("completed");
-    expect(result.workItemIds).toEqual(["AI-1"]);
+    expect(result.workItemIds).toEqual(["OPS-1"]);
 
     fetchSpy.mockRestore();
   });
@@ -831,7 +831,7 @@ describe("OpenAICompatibleProvider", () => {
       status: "completed",
       confidence: 0.9,
       reason: "done",
-      workItemIds: ["AI-1"],
+      workItemIds: ["OPS-1"],
       title: "Task done",
     };
 
@@ -891,11 +891,11 @@ describe("OpenAICompatibleProvider", () => {
       status: "noise",
       confidence: 0.9,
       reason: "Morning summary",
-      workItemIds: ["AI-382", "IT-205"],
+      workItemIds: ["OPS-382", "ENG-205"],
       title: "Morning briefing",
       breakdown: [
-        { workItemId: "AI-382", status: "completed", confidence: 0.95, reason: "PR merged", title: "PR deployment" },
-        { workItemId: "IT-205", status: "blocked_on_human", confidence: 0.9, reason: "Waiting on creds", title: "API credentials needed" },
+        { workItemId: "OPS-382", status: "completed", confidence: 0.95, reason: "PR merged", title: "PR deployment" },
+        { workItemId: "ENG-205", status: "blocked_on_human", confidence: 0.9, reason: "Waiting on creds", title: "API credentials needed" },
       ],
     };
 
@@ -918,7 +918,7 @@ describe("OpenAICompatibleProvider", () => {
     expect(result.status).toBe("noise");
     expect(result.breakdown).toHaveLength(2);
     expect(result.breakdown![0]).toEqual({
-      workItemId: "AI-382",
+      workItemId: "OPS-382",
       status: "completed",
       confidence: 0.95,
       reason: "PR merged",
@@ -936,7 +936,7 @@ describe("OpenAICompatibleProvider", () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
       new Response(
         JSON.stringify({
-          choices: [{ message: { content: '{"status":"completed","confidence":0.9,"reason":"done","workItemIds":["AI-1"],"title":"Done"}' } }],
+          choices: [{ message: { content: '{"status":"completed","confidence":0.9,"reason":"done","workItemIds":["OPS-1"],"title":"Done"}' } }],
         }),
         { status: 200 },
       ),
@@ -948,7 +948,7 @@ describe("OpenAICompatibleProvider", () => {
       model: "llama3",
     });
 
-    const result = await provider.classify("AI-1 is done", "sys", []);
+    const result = await provider.classify("OPS-1 is done", "sys", []);
     expect(result.breakdown).toBeUndefined();
 
     fetchSpy.mockRestore();
@@ -959,7 +959,7 @@ describe("OpenAICompatibleProvider", () => {
       status: "blocked_on_human",
       confidence: 0.9,
       reason: "Waiting for Dana to review",
-      workItemIds: ["AI-100"],
+      workItemIds: ["OPS-100"],
       title: "PR review needed",
       action_required_from: ["U0TEAMMATE1"],
       next_action: "Review and approve PR #716",

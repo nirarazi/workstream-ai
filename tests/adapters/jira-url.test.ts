@@ -27,7 +27,7 @@ function makeJiraIssue(key: string, overrides: Record<string, unknown> = {}) {
     fields: {
       summary: `Test issue ${key}`,
       status: { name: "In Progress" },
-      assignee: { displayName: "Agent Byte" },
+      assignee: { displayName: "Agent Relay" },
       labels: ["backend"],
       description: null,
       ...overrides,
@@ -61,13 +61,13 @@ describe("Jira adapter — work item URL generation", () => {
   });
 
   it("produces browse URL, not REST API URL", async () => {
-    const issue = makeJiraIssue("AI-382");
+    const issue = makeJiraIssue("OPS-382");
     mockFetch.mockResolvedValueOnce(jsonResponse(issue));
 
-    const item = await adapter.getWorkItem("AI-382");
+    const item = await adapter.getWorkItem("OPS-382");
 
     expect(item).not.toBeNull();
-    expect(item!.url).toBe("https://jira.example.com/browse/AI-382");
+    expect(item!.url).toBe("https://jira.example.com/browse/OPS-382");
     // Confirm it does NOT use the REST self link
     expect(item!.url).not.toContain("/rest/api/");
   });
@@ -83,13 +83,13 @@ describe("Jira adapter — work item URL generation", () => {
       token: "dGVzdDp0b2tlbg==",
     });
 
-    const issue = makeJiraIssue("IT-100");
+    const issue = makeJiraIssue("ENG-100");
     mockFetch.mockResolvedValueOnce(jsonResponse(issue));
 
-    const item = await adapter2.getWorkItem("IT-100");
+    const item = await adapter2.getWorkItem("ENG-100");
 
     expect(item).not.toBeNull();
-    expect(item!.url).toBe("https://mycompany.atlassian.net/browse/IT-100");
+    expect(item!.url).toBe("https://mycompany.atlassian.net/browse/ENG-100");
   });
 
   it("strips trailing slash from baseUrl in the browse URL", async () => {
@@ -102,34 +102,34 @@ describe("Jira adapter — work item URL generation", () => {
       token: "dGVzdDp0b2tlbg==",
     });
 
-    const issue = makeJiraIssue("MS-50");
+    const issue = makeJiraIssue("MKT-50");
     mockFetch.mockResolvedValueOnce(jsonResponse(issue));
 
-    const item = await adapter3.getWorkItem("MS-50");
+    const item = await adapter3.getWorkItem("MKT-50");
 
     expect(item).not.toBeNull();
     // The adapter strips trailing slashes during connect(), so URL is clean
-    expect(item!.url).toBe("https://jira.example.com/browse/MS-50");
+    expect(item!.url).toBe("https://jira.example.com/browse/MKT-50");
   });
 
   it("maps all core fields correctly alongside the URL", async () => {
-    const issue = makeJiraIssue("AI-500", {
+    const issue = makeJiraIssue("OPS-500", {
       summary: "Implement feature X",
       status: { name: "Done" },
-      assignee: { displayName: "Byte" },
+      assignee: { displayName: "Relay" },
       labels: ["frontend", "urgent"],
     });
     mockFetch.mockResolvedValueOnce(jsonResponse(issue));
 
-    const item = await adapter.getWorkItem("AI-500");
+    const item = await adapter.getWorkItem("OPS-500");
 
     expect(item).not.toBeNull();
-    expect(item!.id).toBe("AI-500");
+    expect(item!.id).toBe("OPS-500");
     expect(item!.title).toBe("Implement feature X");
     expect(item!.status).toBe("Done");
-    expect(item!.assignee).toBe("Byte");
+    expect(item!.assignee).toBe("Relay");
     expect(item!.labels).toEqual(["frontend", "urgent"]);
-    expect(item!.url).toBe("https://jira.example.com/browse/AI-500");
+    expect(item!.url).toBe("https://jira.example.com/browse/OPS-500");
   });
 
   it("returns null for 404 responses", async () => {

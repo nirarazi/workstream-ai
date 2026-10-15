@@ -58,13 +58,13 @@ describe("Stream", () => {
   describe("buildUnifiedStatus", () => {
     it("shows waiting time for blocked items with neutral label when actor unknown", () => {
       const workItem: WorkItem = {
-        id: "AI-100", source: "jira", title: "Test",
+        id: "OPS-100", source: "jira", title: "Test",
         externalStatus: null, assignee: null, url: null,
         currentAtcStatus: "blocked_on_human", currentConfidence: 0.9,
         snoozedUntil: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
       };
       const blockEvent: Event = {
-        id: "e1", threadId: "t1", messageId: "m1", workItemId: "AI-100",
+        id: "e1", threadId: "t1", messageId: "m1", workItemId: "OPS-100",
         agentId: "a1", status: "blocked_on_human", confidence: 0.9,
         reason: "Needs approval", rawText: "Please approve",
         timestamp: new Date(Date.now() - 130 * 60000).toISOString(),
@@ -79,7 +79,7 @@ describe("Stream", () => {
 
     it("shows label without time for in_progress items", () => {
       const workItem: WorkItem = {
-        id: "AI-100", source: "jira", title: "Test",
+        id: "OPS-100", source: "jira", title: "Test",
         externalStatus: null, assignee: null, url: null,
         currentAtcStatus: "in_progress", currentConfidence: 0.9,
         snoozedUntil: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
@@ -91,14 +91,14 @@ describe("Stream", () => {
   describe("buildTimeline", () => {
     it("filters noise and preserves oldest-first input order", () => {
       const events: Event[] = [
-        { id: "e1", threadId: "t1", messageId: "m1", workItemId: "AI-100", agentId: "a1", status: "in_progress", confidence: 0.9, reason: "Started work", rawText: "Starting", timestamp: "2026-04-15T10:00:00Z", createdAt: "2026-04-15T10:00:00Z", entryType: "progress", targetedAtOperator: true, actionRequiredFrom: null, nextAction: null },
-        { id: "e2", threadId: "t1", messageId: "m2", workItemId: "AI-100", agentId: "a1", status: "noise", confidence: 0.8, reason: "Status update", rawText: "Still working", timestamp: "2026-04-15T11:00:00Z", createdAt: "2026-04-15T11:00:00Z", entryType: "noise", targetedAtOperator: true, actionRequiredFrom: null, nextAction: null },
-        { id: "e3", threadId: "t2", messageId: "m3", workItemId: "AI-100", agentId: null, status: "completed", confidence: 1.0, reason: "Operator approved", rawText: "Looks good", timestamp: "2026-04-15T12:00:00Z", createdAt: "2026-04-15T12:00:00Z", entryType: "decision", targetedAtOperator: true, actionRequiredFrom: null, nextAction: null },
+        { id: "e1", threadId: "t1", messageId: "m1", workItemId: "OPS-100", agentId: "a1", status: "in_progress", confidence: 0.9, reason: "Started work", rawText: "Starting", timestamp: "2026-04-15T10:00:00Z", createdAt: "2026-04-15T10:00:00Z", entryType: "progress", targetedAtOperator: true, actionRequiredFrom: null, nextAction: null },
+        { id: "e2", threadId: "t1", messageId: "m2", workItemId: "OPS-100", agentId: "a1", status: "noise", confidence: 0.8, reason: "Status update", rawText: "Still working", timestamp: "2026-04-15T11:00:00Z", createdAt: "2026-04-15T11:00:00Z", entryType: "noise", targetedAtOperator: true, actionRequiredFrom: null, nextAction: null },
+        { id: "e3", threadId: "t2", messageId: "m3", workItemId: "OPS-100", agentId: null, status: "completed", confidence: 1.0, reason: "Operator approved", rawText: "Looks good", timestamp: "2026-04-15T12:00:00Z", createdAt: "2026-04-15T12:00:00Z", entryType: "decision", targetedAtOperator: true, actionRequiredFrom: null, nextAction: null },
       ];
-      const agentMap = new Map([["a1", "Byte"]]);
+      const agentMap = new Map([["a1", "Relay"]]);
       const agentAvatarMap = new Map<string, string | null>([["a1", null]]);
       const threadChannelMap = new Map([
-        ["t1", { channelId: "C1", channelName: "#agent-orchestrator" }],
+        ["t1", { channelId: "C1", channelName: "#fleet-ops" }],
         ["t2", { channelId: "C2", channelName: "#strategy" }],
       ]);
       const threadPlatformMap = new Map([["t1", "slack"], ["t2", "slack"]]);
@@ -106,7 +106,7 @@ describe("Stream", () => {
       expect(timeline).toHaveLength(2);
       // Oldest-first: progress (10:00) comes before decision (12:00)
       expect(timeline[0].entryType).toBe("progress");
-      expect(timeline[0].agentName).toBe("Byte");
+      expect(timeline[0].agentName).toBe("Relay");
       expect(timeline[1].entryType).toBe("decision");
       expect(timeline[1].isOperator).toBe(true);
       expect(timeline[1].channelName).toBe("#strategy");
@@ -116,30 +116,30 @@ describe("Stream", () => {
   describe("targetedAtOperator filtering", () => {
     it("filters inbox items by targetedAtOperator", () => {
       // Set up agents
-      graph.upsertAgent({ id: "a1", name: "Byte", platform: "slack", platformUserId: "U1" });
+      graph.upsertAgent({ id: "a1", name: "Relay", platform: "slack", platformUserId: "U1" });
 
       // Work item blocked on operator (targeted_at_operator = true)
       graph.upsertWorkItem({
-        id: "AI-1", source: "jira", title: "Needs operator approval",
+        id: "OPS-1", source: "jira", title: "Needs operator approval",
         currentAtcStatus: "blocked_on_human", currentConfidence: 0.9,
       });
-      graph.upsertThread({ id: "t1", channelId: "C1", platform: "slack", workItemId: "AI-1" });
-      graph.linkThreadWorkItem("t1", "AI-1", "primary");
+      graph.upsertThread({ id: "t1", channelId: "C1", platform: "slack", workItemId: "OPS-1" });
+      graph.linkThreadWorkItem("t1", "OPS-1", "primary");
       graph.insertEvent({
-        threadId: "t1", messageId: "m1", workItemId: "AI-1", agentId: "a1",
+        threadId: "t1", messageId: "m1", workItemId: "OPS-1", agentId: "a1",
         status: "blocked_on_human", confidence: 0.9, reason: "Needs operator approval",
         timestamp: "2026-04-15T10:00:00Z", targetedAtOperator: true,
       });
 
       // Work item blocked on someone else (targeted_at_operator = false)
       graph.upsertWorkItem({
-        id: "AI-2", source: "jira", title: "Blocked on Dana",
+        id: "OPS-2", source: "jira", title: "Blocked on Dana",
         currentAtcStatus: "blocked_on_human", currentConfidence: 0.85,
       });
-      graph.upsertThread({ id: "t2", channelId: "C1", platform: "slack", workItemId: "AI-2" });
-      graph.linkThreadWorkItem("t2", "AI-2", "primary");
+      graph.upsertThread({ id: "t2", channelId: "C1", platform: "slack", workItemId: "OPS-2" });
+      graph.linkThreadWorkItem("t2", "OPS-2", "primary");
       graph.insertEvent({
-        threadId: "t2", messageId: "m2", workItemId: "AI-2", agentId: "a1",
+        threadId: "t2", messageId: "m2", workItemId: "OPS-2", agentId: "a1",
         status: "blocked_on_human", confidence: 0.85, reason: "Blocked on Dana's review",
         timestamp: "2026-04-15T11:00:00Z", targetedAtOperator: false,
       });
@@ -147,27 +147,27 @@ describe("Stream", () => {
       // getActionableItems should only return the operator-targeted item
       const actionable = graph.getActionableItems();
       expect(actionable).toHaveLength(1);
-      expect(actionable[0].workItem.id).toBe("AI-1");
+      expect(actionable[0].workItem.id).toBe("OPS-1");
 
       // getFleetItems should return both (no targetedAtOperator filter)
       const fleet = graph.getFleetItems();
       const ids = fleet.map((i) => i.workItem.id);
-      expect(ids).toContain("AI-1");
-      expect(ids).toContain("AI-2");
+      expect(ids).toContain("OPS-1");
+      expect(ids).toContain("OPS-2");
     });
   });
 
   describe("nextAction in stream data", () => {
     it("nextAction is available from event when blocked", () => {
       graph.upsertWorkItem({
-        id: "AI-300", source: "jira", title: "Blocked task",
+        id: "OPS-300", source: "jira", title: "Blocked task",
         currentAtcStatus: "blocked_on_human", currentConfidence: 0.9,
       });
-      graph.upsertThread({ id: "t1", channelId: "C1", channelName: "orchestrator", platform: "slack", workItemId: "AI-300" });
-      graph.linkThreadWorkItem("t1", "AI-300", "primary");
-      graph.upsertAgent({ id: "a1", name: "Byte", platform: "slack", platformUserId: "U1" });
+      graph.upsertThread({ id: "t1", channelId: "C1", channelName: "orchestrator", platform: "slack", workItemId: "OPS-300" });
+      graph.linkThreadWorkItem("t1", "OPS-300", "primary");
+      graph.upsertAgent({ id: "a1", name: "Relay", platform: "slack", platformUserId: "U1" });
       graph.insertEvent({
-        threadId: "t1", messageId: "m1", workItemId: "AI-300", agentId: "a1",
+        threadId: "t1", messageId: "m1", workItemId: "OPS-300", agentId: "a1",
         status: "blocked_on_human", confidence: 0.9, reason: "Needs approval",
         rawText: "Please approve", timestamp: new Date().toISOString(),
         targetedAtOperator: true,
@@ -176,7 +176,7 @@ describe("Stream", () => {
       });
 
       // Verify the event has nextAction after round-trip through graph
-      const events = graph.getEventsForWorkItem("AI-300");
+      const events = graph.getEventsForWorkItem("OPS-300");
       const blockEvent = events.find(e => e.status === "blocked_on_human");
       expect(blockEvent).toBeDefined();
       expect(blockEvent!.nextAction).toBe("Approve PR #716");
@@ -187,13 +187,13 @@ describe("Stream", () => {
   describe("buildUnifiedStatus actor-aware labels", () => {
     it("shows 'Waiting on you' when operator is in actionRequiredFrom", () => {
       const workItem: WorkItem = {
-        id: "AI-100", source: "jira", title: "Test",
+        id: "OPS-100", source: "jira", title: "Test",
         externalStatus: null, assignee: null, url: null,
         currentAtcStatus: "blocked_on_human", currentConfidence: 0.9,
         snoozedUntil: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
       };
       const blockEvent: Event = {
-        id: "e1", threadId: "t1", messageId: "m1", workItemId: "AI-100",
+        id: "e1", threadId: "t1", messageId: "m1", workItemId: "OPS-100",
         agentId: "a1", status: "blocked_on_human", confidence: 0.9,
         reason: "Needs approval", rawText: "Please approve",
         timestamp: new Date(Date.now() - 30 * 60000).toISOString(),
@@ -205,20 +205,20 @@ describe("Stream", () => {
       const operatorIdentities: OperatorIdentityMap = new Map([
         ["slack", { userId: "U_OPERATOR", userName: "Alex" }],
       ]);
-      const agentMap = new Map([["a1", "Byte"]]);
+      const agentMap = new Map([["a1", "Relay"]]);
       const result = buildUnifiedStatus(workItem, blockEvent, operatorIdentities, agentMap);
       expect(result).toMatch(/Waiting on you · \d+m/);
     });
 
     it("shows actor name when someone else is in actionRequiredFrom", () => {
       const workItem: WorkItem = {
-        id: "AI-100", source: "jira", title: "Test",
+        id: "OPS-100", source: "jira", title: "Test",
         externalStatus: null, assignee: null, url: null,
         currentAtcStatus: "blocked_on_human", currentConfidence: 0.9,
         snoozedUntil: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
       };
       const blockEvent: Event = {
-        id: "e1", threadId: "t1", messageId: "m1", workItemId: "AI-100",
+        id: "e1", threadId: "t1", messageId: "m1", workItemId: "OPS-100",
         agentId: "a1", status: "blocked_on_human", confidence: 0.9,
         reason: "Needs Dana's review", rawText: "Waiting for Dana",
         timestamp: new Date(Date.now() - 130 * 60000).toISOString(),
@@ -237,13 +237,13 @@ describe("Stream", () => {
 
     it("shows 'Needs your decision' when operator is action taker for needs_decision", () => {
       const workItem: WorkItem = {
-        id: "AI-100", source: "jira", title: "Test",
+        id: "OPS-100", source: "jira", title: "Test",
         externalStatus: null, assignee: null, url: null,
         currentAtcStatus: "needs_decision", currentConfidence: 0.9,
         snoozedUntil: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
       };
       const blockEvent: Event = {
-        id: "e1", threadId: "t1", messageId: "m1", workItemId: "AI-100",
+        id: "e1", threadId: "t1", messageId: "m1", workItemId: "OPS-100",
         agentId: "a1", status: "needs_decision", confidence: 0.9,
         reason: "Choose palette", rawText: "Pick a color",
         timestamp: new Date(Date.now() - 10 * 60000).toISOString(),
@@ -262,13 +262,13 @@ describe("Stream", () => {
 
     it("shows actor name for needs_decision when someone else", () => {
       const workItem: WorkItem = {
-        id: "AI-100", source: "jira", title: "Test",
+        id: "OPS-100", source: "jira", title: "Test",
         externalStatus: null, assignee: null, url: null,
         currentAtcStatus: "needs_decision", currentConfidence: 0.9,
         snoozedUntil: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
       };
       const blockEvent: Event = {
-        id: "e1", threadId: "t1", messageId: "m1", workItemId: "AI-100",
+        id: "e1", threadId: "t1", messageId: "m1", workItemId: "OPS-100",
         agentId: "a1", status: "needs_decision", confidence: 0.9,
         reason: "Dana needs to decide", rawText: "Decision needed",
         timestamp: new Date(Date.now() - 90 * 60000).toISOString(),
@@ -287,13 +287,13 @@ describe("Stream", () => {
 
     it("falls back to neutral 'Blocked' label when actionRequiredFrom is null", () => {
       const workItem: WorkItem = {
-        id: "AI-100", source: "jira", title: "Test",
+        id: "OPS-100", source: "jira", title: "Test",
         externalStatus: null, assignee: null, url: null,
         currentAtcStatus: "blocked_on_human", currentConfidence: 0.9,
         snoozedUntil: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
       };
       const blockEvent: Event = {
-        id: "e1", threadId: "t1", messageId: "m1", workItemId: "AI-100",
+        id: "e1", threadId: "t1", messageId: "m1", workItemId: "OPS-100",
         agentId: "a1", status: "blocked_on_human", confidence: 0.9,
         reason: "Needs approval", rawText: "Please approve",
         timestamp: new Date(Date.now() - 5 * 60000).toISOString(),
@@ -310,13 +310,13 @@ describe("Stream", () => {
 
     it("uses raw user ID when name cannot be resolved", () => {
       const workItem: WorkItem = {
-        id: "AI-100", source: "jira", title: "Test",
+        id: "OPS-100", source: "jira", title: "Test",
         externalStatus: null, assignee: null, url: null,
         currentAtcStatus: "blocked_on_human", currentConfidence: 0.9,
         snoozedUntil: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
       };
       const blockEvent: Event = {
-        id: "e1", threadId: "t1", messageId: "m1", workItemId: "AI-100",
+        id: "e1", threadId: "t1", messageId: "m1", workItemId: "OPS-100",
         agentId: "a1", status: "blocked_on_human", confidence: 0.9,
         reason: "Needs review", rawText: "Please review",
         timestamp: new Date(Date.now() - 15 * 60000).toISOString(),
@@ -336,27 +336,27 @@ describe("Stream", () => {
 
   describe("multi-agent multi-thread aggregation", () => {
     it("getAgentsForWorkItem returns all agents who have events", () => {
-      graph.upsertWorkItem({ id: "AI-100", source: "jira", title: "Test" });
-      graph.upsertThread({ id: "t1", channelId: "C1", channelName: "orchestrator", platform: "slack", workItemId: "AI-100" });
-      graph.linkThreadWorkItem("t1", "AI-100", "primary");
-      graph.upsertThread({ id: "t2", channelId: "C2", channelName: "strategy", platform: "slack", workItemId: "AI-100" });
-      graph.linkThreadWorkItem("t2", "AI-100", "primary");
-      const agent1 = graph.upsertAgent({ name: "Byte", platform: "slack", platformUserId: "U1" });
-      const agent2 = graph.upsertAgent({ name: "Pixel", platform: "slack", platformUserId: "U2" });
-      graph.insertEvent({ threadId: "t1", messageId: "m1", workItemId: "AI-100", agentId: agent1.id, status: "in_progress", confidence: 0.9, timestamp: new Date().toISOString(), entryType: "progress" });
-      graph.insertEvent({ threadId: "t2", messageId: "m2", workItemId: "AI-100", agentId: agent2.id, status: "blocked_on_human", confidence: 0.9, timestamp: new Date().toISOString(), entryType: "block" });
-      const agents = graph.getAgentsForWorkItem("AI-100");
+      graph.upsertWorkItem({ id: "OPS-100", source: "jira", title: "Test" });
+      graph.upsertThread({ id: "t1", channelId: "C1", channelName: "orchestrator", platform: "slack", workItemId: "OPS-100" });
+      graph.linkThreadWorkItem("t1", "OPS-100", "primary");
+      graph.upsertThread({ id: "t2", channelId: "C2", channelName: "strategy", platform: "slack", workItemId: "OPS-100" });
+      graph.linkThreadWorkItem("t2", "OPS-100", "primary");
+      const agent1 = graph.upsertAgent({ name: "Relay", platform: "slack", platformUserId: "U1" });
+      const agent2 = graph.upsertAgent({ name: "Prism", platform: "slack", platformUserId: "U2" });
+      graph.insertEvent({ threadId: "t1", messageId: "m1", workItemId: "OPS-100", agentId: agent1.id, status: "in_progress", confidence: 0.9, timestamp: new Date().toISOString(), entryType: "progress" });
+      graph.insertEvent({ threadId: "t2", messageId: "m2", workItemId: "OPS-100", agentId: agent2.id, status: "blocked_on_human", confidence: 0.9, timestamp: new Date().toISOString(), entryType: "block" });
+      const agents = graph.getAgentsForWorkItem("OPS-100");
       expect(agents).toHaveLength(2);
-      expect(agents.map((a) => a.name).sort()).toEqual(["Byte", "Pixel"]);
+      expect(agents.map((a) => a.name).sort()).toEqual(["Prism", "Relay"]);
     });
 
     it("getChannelsForWorkItem returns all channels", () => {
-      graph.upsertWorkItem({ id: "AI-100", source: "jira", title: "Test" });
-      graph.upsertThread({ id: "t1", channelId: "C1", channelName: "orchestrator", platform: "slack", workItemId: "AI-100" });
-      graph.linkThreadWorkItem("t1", "AI-100", "primary");
-      graph.upsertThread({ id: "t2", channelId: "C2", channelName: "strategy", platform: "slack", workItemId: "AI-100" });
-      graph.linkThreadWorkItem("t2", "AI-100", "primary");
-      const channels = graph.getChannelsForWorkItem("AI-100");
+      graph.upsertWorkItem({ id: "OPS-100", source: "jira", title: "Test" });
+      graph.upsertThread({ id: "t1", channelId: "C1", channelName: "orchestrator", platform: "slack", workItemId: "OPS-100" });
+      graph.linkThreadWorkItem("t1", "OPS-100", "primary");
+      graph.upsertThread({ id: "t2", channelId: "C2", channelName: "strategy", platform: "slack", workItemId: "OPS-100" });
+      graph.linkThreadWorkItem("t2", "OPS-100", "primary");
+      const channels = graph.getChannelsForWorkItem("OPS-100");
       expect(channels).toHaveLength(2);
       expect(channels.map((c) => c.name).sort()).toEqual(["orchestrator", "strategy"]);
     });
@@ -378,14 +378,14 @@ describe("timeline pagination", () => {
 
   it("returns hasOlder: true when more events exist before the page", async () => {
     // Seed a work item with 15 events
-    graph.upsertWorkItem({ id: "AI-300", source: "jira", title: "Pagination test", currentAtcStatus: "in_progress" });
-    graph.upsertThread({ id: "T-300", channelId: "C001", channelName: "test", platform: "slack", workItemId: "AI-300" });
-    graph.linkThreadWorkItem("T-300", "AI-300", "primary");
-    graph.upsertAgent({ id: "agent-1", name: "Byte", platform: "slack", platformUserId: "U001" });
+    graph.upsertWorkItem({ id: "OPS-300", source: "jira", title: "Pagination test", currentAtcStatus: "in_progress" });
+    graph.upsertThread({ id: "T-300", channelId: "C001", channelName: "test", platform: "slack", workItemId: "OPS-300" });
+    graph.linkThreadWorkItem("T-300", "OPS-300", "primary");
+    graph.upsertAgent({ id: "agent-1", name: "Relay", platform: "slack", platformUserId: "U001" });
 
     for (let i = 0; i < 15; i++) {
       graph.insertEvent({
-        threadId: "T-300", messageId: `msg-${i}`, workItemId: "AI-300",
+        threadId: "T-300", messageId: `msg-${i}`, workItemId: "OPS-300",
         agentId: "agent-1", status: "in_progress", confidence: 0.9,
         reason: `Event ${i}`, rawText: `Message ${i}`,
         timestamp: new Date(Date.now() - (15 - i) * 60000).toISOString(),
@@ -397,7 +397,7 @@ describe("timeline pagination", () => {
     const app = createApp(state);
 
     // First page (no before param) — should get latest 10
-    const res1 = await app.request("/api/work-item/AI-300/stream?limit=10");
+    const res1 = await app.request("/api/work-item/OPS-300/stream?limit=10");
     const body1 = await res1.json();
     expect(body1.timeline.length).toBe(10);
     expect(body1.hasOlder).toBe(true);
@@ -406,7 +406,7 @@ describe("timeline pagination", () => {
 
     // Second page — use oldest event's timestamp as "before"
     const oldestTimestamp = body1.timeline[0].timestamp;
-    const res2 = await app.request(`/api/work-item/AI-300/stream?limit=10&before=${encodeURIComponent(oldestTimestamp)}`);
+    const res2 = await app.request(`/api/work-item/OPS-300/stream?limit=10&before=${encodeURIComponent(oldestTimestamp)}`);
     const body2 = await res2.json();
     expect(body2.timeline.length).toBe(5);
     expect(body2.hasOlder).toBe(false);
@@ -414,34 +414,34 @@ describe("timeline pagination", () => {
 
   it("timeline entries include relation field (primary vs mentioned)", async () => {
     // Create work item and two threads: one primary, one mentioned
-    graph.upsertWorkItem({ id: "AI-400", source: "jira", title: "Relation test", currentAtcStatus: "in_progress" });
+    graph.upsertWorkItem({ id: "OPS-400", source: "jira", title: "Relation test", currentAtcStatus: "in_progress" });
 
-    // Primary thread — directly linked to AI-400
-    graph.upsertThread({ id: "T-400", channelId: "C001", channelName: "main", platform: "slack", workItemId: "AI-400" });
-    graph.linkThreadWorkItem("T-400", "AI-400", "primary");
+    // Primary thread — directly linked to OPS-400
+    graph.upsertThread({ id: "T-400", channelId: "C001", channelName: "main", platform: "slack", workItemId: "OPS-400" });
+    graph.linkThreadWorkItem("T-400", "OPS-400", "primary");
 
     // Mentioned thread — linked via junction only (different work_item_id on event)
-    graph.upsertWorkItem({ id: "AI-401", source: "jira", title: "Other item", currentAtcStatus: "in_progress" });
-    graph.upsertThread({ id: "T-401", channelId: "C002", channelName: "other", platform: "slack", workItemId: "AI-401" });
-    graph.linkThreadWorkItem("T-401", "AI-401", "primary");
-    graph.linkThreadWorkItem("T-401", "AI-400", "mentioned");
+    graph.upsertWorkItem({ id: "OPS-401", source: "jira", title: "Other item", currentAtcStatus: "in_progress" });
+    graph.upsertThread({ id: "T-401", channelId: "C002", channelName: "other", platform: "slack", workItemId: "OPS-401" });
+    graph.linkThreadWorkItem("T-401", "OPS-401", "primary");
+    graph.linkThreadWorkItem("T-401", "OPS-400", "mentioned");
 
-    graph.upsertAgent({ id: "agent-1", name: "Byte", platform: "slack", platformUserId: "U001" });
+    graph.upsertAgent({ id: "agent-1", name: "Relay", platform: "slack", platformUserId: "U001" });
 
     // Event on primary thread with matching work_item_id → should be "primary"
     graph.insertEvent({
-      threadId: "T-400", messageId: "msg-primary", workItemId: "AI-400",
+      threadId: "T-400", messageId: "msg-primary", workItemId: "OPS-400",
       agentId: "agent-1", status: "in_progress", confidence: 0.9,
-      reason: "Primary event", rawText: "Working on AI-400",
+      reason: "Primary event", rawText: "Working on OPS-400",
       timestamp: new Date(Date.now() - 2 * 60000).toISOString(),
       entryType: "progress", targetedAtOperator: false,
     });
 
     // Event on mentioned thread with different work_item_id → should be "mentioned"
     graph.insertEvent({
-      threadId: "T-401", messageId: "msg-mentioned", workItemId: "AI-401",
+      threadId: "T-401", messageId: "msg-mentioned", workItemId: "OPS-401",
       agentId: "agent-1", status: "in_progress", confidence: 0.9,
-      reason: "Mentioned event", rawText: "Also mentions AI-400",
+      reason: "Mentioned event", rawText: "Also mentions OPS-400",
       timestamp: new Date(Date.now() - 1 * 60000).toISOString(),
       entryType: "progress", targetedAtOperator: false,
     });
@@ -449,7 +449,7 @@ describe("timeline pagination", () => {
     const state = makeState(graph, db);
     const app = createApp(state);
 
-    const res = await app.request("/api/work-item/AI-400/stream?limit=10");
+    const res = await app.request("/api/work-item/OPS-400/stream?limit=10");
     const body = await res.json();
 
     expect(body.timeline.length).toBe(2);

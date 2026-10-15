@@ -6,7 +6,7 @@ import { DefaultExtractor } from "../../core/graph/extractors/default.js";
 const defaultConfig = {
   ticketPatterns: ["\\b([A-Z]{2,6}-\\d+)\\b"],
   prPatterns: ["PR\\s*#?(\\d+)", "#(\\d+)"],
-  ticketPrefixes: ["AI-", "IT-", "MS-"],
+  ticketPrefixes: ["OPS-", "ENG-", "MKT-"],
 };
 
 describe("DefaultExtractor", () => {
@@ -14,15 +14,15 @@ describe("DefaultExtractor", () => {
 
   describe("ticket extraction", () => {
     it("extracts tickets matching known prefixes", () => {
-      const ids = extractor.extractWorkItemIds("Working on AI-382 now");
-      expect(ids).toContain("AI-382");
+      const ids = extractor.extractWorkItemIds("Working on OPS-382 now");
+      expect(ids).toContain("OPS-382");
     });
 
     it("extracts multiple tickets", () => {
-      const ids = extractor.extractWorkItemIds("Linked AI-382 to IT-100 and MS-112");
-      expect(ids).toContain("AI-382");
-      expect(ids).toContain("IT-100");
-      expect(ids).toContain("MS-112");
+      const ids = extractor.extractWorkItemIds("Linked OPS-382 to ENG-100 and MKT-112");
+      expect(ids).toContain("OPS-382");
+      expect(ids).toContain("ENG-100");
+      expect(ids).toContain("MKT-112");
     });
 
     it("rejects tickets with unknown prefixes", () => {
@@ -36,16 +36,16 @@ describe("DefaultExtractor", () => {
     });
 
     it("deduplicates repeated ticket IDs", () => {
-      const ids = extractor.extractWorkItemIds("AI-1 is related to AI-1");
-      expect(ids).toEqual(["AI-1"]);
+      const ids = extractor.extractWorkItemIds("OPS-1 is related to OPS-1");
+      expect(ids).toEqual(["OPS-1"]);
     });
 
     it("handles tickets at start and end of text", () => {
-      const ids = extractor.extractWorkItemIds("AI-100 done");
-      expect(ids).toContain("AI-100");
+      const ids = extractor.extractWorkItemIds("OPS-100 done");
+      expect(ids).toContain("OPS-100");
 
-      const ids2 = extractor.extractWorkItemIds("done AI-100");
-      expect(ids2).toContain("AI-100");
+      const ids2 = extractor.extractWorkItemIds("done OPS-100");
+      expect(ids2).toContain("OPS-100");
     });
 
     it("returns empty for text with no tickets", () => {
@@ -73,20 +73,20 @@ describe("DefaultExtractor", () => {
 
   describe("mixed extraction", () => {
     it("extracts only known-prefix tickets, ignores PR references", () => {
-      const ids = extractor.extractWorkItemIds("AI-382: submitted PR #716 for review");
-      expect(ids).toContain("AI-382");
+      const ids = extractor.extractWorkItemIds("OPS-382: submitted PR #716 for review");
+      expect(ids).toContain("OPS-382");
       expect(ids).not.toContain("PR-716");
       expect(ids).toHaveLength(1);
     });
 
     it("handles multiline text", () => {
       const text = `Status update:
-- AI-100: completed
-- IT-200: in progress
+- OPS-100: completed
+- ENG-200: in progress
 - PR #50 submitted`;
       const ids = extractor.extractWorkItemIds(text);
-      expect(ids).toContain("AI-100");
-      expect(ids).toContain("IT-200");
+      expect(ids).toContain("OPS-100");
+      expect(ids).toContain("ENG-200");
       expect(ids).toHaveLength(2); // PR-50 not extracted
     });
   });
@@ -122,9 +122,9 @@ describe("DefaultExtractor", () => {
         prPatterns: [],
         ticketPrefixes: ["FEAT-"],
       });
-      const ids = custom.extractWorkItemIds("Working on FEAT-42 and AI-100");
+      const ids = custom.extractWorkItemIds("Working on FEAT-42 and OPS-100");
       expect(ids).toContain("FEAT-42");
-      expect(ids).not.toContain("AI-100");
+      expect(ids).not.toContain("OPS-100");
     });
   });
 });

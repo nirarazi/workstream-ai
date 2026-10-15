@@ -15,7 +15,7 @@ const defaultConfig = {
 describe("detectAnomalies", () => {
   it("returns empty array for healthy in-progress item", () => {
     const item: FleetItemInput = {
-      workItemId: "AI-1",
+      workItemId: "OPS-1",
       currentAtcStatus: "in_progress",
       latestEventTimestamp: hoursAgo(1),
       agentLastSeen: hoursAgo(0.5),
@@ -29,7 +29,7 @@ describe("detectAnomalies", () => {
 
   it("detects stale item (no events for >threshold hours)", () => {
     const item: FleetItemInput = {
-      workItemId: "AI-1",
+      workItemId: "OPS-1",
       currentAtcStatus: "in_progress",
       latestEventTimestamp: hoursAgo(5),
       agentLastSeen: hoursAgo(5),
@@ -45,7 +45,7 @@ describe("detectAnomalies", () => {
 
   it("does NOT flag stale for completed items", () => {
     const item: FleetItemInput = {
-      workItemId: "AI-1",
+      workItemId: "OPS-1",
       currentAtcStatus: "completed",
       latestEventTimestamp: hoursAgo(10),
       agentLastSeen: hoursAgo(10),
@@ -59,7 +59,7 @@ describe("detectAnomalies", () => {
 
   it("detects silent agent", () => {
     const item: FleetItemInput = {
-      workItemId: "AI-1",
+      workItemId: "OPS-1",
       currentAtcStatus: "in_progress",
       latestEventTimestamp: hoursAgo(1),
       agentLastSeen: hoursAgo(3),
@@ -75,7 +75,7 @@ describe("detectAnomalies", () => {
 
   it("detects status regression", () => {
     const item: FleetItemInput = {
-      workItemId: "AI-1",
+      workItemId: "OPS-1",
       currentAtcStatus: "blocked_on_human",
       latestEventTimestamp: hoursAgo(0.5),
       agentLastSeen: hoursAgo(0.5),
@@ -91,7 +91,7 @@ describe("detectAnomalies", () => {
 
   it("detects duplicate work items by title", () => {
     const item: FleetItemInput = {
-      workItemId: "AI-1",
+      workItemId: "OPS-1",
       currentAtcStatus: "in_progress",
       latestEventTimestamp: hoursAgo(1),
       agentLastSeen: hoursAgo(0.5),
@@ -101,7 +101,7 @@ describe("detectAnomalies", () => {
 
     const otherItems: FleetItemInput[] = [
       {
-        workItemId: "AI-2",
+        workItemId: "OPS-2",
         currentAtcStatus: "in_progress",
         latestEventTimestamp: hoursAgo(2),
         agentLastSeen: hoursAgo(1),
@@ -118,7 +118,7 @@ describe("detectAnomalies", () => {
 
   it("does not flag duplicate for different titles", () => {
     const item: FleetItemInput = {
-      workItemId: "AI-1",
+      workItemId: "OPS-1",
       currentAtcStatus: "in_progress",
       latestEventTimestamp: hoursAgo(1),
       agentLastSeen: hoursAgo(0.5),
@@ -128,7 +128,7 @@ describe("detectAnomalies", () => {
 
     const otherItems: FleetItemInput[] = [
       {
-        workItemId: "AI-2",
+        workItemId: "OPS-2",
         currentAtcStatus: "in_progress",
         latestEventTimestamp: hoursAgo(2),
         agentLastSeen: hoursAgo(1),
