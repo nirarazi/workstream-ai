@@ -364,11 +364,15 @@ export class SlackAdapter implements MessagingAdapter {
           const isParent = !msg.thread_ts || msg.thread_ts === msg.ts;
           // Before the cursor (read back to the reply window): only known threads with a reply since, never new ones
           const beforeCursor = wide && parseFloat(msg.ts) < cursor;
-          const latestKnown = known?.get(msg.ts);
-          const latestKnownMs = latestKnown === undefined ? NaN : Date.parse(latestKnown);
-          const hasNewReply = Boolean(msg.reply_count && msg.reply_count > 0 && msg.thread_ts)
-            && (Number.isNaN(latestKnownMs) || !msg.latest_reply || Math.floor(parseFloat(msg.latest_reply) * 1000) > latestKnownMs);
-          if (beforeCursor && (Number.isNaN(latestKnownMs) || !isParent || !hasNewReply)) continue;
+          const knownThread = known?.get(msg.ts);
+          const latestKnownMs = knownThread ? Date.parse(knownThread.latestAt) : NaN;
+          // New: a reply after the latest one processed, or more messages than were processed (one was missed)
+          const hasNewReply = Boolean(msg.reply_count && msg.reply_count > 0 && msg.thread_ts) && (
+            !knownThread || Number.isNaN(latestKnownMs) || !msg.latest_reply
+            || Math.floor(parseFloat(msg.latest_reply) * 1000) > latestKnownMs
+            || msg.reply_count! + 1 > knownThread.messageCount
+          );
+          if (beforeCursor && (!knownThread || !isParent || !hasNewReply)) continue;
 
           if (msg.reply_count && msg.reply_count > 0 && msg.thread_ts) {
             // A parent message with replies: fetch the full thread, unless nothing's been added since it was processed

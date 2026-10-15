@@ -320,8 +320,8 @@ describe("SlackAdapter", () => {
           response_metadata: { next_cursor: "" },
         });
         const knownThreads = new Map([
-          [replied, "2026-10-11T09:10:00.000Z"],
-          [unchanged, "2026-10-11T10:05:00.000Z"],
+          [replied, { latestAt: "2026-10-11T09:10:00.000Z", messageCount: 2 }],
+          [unchanged, { latestAt: "2026-10-11T10:05:00.000Z", messageCount: 2 }],
         ]);
 
         const threads = await adapter.readThreads(new Date("2026-10-10T00:00:00Z"), undefined, new Map([["C1", cursor]]), { knownThreads, replyWindowStart: windowStart });
@@ -341,7 +341,7 @@ describe("SlackAdapter", () => {
 
       it("keeps a channel's turn to be read back when the poll fails", async () => {
         mockConversationsList.mockResolvedValue({ channels: [{ id: "C1", name: "fleet-ops" }, { id: "C2", name: "planning" }], response_metadata: { next_cursor: "" } });
-        const knownThreads = new Map([["1700000000.000000", "2023-11-14T22:13:20.000Z"]]);
+        const knownThreads = new Map([["1700000000.000000", { latestAt: "2023-11-14T22:13:20.000Z", messageCount: 1 }]]);
         const cursors = new Map([["C1", cursor], ["C2", cursor]]);
         mockConversationsHistory.mockImplementation(async ({ channel }: { channel: string }) => {
           if (channel === "C2") throw Object.assign(new Error("invalid_auth"), { data: { ok: false, error: "invalid_auth" } });
@@ -361,7 +361,7 @@ describe("SlackAdapter", () => {
         const parent = ts("2026-10-13T11:10:00Z");
         history({ C1: [makeSlackMessage({ ts: parent, thread_ts: parent, reply_count: 1, latest_reply: "1792235000.123456" })] });
         await adapter.readThreads(new Date("2026-10-10T00:00:00Z"), undefined, new Map([["C1", cursor]]), {
-          knownThreads: new Map([[parent, new Date(1792235000123).toISOString()]]),
+          knownThreads: new Map([[parent, { latestAt: new Date(1792235000123).toISOString(), messageCount: 2 }]]),
         });
         expect(mockConversationsReplies).not.toHaveBeenCalled();
       });
@@ -372,11 +372,27 @@ describe("SlackAdapter", () => {
         history({ C1: [makeSlackMessage({ ts: parent, thread_ts: parent, reply_count: 3, latest_reply: ts("2026-10-13T11:20:00Z") })] });
 
         const threads = await adapter.readThreads(new Date("2026-10-10T00:00:00Z"), undefined, new Map([["C1", cursor]]), {
-          knownThreads: new Map([[parent, "2026-10-13T11:20:00.000Z"]]),
+          knownThreads: new Map([[parent, { latestAt: "2026-10-13T11:20:00.000Z", messageCount: 4 }]]),
         });
 
         expect(mockConversationsReplies).not.toHaveBeenCalled();
         expect(threads.map((t) => t.messages.length)).toEqual([1]); // just the parent, already processed
+      });
+
+      it("fetches a known thread in full when it has more messages than were processed (one was missed)", async () => {
+        mockConversationsList.mockResolvedValue({ channels: [{ id: "C1", name: "fleet-ops" }], response_metadata: { next_cursor: "" } });
+        const parent = ts("2026-10-11T09:00:00Z"); // behind the cursor
+        history({ C1: [makeSlackMessage({ ts: parent, thread_ts: parent, reply_count: 2, latest_reply: ts("2026-10-11T09:20:00Z") })] });
+        mockConversationsReplies.mockResolvedValue({ messages: [makeSlackMessage({ ts: parent })], response_metadata: { next_cursor: "" } });
+
+        // The latest reply was processed, but the one before it failed to classify and was never stored
+        const threads = await adapter.readThreads(new Date("2026-10-10T00:00:00Z"), undefined, new Map([["C1", cursor]]), {
+          knownThreads: new Map([[parent, { latestAt: "2026-10-11T09:20:00.000Z", messageCount: 2 }]]),
+          replyWindowStart: windowStart,
+        });
+
+        expect(mockConversationsReplies.mock.calls.map((c) => c[0].ts)).toEqual([parent]);
+        expect(threads.map((t) => t.id)).toEqual([parent]);
       });
 
       it("reads a few active channels back to the window each poll, taking turns", async () => {
@@ -384,7 +400,7 @@ describe("SlackAdapter", () => {
         mockConversationsList.mockResolvedValue({ channels: ids.map((id) => ({ id, name: id })), response_metadata: { next_cursor: "" } });
         history({});
         const cursors = new Map(ids.map((id) => [id, cursor]));
-        const opts = () => ({ knownThreads: new Map([["1700000000.000000", "2023-11-14T22:13:20.000Z"]]), replyWindowStart: windowStart });
+        const opts = () => ({ knownThreads: new Map([["1700000000.000000", { latestAt: "2023-11-14T22:13:20.000Z", messageCount: 1 }]]), replyWindowStart: windowStart });
         const wideChannels = () => ids.filter((id) => historyOldest(id).includes(String(windowStart.getTime() / 1000)));
 
         await adapter.readThreads(new Date("2026-10-10T00:00:00Z"), undefined, cursors, opts());

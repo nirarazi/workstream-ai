@@ -1,6 +1,6 @@
 // core/adapters/messaging/interface.ts — MessagingAdapter interface
 
-import type { Credentials, Thread, Message } from "../../types.js";
+import type { Credentials, Thread, Message, KnownThread } from "../../types.js";
 import type { ContextGraph } from "../../graph/index.js";
 import type { Database } from "../../graph/db.js";
 import type { AdapterSetupInfo } from "../setup.js";
@@ -8,12 +8,13 @@ import type { AdapterSetupInfo } from "../setup.js";
 /** Optional hints for readThreads; an adapter that ignores them still works, it just misses late replies. */
 export interface ReadThreadsOptions {
   /**
-   * Threads already processed, keyed by thread id, with the timestamp (ISO) of the latest message processed in
-   * each. The adapter returns a known thread again, with its new messages, when it gets a reply after that time,
-   * even if the thread started before the channel's cursor. A known thread with nothing new may be returned
-   * without its replies, to save platform calls. Unknown threads older than the cursor are never returned.
+   * Threads already processed, keyed by thread id. The adapter returns a known thread again, with all its
+   * messages, when it has a reply after `latestAt` or more messages than `messageCount` (one was missed, e.g. it
+   * failed to classify), even if the thread started before the channel's cursor. A known thread with nothing new
+   * may be returned without its replies, to save platform calls. Unknown threads older than the cursor are never
+   * returned.
    */
-  knownThreads?: Map<string, string>;
+  knownThreads?: Map<string, KnownThread>;
   /** How far back (thread start) to look for late replies to known threads. */
   replyWindowStart?: Date;
 }

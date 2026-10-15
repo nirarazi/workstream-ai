@@ -26,6 +26,12 @@ export interface OperatorIdentity {
 /** Operator identities keyed by adapter/platform name (e.g., "slack", "jira") */
 export type OperatorIdentityMap = Map<string, OperatorIdentity>;
 
+/** What the engine has processed of a thread: its latest message's timestamp (ISO) and how many messages. */
+export interface KnownThread {
+  latestAt: string;
+  messageCount: number;
+}
+
 export interface ClassificationBreakdown {
   workItemId: string;
   status: StatusCategory;

@@ -2,8 +2,8 @@ import { describe, it, expect } from "vitest";
 import { Database } from "../../core/graph/db.js";
 import { ContextGraph } from "../../core/graph/index.js";
 
-describe("getLatestEventTimes", () => {
-  it("gives the latest platform message processed per recent thread, ignoring operator actions", () => {
+describe("getKnownThreads", () => {
+  it("gives the latest platform message processed, and how many, per recent thread, ignoring operator actions", () => {
     const db = new Database(":memory:");
     const graph = new ContextGraph(db);
     graph.upsertThread({ id: "T1", channelId: "C1", platform: "slack", lastActivity: "2026-10-15T09:00:00.000Z" });
@@ -16,7 +16,7 @@ describe("getLatestEventTimes", () => {
     event("T1", "operator-dismiss-1792231300000", "2026-10-15T09:01:40.000Z");
     event("OLD", "1790845200.000100", "2026-10-01T09:00:00.000Z");
 
-    expect([...graph.getLatestEventTimes("2026-10-12T00:00:00.000Z")]).toEqual([["T1", "2026-10-15T09:00:00.000Z"]]);
+    expect([...graph.getKnownThreads("2026-10-12T00:00:00.000Z")]).toEqual([["T1", { latestAt: "2026-10-15T09:00:00.000Z", messageCount: 2 }]]);
     db.close();
   });
 });

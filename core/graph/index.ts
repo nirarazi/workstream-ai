@@ -9,6 +9,7 @@ import type {
   Enrichment,
   EntryType,
   Event,
+  KnownThread,
   PollCursor,
   StatusCategory,
   Thread,
@@ -542,21 +543,22 @@ export class ContextGraph {
   }
 
   /**
-   * Threads active since `since` (ISO), with the timestamp of the latest platform message processed in each: what
-   * the messaging adapter compares a thread's latest reply against to find late replies.
+   * Threads active since `since` (ISO), with the timestamp of the latest platform message processed in each and how
+   * many were: what the messaging adapter compares a thread against to find late or missed replies.
    */
-  getLatestEventTimes(since: string): Map<string, string> {
+  getKnownThreads(since: string): Map<string, KnownThread> {
     const rows = this.db.db
       .prepare(`
-        SELECT e.thread_id AS threadId, MAX(e.timestamp) AS latest FROM threads t
+        SELECT e.thread_id AS threadId, MAX(e.timestamp) AS latestAt, COUNT(DISTINCT e.message_id) AS messageCount
+        FROM threads t
         JOIN events e ON e.thread_id = t.id
         WHERE t.last_activity >= ?
           -- operator actions are stamped with the click time, not a message's: they'd hide replies not read yet
           AND e.message_id NOT LIKE 'operator-%'
         GROUP BY e.thread_id
       `)
-      .all(since) as Array<{ threadId: string; latest: string }>;
-    return new Map(rows.map((r) => [r.threadId, r.latest]));
+      .all(since) as Array<{ threadId: string; latestAt: string; messageCount: number }>;
+    return new Map(rows.map((r) => [r.threadId, { latestAt: r.latestAt, messageCount: r.messageCount }]));
   }
 
   /** Return threads linked to active (non-completed, non-noise) work items, ordered by most recent activity */

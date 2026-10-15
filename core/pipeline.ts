@@ -127,6 +127,11 @@ export class Pipeline {
     this.operatorIdentities = operatorIdentities ?? null;
   }
 
+  /** Whether a message was posted by the operator (any of their platform identities) */
+  private isOperator(message: Message): boolean {
+    return [...(this.operatorIdentities?.values() ?? [])].some((id) => id.userId === message.userId);
+  }
+
   /** Why classification is paused right now, if it is: shown as a degraded model status */
   pauseReason(): "budget" | "auth" | null {
     return Date.now() < this.pausedUntil ? this.pausedFor : null;
@@ -230,10 +235,8 @@ export class Pipeline {
     let threads: Thread[];
     try {
       const lateReplyWindowStart = new Date(Date.now() - LATE_REPLY_WINDOW_MS);
-      const knownThreads = this.graph.getLatestEventTimes(lateReplyWindowStart.toISOString());
-      // A thread with a message waiting for a retry must come back in full, even once a later reply in it is
-      // classified: as if nothing in it had been processed
-      for (const key of this.failedMessages.keys()) knownThreads.set(key.slice(0, key.indexOf(":")), new Date(0).toISOString());
+      // A thread with a message waiting for a retry has fewer messages processed than it has, so it comes back in full
+      const knownThreads = this.graph.getKnownThreads(lateReplyWindowStart.toISOString());
       threads = await this.messagingAdapter.readThreads(
         globalSince,
         channels.length > 0 ? channels : undefined,
@@ -572,13 +575,9 @@ export class Pipeline {
    * next move is someone else's. Without this, "any news on this?" came back blocked and targeted, and
    * kept the item in the operator's inbox with their own message as the reason.
    */
-  private isOperator(message: Message): boolean {
-    return [...(this.operatorIdentities?.values() ?? [])].some((id) => id.userId === message.userId);
-  }
-
   private fromOperator(message: Message, classification: Classification): Classification {
+    if (!this.isOperator(message)) return classification;
     const operatorIds = new Set([...(this.operatorIdentities?.values() ?? [])].map((id) => id.userId));
-    if (!operatorIds.has(message.userId)) return classification;
     // "@Dana please approve X" from the operator is still blocked — on Dana. Keep that status; just untarget it.
     const namesSomeoneElse = (classification.actionRequiredFrom ?? []).some((id) => !operatorIds.has(id));
     const waitingOnOperator =

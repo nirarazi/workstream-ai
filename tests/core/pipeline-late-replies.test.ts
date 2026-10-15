@@ -43,22 +43,32 @@ describe("Pipeline: late replies to threads that started before the cursor", () 
     await pipeline.processOnce();
 
     const options = readThreads.mock.calls[1][3];
-    expect([...options.knownThreads]).toEqual([["OLD", "2026-10-13T09:00:00.000Z"]]);
+    expect([...options.knownThreads]).toEqual([["OLD", { latestAt: "2026-10-13T09:00:00.000Z", messageCount: 1 }]]);
     expect(options.replyWindowStart.toISOString()).toBe("2026-10-12T12:00:00.000Z");
     db.close();
   });
 
-  it("asks for a thread in full while one of its messages waits for a retry, even once a later reply is classified", async () => {
+  it("reports a missed message in the count, so the thread is read in full again, even after a restart", async () => {
     const classify = vi.fn(async (text: string) => (text.includes("OLD-m2") ? FAILED : ANSWER));
     const { db, graph, readThreads, pipeline } = setup(classify);
     readThreads.mockResolvedValue([thread("OLD", "2026-10-15T09:00:00.000Z", "2026-10-15T09:05:00.000Z", "2026-10-15T09:10:00.000Z")]);
-    await pipeline.processOnce(); // m1 classified, m2 fails (m3 waits behind it)
+    // m2 fails twice; then m3 goes ahead of it
+    for (let i = 0; i < 3; i++) {
+      vi.setSystemTime(Date.now() + 31 * 60 * 1000);
+      await pipeline.processOnce();
+    }
+    expect(graph.hasEvent("OLD-m3", "OLD")).toBe(true);
+    expect(graph.hasEvent("OLD-m2", "OLD")).toBe(false);
 
+    // A settings save builds a new pipeline, which knows nothing of the old one's retries
+    const fresh = new Pipeline({ name: "fake", readThreads, getThreadMessages: vi.fn(async () => []) } as any, { classify } as any, graph,
+      new WorkItemLinker(graph, [new DefaultExtractor({ ticketPatterns: [], prPatterns: [] })]), undefined, CONFIG);
     readThreads.mockResolvedValue([]);
-    await pipeline.processOnce();
+    await fresh.processOnce();
 
-    expect(graph.hasEvent("OLD-m1", "OLD")).toBe(true);
-    expect(readThreads.mock.calls[1][3].knownThreads.get("OLD")).toBe(new Date(0).toISOString());
+    // Two of its three messages processed: the adapter sees reply_count + 1 = 3 > 2 and fetches it in full
+    const known = readThreads.mock.calls[readThreads.mock.calls.length - 1][3].knownThreads.get("OLD");
+    expect(known).toEqual({ latestAt: "2026-10-15T09:10:00.000Z", messageCount: 2 });
     db.close();
   });
 
