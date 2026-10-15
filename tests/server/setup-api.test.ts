@@ -237,7 +237,7 @@ describe("POST /api/setup preserves what the form doesn't manage", () => {
     const root = findProjectRoot();
     files.set(resolve(root, ".env"), "OPENAI_API_KEY=sk-keep\nWORKSTREAM_LLM_API_KEY=old\n");
     files.set(resolve(root, "config", "local.yaml"),
-      "classifier:\n  provider:\n    baseUrl: https://openrouter.ai/api/v1\n    model: old\n    apiKey: stale-literal\n    reasoningEffort: none\n  mode: decisions\n  decisions:\n    provider: openai\n    interruptThreshold: 0.3\noperator:\n  name: Alex\n  role: CTO\n  context: remit\n");
+      "classifier:\n  provider:\n    baseUrl: https://openrouter.ai/api/v1\n    model: old\n    apiKey: stale-literal\n    reasoningEffort: none\n  mode: decisions\n  decisions:\n    provider: openai\n    interruptThreshold: 0.3\noperator:\n  name: Alex\n  role: CTO\n  context: remit\ninbox:\n  handoffMinConfidence: 0.75\n");
 
     const state = makeState();
     const app = createApp(state);
@@ -261,6 +261,7 @@ describe("POST /api/setup preserves what the form doesn't manage", () => {
     expect(yaml).toContain("model: anthropic/claude-haiku-5.5");
     expect(yaml).toContain("context: remit");
     expect(yaml).toContain("expireAfterDays: 14");
+    expect(yaml).toContain("handoffMinConfidence: 0.75");
     // The new key in .env must win, and tuning for the old model doesn't carry over
     expect(yaml).not.toContain("stale-literal");
     expect(yaml).not.toContain("reasoningEffort");
