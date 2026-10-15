@@ -20,11 +20,12 @@ export interface WorkItem {
   snoozedUntil: string | null;
   pinned: boolean;
   dismissedAt: string | null;
+  dismissReason: "operator" | "expired" | null;
   createdAt: string;
   updatedAt: string;
 }
 
-export type StreamFilter = "needs-me" | "all-active" | "snoozed";
+export type StreamFilter = "needs-me" | "all-active" | "snoozed" | "dismissed";
 
 export interface ActionResponse {
   ok: boolean;
@@ -138,6 +139,7 @@ export interface SetupPayload {
     outputCostPerMillion?: number | null;
   };
   rateLimits?: Record<string, number>;
+  inbox?: { expireAfterDays: number | null };
 }
 
 export interface RateLimitInfo {
@@ -157,6 +159,7 @@ export interface SetupPrefill {
     outputCostPerMillion?: number | null;
   };
   rateLimits?: Record<string, RateLimitInfo>;
+  inbox?: { expireAfterDays: number | null };
 }
 
 export interface LlmBackoff {
@@ -410,6 +413,10 @@ export async function fetchStream(
 
 export async function fetchAllActive(): Promise<{ items: ActionableItem[] }> {
   return apiFetch("/api/stream/all-active");
+}
+
+export async function fetchDismissed(): Promise<{ items: ActionableItem[] }> {
+  return apiFetch("/api/stream/dismissed");
 }
 
 export async function togglePin(workItemId: string): Promise<PinResponse> {

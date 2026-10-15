@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback, type JSX } from "react";
 import {
-  fetchInbox, fetchAllActive, setBadgeCount,
+  fetchInbox, fetchAllActive, fetchDismissed, setBadgeCount,
   mergeWorkItems, unmergeWorkItem,
   type ActionableItem, type StreamFilter, type Mentionable,
 } from "../lib/api";
@@ -11,6 +11,21 @@ import UndoToast from "./stream/UndoToast";
 import { type ActionState } from "./StatusBadge";
 
 const POLL_INTERVAL = 5000;
+
+/** Case-insensitive match on everything shown for an item: ID, title, agent, channel and latest message. */
+export function matchesSearch(item: ActionableItem, query: string): boolean {
+  const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
+  if (terms.length === 0) return true;
+  const haystack = [
+    item.workItem.id,
+    item.workItem.title,
+    item.agent?.name,
+    item.thread?.channelName,
+    item.latestEvent?.rawText,
+    item.latestEvent?.reason,
+  ].filter(Boolean).join("\n").toLowerCase();
+  return terms.every((t) => haystack.includes(t));
+}
 
 interface StreamViewProps {
   mentionables: Mentionable[];
@@ -30,6 +45,8 @@ export default function StreamView({
   const [filter, setFilter] = useState<StreamFilter>("needs-me");
   const [needsMeItems, setNeedsMeItems] = useState<ActionableItem[]>([]);
   const [allActiveItems, setAllActiveItems] = useState<ActionableItem[]>([]);
+  const [dismissedItems, setDismissedItems] = useState<ActionableItem[]>([]);
+  const [search, setSearch] = useState("");
   const [selectedWorkItemId, setSelectedWorkItemId] = useState<string | null>(null);
   const [actionStates, setActionStates] = useState<Map<string, ActionState>>(new Map());
   const [resolvingIds, setResolvingIds] = useState<Set<string>>(new Set());
@@ -54,12 +71,15 @@ export default function StreamView({
 
   const poll = useCallback(async () => {
     try {
-      const [inbox, allActive] = await Promise.all([
+      const [inbox, allActive, dismissed] = await Promise.all([
         fetchInbox(),
         fetchAllActive(),
+        // The Dismissed tab is secondary: if it fails, keep the last list rather than stall the inbox
+        fetchDismissed().catch(() => null),
       ]);
       setNeedsMeItems(inbox.items);
       setAllActiveItems(allActive.items);
+      if (dismissed) setDismissedItems(dismissed.items);
       setError(null);
       setLastSyncAt(new Date());
       setSyncError(false);
@@ -83,7 +103,7 @@ export default function StreamView({
   useEffect(() => {
     if (!selectedWorkItemId) return;
     setRecentlyViewed((prev) => {
-      const allItems = [...needsMeItems, ...allActiveItems];
+      const allItems = [...needsMeItems, ...allActiveItems, ...dismissedItems];
       const item = allItems.find((i) => i.workItem.id === selectedWorkItemId);
       if (!item) return prev;
       const entry = {
@@ -94,21 +114,27 @@ export default function StreamView({
       const filtered = prev.filter((v) => v.id !== selectedWorkItemId);
       return [entry, ...filtered].slice(0, 5);
     });
-  }, [selectedWorkItemId, needsMeItems, allActiveItems]);
+  }, [selectedWorkItemId, needsMeItems, allActiveItems, dismissedItems]);
 
-  const currentItems = (() => {
+  // Needs me already leaves out snoozed items, so the Snoozed tab is drawn from All active
+  const snoozedItems = allActiveItems.filter(
+    (i) => i.workItem.snoozedUntil && new Date(i.workItem.snoozedUntil).getTime() > Date.now(),
+  );
+  const tabItems = (() => {
     switch (filter) {
       case "needs-me": return needsMeItems;
+      case "snoozed": return snoozedItems;
       case "all-active": return allActiveItems;
-      case "snoozed": return needsMeItems.filter(i => i.workItem.snoozedUntil);
+      case "dismissed": return dismissedItems;
     }
   })();
+  const currentItems = tabItems.filter((i) => matchesSearch(i, search));
 
-  const snoozedCount = needsMeItems.filter(i => i.workItem.snoozedUntil).length;
   const counts = {
-    needsMe: needsMeItems.filter(i => !i.workItem.snoozedUntil).length,
+    needsMe: needsMeItems.length,
+    snoozed: snoozedItems.length,
     allActive: allActiveItems.length,
-    snoozed: snoozedCount,
+    dismissed: dismissedItems.length,
   };
 
   function handleSelect(id: string) {
@@ -124,7 +150,7 @@ export default function StreamView({
 
       const res = await mergeWorkItems(targetId, sourceId);
       setUndoState({
-        message: `Merged into "${[...needsMeItems, ...allActiveItems].find((i) => i.workItem.id === targetId)?.workItem.title ?? targetId}"`,
+        message: `Merged into "${[...needsMeItems, ...allActiveItems, ...dismissedItems].find((i) => i.workItem.id === targetId)?.workItem.title ?? targetId}"`,
         sourceId: res.record.sourceId,
       });
 
@@ -136,7 +162,7 @@ export default function StreamView({
       console.error("Merge failed", err);
       setMergingId(null);
     }
-  }, [needsMeItems, allActiveItems, poll]);
+  }, [needsMeItems, allActiveItems, dismissedItems, poll]);
 
   // Undo handler
   const handleUndo = useCallback(async () => {
@@ -196,6 +222,10 @@ export default function StreamView({
   }, [undoState, handleUndo, selectedWorkItemId, recentlyViewed, handleMerge]);
 
   const sortedItems = [...currentItems].sort((a, b) => {
+    // Dismissed: most recently dismissed first
+    if (filter === "dismissed") {
+      return new Date(b.workItem.dismissedAt ?? 0).getTime() - new Date(a.workItem.dismissedAt ?? 0).getTime();
+    }
     // Pinned items first
     if (a.workItem.pinned && !b.workItem.pinned) return -1;
     if (!a.workItem.pinned && b.workItem.pinned) return 1;
@@ -210,17 +240,32 @@ export default function StreamView({
       {/* Left panel: list */}
       <div className="w-[45%] min-w-[300px] border-r border-gray-800 flex flex-col overflow-hidden">
         <FilterTabs active={filter} counts={counts} onChange={setFilter} />
+        <div className="px-4 py-2 border-b border-gray-800">
+          <input
+            type="search"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Escape") setSearch(""); }}
+            placeholder="Search ticket, title, agent, channel or message"
+            aria-label="Search this tab"
+            className="w-full bg-gray-900 border border-gray-800 rounded px-2.5 py-1.5 text-xs text-gray-200 placeholder-gray-600 focus:outline-none focus:border-cyan-800"
+          />
+        </div>
         <div className="flex-1 overflow-y-auto">
           {error && (
             <div className="px-4 py-2 text-xs text-red-400">{error}</div>
           )}
           {sortedItems.length === 0 && !error && (
             <div className="px-4 py-8 text-center text-gray-600 text-sm">
-              {filter === "needs-me"
-                ? "All clear. No items need your attention."
-                : filter === "snoozed"
-                  ? "No snoozed items."
-                  : "No active work items."}
+              {search.trim()
+                ? `Nothing matches “${search.trim()}” in this tab.`
+                : filter === "needs-me"
+                  ? "All clear. No items need your attention."
+                  : filter === "snoozed"
+                    ? "No snoozed items."
+                    : filter === "dismissed"
+                      ? "No dismissed items."
+                      : "No active work items."}
             </div>
           )}
           {sortedItems.map(item => (
@@ -237,6 +282,7 @@ export default function StreamView({
               onDrop={handleDrop}
               onDragEnter={(id) => { if (id !== draggingId) setDragOverId(id); }}
               dragOverId={dragOverId}
+              showDismissal={filter === "dismissed"}
             />
           ))}
         </div>

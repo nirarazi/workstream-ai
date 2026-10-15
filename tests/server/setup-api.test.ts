@@ -244,7 +244,10 @@ describe("POST /api/setup preserves what the form doesn't manage", () => {
     await app.request("/api/setup", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ llm: { apiKey: "new", baseUrl: "https://openrouter.ai/api/v1", model: "anthropic/claude-haiku-5.5" } }),
+      body: JSON.stringify({
+        llm: { apiKey: "new", baseUrl: "https://openrouter.ai/api/v1", model: "anthropic/claude-haiku-5.5" },
+        inbox: { expireAfterDays: 14 },
+      }),
     });
     state.db.close();
 
@@ -257,9 +260,29 @@ describe("POST /api/setup preserves what the form doesn't manage", () => {
     expect(yaml).toContain("interruptThreshold: 0.3");
     expect(yaml).toContain("model: anthropic/claude-haiku-5.5");
     expect(yaml).toContain("context: remit");
+    expect(yaml).toContain("expireAfterDays: 14");
     // The new key in .env must win, and tuning for the old model doesn't carry over
     expect(yaml).not.toContain("stale-literal");
     expect(yaml).not.toContain("reasoningEffort");
+  });
+
+  it("rejects an auto-dismiss period that isn't 1 to 3650 whole days", async () => {
+    const writes: string[] = [];
+    vi.doMock("node:fs", async (importOriginal) => {
+      const real = await importOriginal<typeof import("node:fs")>();
+      return { ...real, existsSync: () => false, writeFileSync: (p: string) => { writes.push(String(p)); }, mkdirSync: () => undefined, chmodSync: () => undefined };
+    });
+    for (const expireAfterDays of [0.0001, 0, -3, 1e308, "14"]) {
+      const state = makeState();
+      const res = await createApp(state).request("/api/setup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ inbox: { expireAfterDays } }),
+      });
+      state.db.close();
+      expect(res.status, String(expireAfterDays)).toBe(400);
+    }
+    expect(writes).toEqual([]);
   });
 
   it("rejects values with line breaks instead of writing extra .env lines", async () => {
