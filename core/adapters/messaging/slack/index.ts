@@ -140,6 +140,11 @@ const CHANNEL_GONE_ERRORS = new Set(["channel_not_found", "not_in_channel", "is_
  */
 const QUIET_AFTER_MS = 24 * 60 * 60 * 1000;
 const QUIET_POLL_MS = 5 * 60 * 1000;
+/**
+ * Quiet channels read in one poll, most overdue first. Without a cap they all fall due in the same poll
+ * (they were all first read together), and ~100 history calls at ~50/min hold that poll for minutes.
+ */
+const QUIET_READS_PER_POLL = 15;
 
 export class SlackAdapter implements MessagingAdapter {
   /** Channels that error on read (deleted, archived, left) — skipped and logged once each. */
@@ -229,12 +234,17 @@ export class SlackAdapter implements MessagingAdapter {
     if (atMs > (this.channelLastActivity.get(channelId) ?? 0)) this.channelLastActivity.set(channelId, atMs);
   }
 
-  /** True when the channel has been quiet for a day and was read less than QUIET_POLL_MS ago. */
-  private isQuietAndRecentlyRead(channelId: string, now: number): boolean {
-    const lastRead = this.channelLastRead.get(channelId);
-    if (lastRead === undefined) return false; // never read in this session
-    const lastActivity = this.channelLastActivity.get(channelId) ?? 0;
-    return now - lastActivity > QUIET_AFTER_MS && now - lastRead < QUIET_POLL_MS;
+  /** True when the channel has been read in this session and has had no message for a day. */
+  private isQuiet(channelId: string, now: number): boolean {
+    if (!this.channelLastRead.has(channelId)) return false; // never read in this session
+    return now - (this.channelLastActivity.get(channelId) ?? 0) > QUIET_AFTER_MS;
+  }
+
+  /** The quiet channels to read this poll: those not read for QUIET_POLL_MS, most overdue first, up to the cap. */
+  private quietChannelsDue(channelIds: string[], now: number): Set<string> {
+    const due = channelIds.filter((id) => this.isQuiet(id, now) && now - this.channelLastRead.get(id)! >= QUIET_POLL_MS);
+    due.sort((a, b) => this.channelLastRead.get(a)! - this.channelLastRead.get(b)!);
+    return new Set(due.slice(0, QUIET_READS_PER_POLL));
   }
 
   async readThreads(since: Date, channels?: string[], perChannelSince?: Map<string, Date>): Promise<Thread[]> {
@@ -247,6 +257,14 @@ export class SlackAdapter implements MessagingAdapter {
     const threads: Thread[] = [];
     const globalOldest = String(since.getTime() / 1000);
 
+    // The cursor is the last processed message, so it also tells us when the channel was last active
+    for (const channelId of channelIds) {
+      const channelSince = perChannelSince?.get(channelId);
+      if (channelSince) this.noteActivity(channelId, channelSince.getTime());
+    }
+    const pollStart = Date.now();
+    const quietDue = this.quietChannelsDue(channelIds, pollStart);
+
     for (const channelId of channelIds) {
       const channelInfo = this.channelMap.get(channelId);
       const channelName = channelInfo?.name ?? channelId;
@@ -254,11 +272,8 @@ export class SlackAdapter implements MessagingAdapter {
       // Use per-channel cursor if available, otherwise fall back to global
       const channelSince = perChannelSince?.get(channelId);
 
-      // The cursor is the last processed message, so it also tells us when the channel was last active
-      const now = Date.now();
-      if (channelSince) this.noteActivity(channelId, channelSince.getTime());
-      if (this.isQuietAndRecentlyRead(channelId, now)) continue;
-      this.channelLastRead.set(channelId, now);
+      if (this.isQuiet(channelId, pollStart) && !quietDue.has(channelId)) continue;
+      this.channelLastRead.set(channelId, Date.now());
       const oldest = channelSince
         ? String(channelSince.getTime() / 1000)
         : globalOldest;

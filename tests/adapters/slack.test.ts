@@ -186,6 +186,33 @@ describe("SlackAdapter", () => {
       }
     });
 
+    it("spreads quiet channels that fall due together over several polls, most overdue first", async () => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      try {
+        vi.setSystemTime(new Date("2026-10-13T12:00:00Z"));
+        const ids = Array.from({ length: 20 }, (_, i) => `CQ${String(i).padStart(2, "0")}`);
+        mockConversationsList.mockResolvedValue({ channels: ids.map((id) => ({ id, name: id })), response_metadata: { next_cursor: "" } });
+        mockConversationsHistory.mockResolvedValue({ messages: [], response_metadata: { next_cursor: "" } });
+        const readChannels = () => mockConversationsHistory.mock.calls.map((c) => c[0].channel);
+        const since = new Date("2026-10-10T00:00:00Z");
+
+        await adapter.readThreads(since); // the first read of a session covers every channel
+        expect(readChannels()).toEqual(ids);
+
+        mockConversationsHistory.mockClear();
+        vi.setSystemTime(new Date("2026-10-13T12:05:00Z"));
+        await adapter.readThreads(since);
+        expect(readChannels()).toEqual(ids.slice(0, 15));
+
+        mockConversationsHistory.mockClear();
+        vi.setSystemTime(new Date("2026-10-13T12:05:30Z"));
+        await adapter.readThreads(since);
+        expect(readChannels()).toEqual(ids.slice(15)); // the rest, before any read again
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
     it("still fails the poll on errors that aren't about one channel", async () => {
       mockConversationsList.mockResolvedValue({ channels: [{ id: "C001", name: "general" }], response_metadata: { next_cursor: "" } });
       mockConversationsHistory.mockRejectedValue(Object.assign(new Error("invalid_auth"), { data: { ok: false, error: "invalid_auth" } }));
