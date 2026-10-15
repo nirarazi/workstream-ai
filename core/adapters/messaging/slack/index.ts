@@ -276,9 +276,9 @@ export class SlackAdapter implements MessagingAdapter {
     for (const id of channelIds) {
       const lastRead = this.channelLastRead.get(id);
       if (lastRead === undefined || !this.isReadSlowly(id, now)) continue;
-      const interval = this.unreadableChannels.has(id) ? UNREADABLE_RETRY_MS : QUIET_POLL_MS;
-      if (now - lastRead < interval) continue;
-      const headStart = this.channelMap.get(id)?.isDirect && !this.unreadableChannels.has(id) ? DIRECT_HEAD_START_MS : 0;
+      const unreadable = this.unreadableChannels.has(id);
+      if (now - lastRead < (unreadable ? UNREADABLE_RETRY_MS : QUIET_POLL_MS)) continue;
+      const headStart = this.channelMap.get(id)?.isDirect && !unreadable ? DIRECT_HEAD_START_MS : 0;
       due.push({ id, order: lastRead - headStart });
     }
     due.sort((a, b) => a.order - b.order);

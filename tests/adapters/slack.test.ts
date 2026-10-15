@@ -221,7 +221,7 @@ describe("SlackAdapter", () => {
         expect(readChannels()).toEqual(["CBUSY", ...ids.slice(5, 10)]); // the rest, before any is read again
       });
 
-      it("put DMs ahead of channels due at the same time, but not ahead of channels waiting much longer", async () => {
+      it("put DMs ahead of channels due at the same time", async () => {
         const dms = ["DM1", "DM2", "DM3", "DM4", "DM5"];
         mockConversationsList.mockResolvedValue({
           channels: [...ids.map((id) => ({ id, name: id })), ...dms.map((id) => ({ id, is_im: true, user: "U-relay" }))],
@@ -258,7 +258,7 @@ describe("SlackAdapter", () => {
           await adapter.readThreads(since);
           if (readChannels().includes("CQ00")) readTimes.push(time);
         }
-        // Behind the DMs for a while, but not for ever
+        // Behind the DMs for a while, but not for ever (it's listed last, so it also loses the 12:15 tie)
         expect(readTimes).toEqual(["12:20:00"]);
       });
 
