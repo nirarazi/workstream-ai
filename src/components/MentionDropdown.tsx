@@ -66,11 +66,3 @@ export default function MentionDropdown({
     </div>
   );
 }
-
-/** Filter mentionables by query — exported for use in parent keyboard handling */
-export function filterMentionables(mentionables: Mentionable[], query: string): Mentionable[] {
-  const q = query.toLowerCase();
-  return q
-    ? mentionables.filter((m) => m.name.toLowerCase().includes(q))
-    : mentionables;
-}
