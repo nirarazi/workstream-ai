@@ -2,11 +2,19 @@
 
 import { randomUUID } from "node:crypto";
 import { createLogger } from "../logger.js";
-import type { ModelProvider, ClassificationResult } from "../classifier/providers/interface.js";
+import { InvalidReplyError, type ModelProvider, type ClassificationResult } from "../classifier/providers/interface.js";
 import type { BackoffState } from "../classifier/providers/openai-compatible.js";
 import { OpenAICompatibleProvider } from "../classifier/providers/openai-compatible.js";
 import type { Database } from "../graph/db.js";
 import type { DailyUsage, BudgetStatus, UsageConfig } from "./types.js";
+
+
+/** The daily LLM budget is spent; classification waits until it resets at midnight UTC */
+export class BudgetExhaustedError extends Error {
+  constructor() {
+    super("Daily LLM budget exhausted. Resets at midnight UTC.");
+  }
+}
 
 const log = createLogger("usage-tracker");
 
@@ -83,22 +91,27 @@ export class UsageTracker implements ModelProvider {
   ): Promise<ClassificationResult> {
     this.assertNotRetired();
     if (this.isBudgetExhausted()) {
-      log.warn("Daily LLM budget exhausted — returning fallback classification");
-      return {
-        status: "noise",
-        confidence: 0.1,
-        reason: "Daily LLM budget exhausted. Resets at midnight UTC.",
-        workItemIds: [],
-        title: "",
-      };
+      throw new BudgetExhaustedError();
     }
-
-    const result = await this.provider.classify(message, systemPrompt, fewShotExamples);
 
     // Estimate tokens (provider doesn't expose usage data via the classify interface).
     // Add per-call overhead for request JSON structure, role/message wrapping, etc.
     const fewShotText = fewShotExamples.map((e) => e.content).join("");
     const inputTokens = estimateTokens(systemPrompt + fewShotText + message) + MIN_INPUT_TOKEN_OVERHEAD;
+
+    let result: ClassificationResult;
+    try {
+      result = await this.provider.classify(message, systemPrompt, fewShotExamples);
+    } catch (err) {
+      // A reply that came back but couldn't be used was still billed, and so, usually, is a generation cut off by
+      // the timeout: both count toward the budget
+      const timedOut = err instanceof Error && err.name === "TimeoutError";
+      if ((err instanceof InvalidReplyError && err.billed) || timedOut) {
+        this.recordUsage(caller, inputTokens, MIN_OUTPUT_TOKEN_OVERHEAD, "estimated");
+      }
+      throw err;
+    }
+
     const outputTokens = estimateTokens(JSON.stringify(result)) + MIN_OUTPUT_TOKEN_OVERHEAD;
 
     this.recordUsage(caller, inputTokens, outputTokens, "estimated");

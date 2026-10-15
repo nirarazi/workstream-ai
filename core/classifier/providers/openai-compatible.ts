@@ -1,7 +1,7 @@
 // core/classifier/providers/openai-compatible.ts — Universal provider for OpenAI-compatible and Anthropic APIs
 
 import { createLogger } from "../../logger.js";
-import type { ClassificationResult, ModelProvider } from "./interface.js";
+import { InvalidReplyError, ProviderAuthError, type ClassificationResult, type ModelProvider } from "./interface.js";
 
 const log = createLogger("openai-compatible");
 
@@ -28,17 +28,50 @@ export interface OpenAICompatibleConfig {
 /** Error with an optional Retry-After hint (seconds) from 429 responses */
 class ApiError extends Error {
   retryAfterSeconds?: number;
-  constructor(message: string, retryAfterSeconds?: number) {
+  constructor(message: string, retryAfterSeconds?: number, readonly status?: number) {
     super(message);
     this.retryAfterSeconds = retryAfterSeconds;
   }
 }
 
+/** Statuses meaning the provider refused this request as sent, unlike auth, outages or rate limits */
+const REQUEST_REJECTED = new Set([400, 413, 422]);
+/** A refusal that's about this message (too long, flagged by moderation) rather than the account or settings */
+const MESSAGE_REFUSAL = /context.?length|maximum context|too long|too many tokens|token limit|moderat|flagged/i;
+
+/**
+ * Map a provider refusal to what it means for retrying this message. Only a 401 is surely about the credentials;
+ * a 403 can also be a gateway or firewall blocking this message's content, so it's handled per message (backoff,
+ * newer messages first) rather than pausing everything.
+ */
+function classifyRefusal(err: ApiError): Error {
+  if (err.status === 401) {
+    return new ProviderAuthError("Model provider refused the API key (HTTP 401)");
+  }
+  if (err.status === 413) {
+    return new InvalidReplyError("Model refused this message (HTTP 413)", false, true);
+  }
+  return new InvalidReplyError(`Model refused the request (HTTP ${err.status})`, false, MESSAGE_REFUSAL.test(err.message));
+}
+
+/**
+ * A provider error for logs and the status shown in the UI. An API error's body can echo the request, including
+ * the message being classified, so only its status is kept.
+ */
+export function describeProviderError(error: unknown): string {
+  if (error instanceof ApiError) return `${error.status !== undefined ? `HTTP ${error.status}` : "API error"} from the model provider`;
+  // A parse error's message quotes the reply, so only its name is kept
+  if (error instanceof SyntaxError) return error.name;
+  return error instanceof Error ? `${error.name}: ${error.message.slice(0, 200)}` : String(error).slice(0, 200);
+}
+
+const RETRYABLE_STATUS = new Set([408, 429, 502, 503, 504]);
+
 function isRetryable(error: unknown): boolean {
+  // Decide on the status, not the message: an API error's message includes a body that can echo anything
+  if (error instanceof ApiError) return error.status !== undefined && RETRYABLE_STATUS.has(error.status);
   if (error instanceof Error) {
     if (error.name === "TimeoutError" || error.message.includes("timeout")) return true;
-    if (error.message.includes("429")) return true;
-    if (error.message.includes("502") || error.message.includes("503") || error.message.includes("504")) return true;
   }
   return false;
 }
@@ -126,8 +159,22 @@ export class OpenAICompatibleProvider implements ModelProvider {
     systemPrompt: string,
     fewShotExamples: Array<{ role: string; content: string }>,
   ): Promise<ClassificationResult> {
-    const rawText = await this.complete(message, systemPrompt, fewShotExamples);
-    const result = this.parseResponse(rawText);
+    let rawText: string;
+    try {
+      rawText = await this.complete(message, systemPrompt, fewShotExamples);
+    } catch (err) {
+      if (err instanceof ApiError && err.status !== undefined && (REQUEST_REJECTED.has(err.status) || err.status === 401 || err.status === 403)) {
+        throw classifyRefusal(err);
+      }
+      throw err;
+    }
+    let result: ClassificationResult;
+    try {
+      result = this.parseResponse(rawText);
+    } catch {
+      // No reply text in the message: it can echo the classified message
+      throw new InvalidReplyError("Model reply wasn't a usable classification", true, true);
+    }
     log.debug("Classification result", { input: message.slice(0, 120), result });
     return result;
   }
@@ -170,7 +217,7 @@ export class OpenAICompatibleProvider implements ModelProvider {
             : undefined;
           const delayMs = serverDelay ?? getBackoffMs(attempt);
           const nextRetryAt = new Date(Date.now() + delayMs).toISOString();
-          const errorMsg = error instanceof Error ? error.message.slice(0, 200) : String(error);
+          const errorMsg = describeProviderError(error);
 
           this._backoff = {
             active: true,
@@ -198,9 +245,9 @@ export class OpenAICompatibleProvider implements ModelProvider {
           active: false,
           retryCount: 0,
           nextRetryAt: null,
-          lastError: error instanceof Error ? error.message.slice(0, 200) : String(error),
+          lastError: describeProviderError(error),
         };
-        log.error("LLM call failed", error);
+        log.error("LLM call failed", describeProviderError(error));
         throw error;
       }
     }
@@ -260,7 +307,7 @@ export class OpenAICompatibleProvider implements ModelProvider {
     if (!response.ok) {
       const text = await response.text().catch(() => "");
       const retryAfter = parseRetryAfter(response);
-      throw new ApiError(`Anthropic API error ${response.status}: ${text}`, retryAfter);
+      throw new ApiError(`Anthropic API error ${response.status}: ${text}`, retryAfter, response.status);
     }
 
     const json = (await response.json()) as {
@@ -330,7 +377,7 @@ export class OpenAICompatibleProvider implements ModelProvider {
           return doCall(false);
         }
         const retryAfter = parseRetryAfter(response);
-        throw new ApiError(`OpenAI API error ${response.status}: ${text}`, retryAfter);
+        throw new ApiError(`OpenAI API error ${response.status}: ${text}`, retryAfter, response.status);
       }
 
       const json = (await response.json()) as {
@@ -354,6 +401,9 @@ export class OpenAICompatibleProvider implements ModelProvider {
     }
 
     const parsed = JSON.parse(cleaned) as Record<string, unknown>;
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+      throw new Error("Reply is not a JSON object");
+    }
 
     const status = typeof parsed.status === "string" ? parsed.status : "noise";
     const confidence = typeof parsed.confidence === "number" ? parsed.confidence : 0;

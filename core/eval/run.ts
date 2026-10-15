@@ -137,9 +137,7 @@ function makeBackend(name: string, config: Config, root: string): { label: strin
             channelName: item.channelName,
           }, undefined, undefined, threadContext(item, root));
           // Classifier swallows provider errors and returns noise; count those as errors, not predictions.
-          if (c.reason.startsWith("Classification failed") || c.reason === "Provider returned empty result") {
-            throw new Error(c.reason);
-          }
+          if (c.failed) throw new Error(c.reason);
           return { status: c.status, confidence: c.confidence, targetedAtOperator: c.targetedAtOperator, latencyMs: Date.now() - started };
         },
       };

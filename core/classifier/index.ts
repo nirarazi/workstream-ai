@@ -7,9 +7,10 @@ import { createLogger } from "../logger.js";
 import { findProjectRoot, type Config } from "../config.js";
 import type { Classification, EntryType, OperatorIdentityMap, StatusCategory, ThreadContext } from "../types.js";
 import { applyDecision, createDecisionGate, type DecisionGate } from "../decisions/gate.js";
-import { OpenAICompatibleProvider, type BackoffState } from "./providers/openai-compatible.js";
-import type { ModelProvider } from "./providers/interface.js";
+import { OpenAICompatibleProvider, describeProviderError, type BackoffState } from "./providers/openai-compatible.js";
+import { InvalidReplyError, ProviderAuthError, type ModelProvider } from "./providers/interface.js";
 import type { RateLimiter } from "../rate-limiter.js";
+import { BudgetExhaustedError } from "../usage/tracker.js";
 
 const log = createLogger("classifier");
 
@@ -205,8 +206,12 @@ export class Classifier {
     const [llmResult, decisionResult] = await Promise.allSettled([llm, decision]);
     // classifyWithLLM never rejects (it falls back to noise internally)
     const base = (llmResult as PromiseFulfilledResult<Classification>).value;
+    // Without the LLM's answer there's no title or links; the whole message is tried again later
+    if (base.failed) return base;
     if (decisionResult.status === "rejected") {
-      log.warn("Decision gate failed — using the LLM classification", decisionResult.reason);
+      // Name only: decision providers' errors can carry response bodies or refusal text
+      const reason = decisionResult.reason;
+      log.warn("Decision gate failed — using the LLM classification", reason instanceof Error ? reason.name : "error");
       return base;
     }
     return applyDecision(base, decisionResult.value, senderContext?.senderType);
@@ -314,7 +319,7 @@ Return false if:
         return {
           status: "noise", entryType: "noise", confidence: 0.1,
           reason: "Provider returned empty result", workItemIds: [], title: "",
-          targetedAtOperator: true, actionRequiredFrom: null, nextAction: null,
+          targetedAtOperator: true, actionRequiredFrom: null, nextAction: null, failed: "invalid",
         };
       }
 
@@ -350,17 +355,23 @@ Return false if:
         }),
       };
     } catch (error) {
-      log.warn("Classification failed, returning default noise classification", error);
+      const budget = error instanceof BudgetExhaustedError;
+      if (!budget) log.warn("Classification failed, returning default noise classification", describeProviderError(error));
       return {
         status: "noise",
         entryType: "noise",
         confidence: 0.1,
-        reason: "Classification failed — defaulting to noise",
+        reason: budget ? error.message : "Classification failed — defaulting to noise",
         workItemIds: [],
         title: "",
         targetedAtOperator: true,
         actionRequiredFrom: null,
         nextAction: null,
+        failed: budget
+          ? "budget"
+          : error instanceof ProviderAuthError
+            ? "auth"
+            : error instanceof InvalidReplyError && error.messageSpecific ? "invalid" : "unreachable",
       };
     }
   }

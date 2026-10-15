@@ -50,6 +50,15 @@ export interface Classification {
   nextAction: string | null;
   /** Per-work-item statuses when a message is a summary/brief mentioning multiple items */
   breakdown?: ClassificationBreakdown[];
+  /**
+   * Set when no model answer was obtained. The other fields are then a noise placeholder, not a classification.
+   * - "invalid": this message is the problem (an unusable reply, too long, refused by moderation)
+   * - "unreachable": the model couldn't be used right now (network, timeout, rate limit, server error, or a
+   *   refusal that affects every message, such as a spent credit balance)
+   * - "auth": the provider refused the API key or account
+   * - "budget": the daily LLM budget is spent
+   */
+  failed?: "invalid" | "unreachable" | "auth" | "budget";
 }
 
 export interface Message {
