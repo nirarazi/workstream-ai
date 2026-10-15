@@ -5,6 +5,7 @@ import { createLogger } from "../logger.js";
 import type {
   ActionableItem,
   Agent,
+  DismissReason,
   Enrichment,
   EntryType,
   Event,
@@ -73,6 +74,7 @@ function toWorkItem(row: WorkItemRow): WorkItem {
     snoozedUntil: row.snoozed_until,
     pinned: Boolean(row.pinned),
     dismissedAt: row.dismissed_at,
+    dismissReason: (row.dismiss_reason as DismissReason | null) ?? null,
     mergedInto: row.merged_into ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -163,6 +165,17 @@ function toSummary(row: SummaryRow): { workItemId: string; summaryText: string; 
     generatedAt: row.generated_at,
     latestEventId: row.latest_event_id,
   };
+}
+
+/** Ticket-style IDs ("AI-101", "OPS-7") in a message, upper-cased. */
+function ticketIds(text: string): Set<string> {
+  return new Set((text.match(/\b[A-Z][A-Z0-9]+-\d+\b/g) ?? []).map((id) => id.toUpperCase()));
+}
+
+function sameSet(a: Set<string>, b: Set<string>): boolean {
+  if (a.size !== b.size) return false;
+  for (const x of a) if (!b.has(x)) return false;
+  return true;
 }
 
 export class ContextGraph {
@@ -400,9 +413,52 @@ export class ContextGraph {
     return Boolean(newValue);
   }
 
-  dismissWorkItem(workItemId: string): void {
-    this.db.db.prepare("UPDATE work_items SET dismissed_at = ? WHERE id = ?").run(new Date().toISOString(), workItemId);
-    log.debug("Dismissed work item", workItemId);
+  dismissWorkItem(workItemId: string, reason: DismissReason = "operator"): void {
+    this.db.db
+      .prepare("UPDATE work_items SET dismissed_at = ?, dismiss_reason = ? WHERE id = ?")
+      .run(new Date().toISOString(), reason, workItemId);
+    log.debug("Dismissed work item", workItemId, reason);
+  }
+
+  /**
+   * Auto-dismisses Needs-me items with no new message for `days` (reason "expired"). Pinned and currently
+   * snoozed items are left alone. Like an operator dismissal, a new message aimed at the operator brings
+   * the item back. Returns the number of items expired.
+   *
+   * dismissed_at is the item's last message time, not now: a backlog is ingested over several polls, and
+   * a message sent after that time must still bring the item back even if it's ingested after expiry.
+   */
+  expireInactiveItems(days: number, now: Date = new Date()): number {
+    const cutoff = new Date(now.getTime() - days * 24 * 60 * 60 * 1000).toISOString();
+    const result = this.db.db
+      .prepare(`
+        UPDATE work_items SET dismissed_at = (
+          SELECT MAX(e.timestamp) FROM events e
+          WHERE e.work_item_id = work_items.id
+             OR e.thread_id IN (SELECT thread_id FROM thread_work_items WHERE work_item_id = work_items.id)
+        ), dismiss_reason = 'expired'
+        WHERE id IN (
+          SELECT wi.id FROM work_items wi
+          WHERE wi.current_atc_status IN ('blocked_on_human', 'needs_decision')
+            AND wi.merged_into IS NULL
+            AND COALESCE(wi.pinned, 0) = 0
+            AND (wi.snoozed_until IS NULL OR wi.snoozed_until <= ?)
+            AND (
+              SELECT MAX(e.timestamp) FROM events e
+              WHERE e.work_item_id = wi.id
+                 OR e.thread_id IN (SELECT thread_id FROM thread_work_items WHERE work_item_id = wi.id)
+            ) < ?
+            -- not dismissed, or brought back by a later message aimed at the operator (as the inbox does)
+            AND (wi.dismissed_at IS NULL OR wi.dismissed_at < (
+              SELECT MAX(e.timestamp) FROM events e
+              WHERE (e.work_item_id = wi.id
+                 OR e.thread_id IN (SELECT thread_id FROM thread_work_items WHERE work_item_id = wi.id))
+                AND e.targeted_at_operator = 1
+            ))
+        )
+      `)
+      .run(now.toISOString(), cutoff);
+    return result.changes;
   }
 
   // --- Threads ---
@@ -1097,7 +1153,13 @@ export class ContextGraph {
     return rows.map(mapActionableRow);
   }
 
-  getActionableItems(): ActionableItem[] {
+  /**
+   * Needs me: blocked or waiting on a decision, and the latest blocking message the model was sure enough
+   * about says it's the operator's. A later block aimed at someone else at handoffMinConfidence or above
+   * ("it's with Dana now") takes the item out; progress and chatter don't, and neither does an unsure one,
+   * nor one that still names the operator (any of operatorNames: IDs or names, matched case-insensitively).
+   */
+  getActionableItems(handoffMinConfidence = 0.6, operatorNames: string[] = []): ActionableItem[] {
     const rows = this.db.db
       .prepare(
         `
@@ -1131,9 +1193,22 @@ export class ContextGraph {
       LEFT JOIN agents a ON e.agent_id = a.id
       LEFT JOIN threads t ON e.thread_id = t.id
       WHERE wi.current_atc_status IN ('blocked_on_human', 'needs_decision')
-        AND (wi.snoozed_until IS NULL OR wi.snoozed_until <= datetime('now'))
+        AND (wi.snoozed_until IS NULL OR datetime(wi.snoozed_until) <= datetime('now'))
         AND (wi.dismissed_at IS NULL OR e.timestamp > wi.dismissed_at)
         AND (wi.merged_into IS NULL)
+        AND NOT EXISTS (
+          SELECT 1 FROM events e4
+          WHERE (e4.work_item_id = wi.id
+             OR e4.thread_id IN (SELECT thread_id FROM thread_work_items WHERE work_item_id = wi.id))
+            AND e4.targeted_at_operator = 0
+            AND e4.status IN ('blocked_on_human', 'needs_decision')
+            AND e4.confidence >= ?
+            AND e4.timestamp > e.timestamp
+            AND NOT EXISTS (
+              SELECT 1 FROM json_each(CASE WHEN json_valid(e4.action_required_from) THEN e4.action_required_from ELSE '[]' END) j
+              WHERE lower(j.value) IN (SELECT lower(value) FROM json_each(?))
+            )
+        )
       ORDER BY
         CASE wi.current_atc_status
           WHEN 'blocked_on_human' THEN 0
@@ -1142,7 +1217,7 @@ export class ContextGraph {
         e.timestamp DESC
     `,
       )
-      .all() as Array<Record<string, unknown>>;
+      .all(handoffMinConfidence, JSON.stringify(operatorNames)) as Array<Record<string, unknown>>;
 
     return rows.map(mapActionableRow);
   }
@@ -1182,6 +1257,13 @@ export class ContextGraph {
       WHERE wi.current_atc_status IS NOT NULL
         AND wi.current_atc_status NOT IN ('completed', 'noise')
         AND (wi.merged_into IS NULL)
+        AND (wi.dismissed_at IS NULL OR EXISTS (
+          SELECT 1 FROM events e3
+          WHERE (e3.work_item_id = wi.id
+             OR e3.thread_id IN (SELECT thread_id FROM thread_work_items WHERE work_item_id = wi.id))
+            AND e3.targeted_at_operator = 1
+            AND e3.timestamp > wi.dismissed_at
+        ))
       ORDER BY
         CASE wi.current_atc_status
           WHEN 'blocked_on_human' THEN 0
@@ -1190,6 +1272,63 @@ export class ContextGraph {
           ELSE 3
         END,
         wi.updated_at DESC
+    `,
+      )
+      .all() as Array<Record<string, unknown>>;
+
+    return rows.map(mapActionableRow);
+  }
+
+  /**
+   * Dismissed items that are still dismissed (no message aimed at the operator since), newest dismissal
+   * first, each with its latest event. Items a new message brought back are in Needs me instead.
+   */
+  getDismissedItems(): ActionableItem[] {
+    const rows = this.db.db
+      .prepare(
+        `
+      SELECT
+        wi.*,
+        e.id AS e_id, e.thread_id AS e_thread_id, e.message_id AS e_message_id,
+        e.work_item_id AS e_work_item_id, e.agent_id AS e_agent_id,
+        e.status AS e_status, e.confidence AS e_confidence, e.reason AS e_reason,
+        e.raw_text AS e_raw_text, e.timestamp AS e_timestamp, e.created_at AS e_created_at,
+        e.entry_type AS e_entry_type,
+        e.targeted_at_operator AS e_targeted_at_operator,
+        e.action_required_from AS e_action_required_from,
+        e.next_action AS e_next_action,
+        a.id AS a_id, a.name AS a_name, a.platform AS a_platform,
+        a.platform_user_id AS a_platform_user_id, a.role AS a_role,
+        a.avatar_url AS a_avatar_url, a.is_bot AS a_is_bot,
+        a.first_seen AS a_first_seen, a.last_seen AS a_last_seen,
+        t.id AS t_id, t.channel_id AS t_channel_id, t.channel_name AS t_channel_name,
+        t.platform_meta AS t_platform_meta,
+        t.platform AS t_platform, t.work_item_id AS t_work_item_id,
+        t.last_activity AS t_last_activity, t.message_count AS t_message_count
+      FROM work_items wi
+      LEFT JOIN events e ON e.id = (
+          SELECT e2.id FROM events e2
+          WHERE (e2.work_item_id = wi.id
+             OR e2.thread_id IN (SELECT thread_id FROM thread_work_items WHERE work_item_id = wi.id))
+            AND e2.agent_id IS NOT NULL -- the message that surfaced it, not the dismissal record
+          ORDER BY e2.timestamp DESC
+          LIMIT 1
+        )
+      LEFT JOIN agents a ON e.agent_id = a.id
+      LEFT JOIN threads t ON e.thread_id = t.id
+      WHERE wi.dismissed_at IS NOT NULL
+        AND wi.merged_into IS NULL
+        -- finished since (approved, closed, marked noise): nothing left to set aside
+        AND (wi.current_atc_status IS NULL OR wi.current_atc_status NOT IN ('completed', 'noise'))
+        AND NOT EXISTS (
+          SELECT 1 FROM events e3
+          WHERE (e3.work_item_id = wi.id
+             OR e3.thread_id IN (SELECT thread_id FROM thread_work_items WHERE work_item_id = wi.id))
+            AND e3.targeted_at_operator = 1
+            AND e3.timestamp > wi.dismissed_at
+        )
+      ORDER BY wi.dismissed_at DESC
+      LIMIT 200
     `,
       )
       .all() as Array<Record<string, unknown>>;
@@ -1208,6 +1347,7 @@ export class ContextGraph {
     windowMinutes?: number;  // default 30
     limit?: number;          // default 5
     excludeThreadId?: string; // exclude the current message's thread
+    before?: string;         // the message's timestamp; the window ends here (default: now)
   }): Array<{
     workItemId: string;
     workItemTitle: string;
@@ -1217,7 +1357,10 @@ export class ContextGraph {
   }> {
     const windowMinutes = params.windowMinutes ?? 30;
     const limit = params.limit ?? 5;
-    const windowStart = new Date(Date.now() - windowMinutes * 60 * 1000).toISOString();
+    // Measured from the message, not the clock: during a catch-up, "the last 30 minutes" of now is empty.
+    const windowEndMs = params.before ? new Date(params.before).getTime() : Date.now();
+    const windowStart = new Date(windowEndMs - windowMinutes * 60 * 1000).toISOString();
+    const windowEnd = new Date(windowEndMs).toISOString();
 
     const baseSQL = `
       SELECT
@@ -1232,7 +1375,7 @@ export class ContextGraph {
       LEFT JOIN agents a ON e.agent_id = a.id
       WHERE t.channel_id = ?
         AND t.message_count <= 1
-        AND e.timestamp > ?
+        AND e.timestamp > ? AND e.timestamp <= ?
         AND e.work_item_id IS NOT NULL
         AND wi.merged_into IS NULL
     `;
@@ -1246,13 +1389,13 @@ export class ContextGraph {
         ORDER BY e.timestamp DESC
         LIMIT ?
       `;
-      args = [params.channelId, windowStart, params.excludeThreadId, limit];
+      args = [params.channelId, windowStart, windowEnd, params.excludeThreadId, limit];
     } else {
       sql = baseSQL + `
         ORDER BY e.timestamp DESC
         LIMIT ?
       `;
-      args = [params.channelId, windowStart, limit];
+      args = [params.channelId, windowStart, windowEnd, limit];
     }
 
     const rows = this.db.db.prepare(sql).all(...args) as Array<{
@@ -1270,6 +1413,57 @@ export class ContextGraph {
       text: row.text.length > 200 ? row.text.slice(0, 200) + "…" : row.text,
       timestamp: row.timestamp,
     }));
+  }
+
+  /**
+   * Finds the open work item a recurring bot alert belongs to: the same sender posted near-identical text
+   * in the same channel within the window before this message. Alert bots re-post as new top-level
+   * messages, so Slack threading can't group them. Dismissed, completed and merged items don't match:
+   * a repeat after the operator handled it is news.
+   */
+  findRecurringWorkItem(params: {
+    agentId: string;
+    channelId: string;
+    text: string;
+    before: string;           // the new message's timestamp
+    windowHours?: number;     // default 24
+    minSimilarity?: number;   // Jaccard over significant words, default 0.75
+  }): string | null {
+    const windowHours = params.windowHours ?? 24;
+    const minSimilarity = params.minSimilarity ?? 0.75;
+    const words = extractSignificantWords(params.text.replace(/<@[^>]+>/g, " "));
+    if (words.size < 5) return null; // too short to tell a repeat from a coincidence
+
+    const since = new Date(new Date(params.before).getTime() - windowHours * 3600 * 1000).toISOString();
+    const rows = this.db.db
+      .prepare(`
+        SELECT e.work_item_id AS work_item_id, e.raw_text AS text
+        FROM events e
+        JOIN threads t ON e.thread_id = t.id
+        JOIN work_items wi ON e.work_item_id = wi.id
+        WHERE e.agent_id = ?
+          AND t.channel_id = ?
+          AND e.timestamp >= ? AND e.timestamp < ?
+          AND e.raw_text IS NOT NULL
+          AND wi.dismissed_at IS NULL
+          AND wi.merged_into IS NULL
+          AND (wi.current_atc_status IS NULL OR wi.current_atc_status NOT IN ('completed', 'noise'))
+        ORDER BY e.timestamp DESC
+        LIMIT 50
+      `)
+      .all(params.agentId, params.channelId, since, params.before) as Array<{ work_item_id: string; text: string }>;
+
+    const tickets = ticketIds(params.text);
+    for (const row of rows) {
+      // A template alert about a different ticket is a different problem, however similar the wording
+      if (!sameSet(tickets, ticketIds(row.text))) continue;
+      const other = extractSignificantWords(row.text.replace(/<@[^>]+>/g, " "));
+      let shared = 0;
+      for (const w of words) if (other.has(w)) shared++;
+      const union = words.size + other.size - shared;
+      if (union > 0 && shared / union >= minSimilarity) return row.work_item_id;
+    }
+    return null;
   }
 
   // --- Merge / Unmerge ---
@@ -1398,6 +1592,7 @@ function mapActionableRow(row: Record<string, unknown>): ActionableItem {
     snoozedUntil: row.snoozed_until as string | null,
     pinned: Boolean(row.pinned),
     dismissedAt: (row.dismissed_at as string | null) ?? null,
+    dismissReason: (row.dismiss_reason as DismissReason | null) ?? null,
     createdAt: row.created_at as string,
     updatedAt: row.updated_at as string,
   };

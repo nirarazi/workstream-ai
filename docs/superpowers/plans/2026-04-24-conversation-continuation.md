@@ -213,15 +213,15 @@ describe("getRecentChannelContext", () => {
     // Set up: two standalone messages in the same channel, different work items
     graph.upsertWorkItem({ id: "thread:ts1", source: "inferred", title: "First topic" });
     graph.upsertWorkItem({ id: "thread:ts2", source: "inferred", title: "Second topic" });
-    graph.upsertAgent({ id: "U1", name: "Guy", platform: "slack", platformUserId: "U1", avatarUrl: null, isBot: false });
+    graph.upsertAgent({ id: "U1", name: "Dana", platform: "slack", platformUserId: "U1", avatarUrl: null, isBot: false });
 
     graph.upsertThread({
-      id: "ts1", channelId: "C1", channelName: "DM: Guy",
+      id: "ts1", channelId: "C1", channelName: "DM: Dana",
       platform: "slack", workItemId: "thread:ts1",
       lastActivity: new Date().toISOString(), messageCount: 1,
     });
     graph.upsertThread({
-      id: "ts2", channelId: "C1", channelName: "DM: Guy",
+      id: "ts2", channelId: "C1", channelName: "DM: Dana",
       platform: "slack", workItemId: "thread:ts2",
       lastActivity: new Date().toISOString(), messageCount: 1,
     });
@@ -247,16 +247,16 @@ describe("getRecentChannelContext", () => {
 
     expect(context).toHaveLength(1);
     expect(context[0].workItemId).toBe("thread:ts1");
-    expect(context[0].senderName).toBe("Guy");
+    expect(context[0].senderName).toBe("Dana");
     expect(context[0].text).toContain("OK with it");
   });
 
   it("excludes messages older than the window", () => {
     graph.upsertWorkItem({ id: "thread:old", source: "inferred", title: "Old" });
-    graph.upsertAgent({ id: "U1", name: "Guy", platform: "slack", platformUserId: "U1", avatarUrl: null, isBot: false });
+    graph.upsertAgent({ id: "U1", name: "Dana", platform: "slack", platformUserId: "U1", avatarUrl: null, isBot: false });
 
     graph.upsertThread({
-      id: "old", channelId: "C1", channelName: "DM: Guy",
+      id: "old", channelId: "C1", channelName: "DM: Dana",
       platform: "slack", workItemId: "thread:old",
       lastActivity: new Date(Date.now() - 3600000).toISOString(), messageCount: 1,
     });
@@ -277,14 +277,14 @@ describe("getRecentChannelContext", () => {
   });
 
   it("limits results to maxContextMessages", () => {
-    graph.upsertAgent({ id: "U1", name: "Guy", platform: "slack", platformUserId: "U1", avatarUrl: null, isBot: false });
+    graph.upsertAgent({ id: "U1", name: "Dana", platform: "slack", platformUserId: "U1", avatarUrl: null, isBot: false });
     const now = Date.now();
 
     for (let i = 0; i < 10; i++) {
       const id = `thread:ts${i}`;
       graph.upsertWorkItem({ id, source: "inferred", title: `Topic ${i}` });
       graph.upsertThread({
-        id: `ts${i}`, channelId: "C1", channelName: "DM: Guy",
+        id: `ts${i}`, channelId: "C1", channelName: "DM: Dana",
         platform: "slack", workItemId: id,
         lastActivity: new Date(now - i * 60000).toISOString(), messageCount: 1,
       });
@@ -306,10 +306,10 @@ describe("getRecentChannelContext", () => {
 
   it("excludes messages from multi-message threads", () => {
     graph.upsertWorkItem({ id: "thread:parent", source: "inferred", title: "Threaded convo" });
-    graph.upsertAgent({ id: "U1", name: "Guy", platform: "slack", platformUserId: "U1", avatarUrl: null, isBot: false });
+    graph.upsertAgent({ id: "U1", name: "Dana", platform: "slack", platformUserId: "U1", avatarUrl: null, isBot: false });
 
     graph.upsertThread({
-      id: "parent", channelId: "C1", channelName: "DM: Guy",
+      id: "parent", channelId: "C1", channelName: "DM: Dana",
       platform: "slack", workItemId: "thread:parent",
       lastActivity: new Date().toISOString(), messageCount: 5, // threaded — has replies
     });
@@ -433,14 +433,14 @@ describe("channel context in prompt", () => {
       "No big difference from floating it over",
       [{ id: "thread:ts1", title: "Partner approval", reasons: ["same channel"] }],
       null,
-      { senderName: "Nir", senderType: "human", channelName: "DM: Guy" },
+      { senderName: "Alex", senderType: "human", channelName: "DM: Dana" },
       [],
       // New parameter: channelContext
       [
         {
           workItemId: "thread:ts1",
           workItemTitle: "Partner approval",
-          senderName: "Guy",
+          senderName: "Dana",
           text: "I'm OK with it. But would a partner?",
           timestamp: new Date(Date.now() - 120000).toISOString(),
         },
@@ -451,7 +451,7 @@ describe("channel context in prompt", () => {
     expect(systemPrompt).toContain("Recent messages from the same channel");
     expect(systemPrompt).toContain("I'm OK with it. But would a partner?");
     expect(systemPrompt).toContain("thread:ts1");
-    expect(systemPrompt).toContain("Guy");
+    expect(systemPrompt).toContain("Dana");
   });
 
   it("does not include channel context section when empty", async () => {
@@ -571,7 +571,7 @@ describe("continuation detection", () => {
       {
         workItemId: "thread:ts1",
         workItemTitle: "Partner approval",
-        senderName: "Guy",
+        senderName: "Dana",
         text: "I'm OK with it. But would a partner?",
         timestamp: new Date(Date.now() - 120000).toISOString(),
       },

@@ -92,7 +92,7 @@ function buildUnifiedStatus(
 
 1. If `latestBlockEvent` has `actionRequiredFrom`:
    - Check if any ID matches an operator identity (look up by the event's platform, via its thread). If match → "Waiting on you" / "Needs your decision" (preserves the status-specific label prefix)
-   - Otherwise, resolve IDs to display names via `agentNameMap` → "Waiting on Guy" / "Needs Guy's decision"
+   - Otherwise, resolve IDs to display names via `agentNameMap` → "Waiting on Dana" / "Needs Dana's decision"
    - If ID can't be resolved → use the raw ID as fallback (e.g., "Waiting on U07ABC123")
 2. If `actionRequiredFrom` is null/empty, fall back to current hardcoded labels (backwards-compatible)
 3. Time suffix logic (· 2h 15m) stays the same
@@ -144,7 +144,7 @@ To avoid a DB lookup inside `buildUnifiedStatus()`, the server passes the releva
 ## Visual Reference
 
 Mockup validated in the visual companion showing four states:
-1. "Waiting on Guy · 2h 15m" + "Review and approve PR #716"
+1. "Waiting on Dana · 2h 15m" + "Review and approve PR #716"
 2. "Waiting on you · 45m" + "Provide new DNS credentials for domain verification"
 3. "Needs your decision · 1h 30m" + "Choose between 3 brand color palette options"
 4. "In progress" (no action line)

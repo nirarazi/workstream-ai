@@ -24,8 +24,26 @@ const ConfigSchema = z.object({
       baseUrl: z.string(),
       model: z.string(),
       apiKey: z.string().optional(),
+      /** Passed as reasoning_effort, e.g. "none" to stop local thinking models (Qwen3) from thinking. */
+      reasoningEffort: z.string().optional(),
     }),
     confidenceThreshold: z.number(),
+    /**
+     * "llm" (default): the LLM classifier decides everything.
+     * "decisions": a decision model decides status and inbox membership; the LLM still writes titles,
+     * next actions and work item links. Runs both in parallel.
+     */
+    mode: z.enum(["llm", "decisions"]).optional().default("llm"),
+    decisions: z.object({
+      /** openai = OpenAI Decisions API; typesafe = Jev (direct, or via OpenRouter); llm = decision questions on the classifier's own endpoint */
+      provider: z.enum(["openai", "typesafe", "llm"]),
+      model: z.string().optional(),
+      apiKey: z.string().optional(),
+      /** Surface an item when P(blocked_on_human) + P(needs_decision) reaches this. Lower = fewer misses, more interrupts. */
+      interruptThreshold: z.number().min(0).max(1).optional().default(0.5),
+      inputCostPerMillion: z.number().nullable().optional(),
+      outputCostPerMillion: z.number().nullable().optional(),
+    }).optional(),
   }),
   taskAdapter: z.object({
     enabled: z.boolean(),
@@ -43,6 +61,8 @@ const ConfigSchema = z.object({
     initialDays: z.number(),
     maxThreadsPerPoll: z.number(),
     maxActiveThreadRepolls: z.number().optional(),
+    /** After a pause, catch up at most this many days, however old a channel's cursor is. Default: initialDays. */
+    maxCatchUpDays: z.number().optional(),
   }).optional(),
   continuation: z.object({
     strategy: z.string(),
@@ -93,6 +113,12 @@ const ConfigSchema = z.object({
     role: "",
     context: "",
   }),
+  inbox: z.object({
+    /** Auto-dismiss Needs-me items with no new message for this many days. null = never (default). */
+    expireAfterDays: z.preprocess((v) => (v === 0 ? null : v), z.number().int().min(1).max(3650).nullable()),
+    /** A later block aimed at someone else takes an item out of Needs me at this confidence or above. */
+    handoffMinConfidence: z.number().min(0).max(1).default(0.6),
+  }).optional().default({ expireAfterDays: null, handoffMinConfidence: 0.6 }),
   llmBudget: z.object({
     dailyBudget: z.number().nullable(),
     inputCostPerMillion: z.number().nullable(),

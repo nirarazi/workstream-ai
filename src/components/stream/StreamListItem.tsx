@@ -22,9 +22,11 @@ interface StreamListItemProps {
   onDrop?: (targetId: string) => void;
   onDragEnter?: (id: string) => void;
   dragOverId?: string | null;
+  /** Dismissed tab: say how and when the item was dismissed. */
+  showDismissal?: boolean;
 }
 
-export default function StreamListItem({ item, selected, actionState, resolving, mergingAway, onSelect, onDragStart, onDragEnd, onDrop, onDragEnter, dragOverId }: StreamListItemProps) {
+export default function StreamListItem({ item, selected, actionState, resolving, mergingAway, onSelect, onDragStart, onDragEnd, onDrop, onDragEnter, dragOverId, showDismissal }: StreamListItemProps) {
   const { workItem, latestEvent, agent } = item;
   const isThreadItem = workItem.id.startsWith("thread:");
   const status = workItem.currentAtcStatus ?? "noise";
@@ -109,6 +111,16 @@ export default function StreamListItem({ item, selected, actionState, resolving,
         </div>
       )}
       <div className="text-[10px] text-gray-600 mt-0.5">
+        {showDismissal && workItem.dismissedAt && (
+          <span className="mr-1 text-gray-500">
+            {(() => {
+              const rel = formatRelativeTime(new Date(workItem.dismissedAt));
+              // An expired item's dismissedAt is its last message, so say how long it has been quiet
+              if (workItem.dismissReason === "expired") return `Expired · quiet ${rel === "now" ? "briefly" : rel}`;
+              return `Dismissed ${rel === "now" ? "just now" : `${rel} ago`}`;
+            })()} ·
+          </span>
+        )}
         {agent?.name ?? "Unknown"}
         {latestEvent?.reason && (
           <span className="ml-1 text-gray-700">· {truncate(latestEvent.reason, 60)}</span>

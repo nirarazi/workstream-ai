@@ -4,7 +4,7 @@
 
 **Goal:** Replace the boolean `targetedAtOperator` with a structured `blockedTarget` field that identifies WHO an item is blocked on, and add configurable escalation rules that promote items to the operator's inbox based on conditions (e.g., "blocked on anyone for >3h → escalate to operator").
 
-**Architecture:** The classifier returns a `blocked_target` string (e.g., "operator", "Guy", "sales team", "infrastructure") instead of just true/false. A rules engine evaluates work items against configurable escalation rules and promotes items that match. The inbox shows promoted items with an "escalated" badge explaining why.
+**Architecture:** The classifier returns a `blocked_target` string (e.g., "operator", "Dana", "sales team", "infrastructure") instead of just true/false. A rules engine evaluates work items against configurable escalation rules and promotes items that match. The inbox shows promoted items with an "escalated" badge explaining why.
 
 **Tech Stack:** TypeScript, SQLite, YAML config (rules), React (escalation badges)
 
@@ -25,7 +25,7 @@ Evolve the boolean into a structured field that captures who the item is blocked
 - Modify: `core/classifier/index.ts` — Parse `blocked_target`, derive `targetedAtOperator` from it (`blockedTarget === "operator"`)
 - Test: `tests/graph/blocked-target.test.ts`
 
-- [ ] **Step 1:** Write failing test — insert event with `blockedTarget: "Guy"`, verify it round-trips
+- [ ] **Step 1:** Write failing test — insert event with `blockedTarget: "Dana"`, verify it round-trips
 - [ ] **Step 2:** Add migration, schema type, wire through graph layer
 - [ ] **Step 3:** Update classifier prompt and parser
 - [ ] **Step 4:** Verify `targetedAtOperator` is derived correctly (backward compat)
@@ -91,7 +91,7 @@ Run escalation rules against items that are NOT `targetedAtOperator` and promote
 - [ ] **Step 1:** Write `getEscalatedItems(rules)` — queries events where `targeted_at_operator = 0` and `status IN ('blocked_on_human', 'needs_decision')`
 - [ ] **Step 2:** For each candidate, evaluate rules. Return matches with the triggering rule.
 - [ ] **Step 3:** Modify inbox endpoint to merge and sort: operator-targeted items first, then escalated items
-- [ ] **Step 4:** Test: item blocked on "Guy" for 4h with default 3h rule → appears in inbox as escalated
+- [ ] **Step 4:** Test: item blocked on "Dana" for 4h with default 3h rule → appears in inbox as escalated
 - [ ] **Step 5:** Test: item from #leads-from-dev with suppress rule → does NOT appear
 - [ ] **Step 6:** Commit
 
@@ -105,7 +105,7 @@ Show escalated items in the inbox with a distinct visual treatment so the operat
 - Modify: `src/lib/api.ts` — Add escalation field to types
 
 - [ ] **Step 1:** Add escalation info to frontend `ActionableItem` type
-- [ ] **Step 2:** In `WorkItem.tsx`, render an amber badge: "Escalated · Blocked on Guy for 4h"
+- [ ] **Step 2:** In `WorkItem.tsx`, render an amber badge: "Escalated · Blocked on Dana for 4h"
 - [ ] **Step 3:** In `StatusSnapshot.tsx`, show escalation context below the unified status line
 - [ ] **Step 4:** Commit
 

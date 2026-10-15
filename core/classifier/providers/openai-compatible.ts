@@ -21,6 +21,8 @@ export interface OpenAICompatibleConfig {
   baseUrl: string;
   model: string;
   apiKey?: string;
+  /** Sent as reasoning_effort on OpenAI-compatible calls, e.g. "none" to turn off thinking in local models. */
+  reasoningEffort?: string;
 }
 
 /** Error with an optional Retry-After hint (seconds) from 429 responses */
@@ -54,12 +56,24 @@ function getBackoffMs(attempt: number): number {
   return Math.min(base + jitter, MAX_BACKOFF_MS);
 }
 
+function cachedText(text: string) {
+  return { type: "text" as const, text, cache_control: { type: "ephemeral" as const } };
+}
+
+/** A completion's text plus the token usage the endpoint reported, when it reports any. */
+export interface Completion {
+  text: string;
+  usage?: { inputTokens: number; outputTokens: number };
+}
+
 export class OpenAICompatibleProvider implements ModelProvider {
   readonly name: string;
   private readonly baseUrl: string;
   private readonly model: string;
   private readonly apiKey: string | undefined;
   private readonly isAnthropic: boolean;
+  private readonly cacheBreakpoints: boolean;
+  private readonly reasoningEffort?: string;
   private abortController = new AbortController();
 
   // Backoff state — exposed so the server can surface it to the UI
@@ -85,8 +99,12 @@ export class OpenAICompatibleProvider implements ModelProvider {
     this.name = config.name;
     this.baseUrl = config.baseUrl.replace(/\/+$/, ""); // strip trailing slashes
     this.model = config.model;
+    this.reasoningEffort = config.reasoningEffort;
     this.apiKey = config.apiKey;
     this.isAnthropic = this.baseUrl.includes("anthropic");
+    // Claude needs explicit cache breakpoints (directly or through OpenRouter); other providers cache
+    // repeated prefixes on their own.
+    this.cacheBreakpoints = this.isAnthropic || this.model.startsWith("anthropic/");
   }
 
   async classify(
@@ -94,11 +112,32 @@ export class OpenAICompatibleProvider implements ModelProvider {
     systemPrompt: string,
     fewShotExamples: Array<{ role: string; content: string }>,
   ): Promise<ClassificationResult> {
+    const rawText = await this.complete(message, systemPrompt, fewShotExamples);
+    const result = this.parseResponse(rawText);
+    log.debug("Classification result", { input: message.slice(0, 120), result });
+    return result;
+  }
+
+  /** Raw completion with retry/backoff. Shared by the classifier and the LLM decision provider. */
+  async complete(
+    message: string,
+    systemPrompt: string,
+    fewShotExamples: Array<{ role: string; content: string }> = [],
+  ): Promise<string> {
+    return (await this.completeWithUsage(message, systemPrompt, fewShotExamples)).text;
+  }
+
+  /** Like complete(), plus the token usage the endpoint reported (if any). */
+  async completeWithUsage(
+    message: string,
+    systemPrompt: string,
+    fewShotExamples: Array<{ role: string; content: string }> = [],
+  ): Promise<Completion> {
     let lastError: unknown;
 
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
       try {
-        const rawText = this.isAnthropic
+        const completion = this.isAnthropic
           ? await this.callAnthropic(message, systemPrompt, fewShotExamples)
           : await this.callOpenAI(message, systemPrompt, fewShotExamples);
 
@@ -107,10 +146,7 @@ export class OpenAICompatibleProvider implements ModelProvider {
           log.info("LLM recovered after backoff");
         }
         this._backoff = { active: false, retryCount: 0, nextRetryAt: null, lastError: null };
-
-        const result = this.parseResponse(rawText);
-        log.debug("Classification result", { input: message.slice(0, 120), result });
-        return result;
+        return completion;
       } catch (error) {
         lastError = error;
 
@@ -150,7 +186,7 @@ export class OpenAICompatibleProvider implements ModelProvider {
           nextRetryAt: null,
           lastError: error instanceof Error ? error.message.slice(0, 200) : String(error),
         };
-        log.error("Classification failed", error);
+        log.error("LLM call failed", error);
         throw error;
       }
     }
@@ -158,11 +194,23 @@ export class OpenAICompatibleProvider implements ModelProvider {
     throw lastError;
   }
 
+  /**
+   * Marks the end of the static prefix (system prompt + few-shot examples) as cacheable, so repeat calls
+   * read it at the cache price. Per-message context lives in the final user turn, after the breakpoint.
+   */
+  private withCacheBreakpoint(
+    messages: Array<{ role: string; content: string }>,
+  ): Array<{ role: string; content: string | Array<ReturnType<typeof cachedText>> }> {
+    if (!this.cacheBreakpoints || messages.length === 0) return messages;
+    const last = messages[messages.length - 1];
+    return [...messages.slice(0, -1), { role: last.role, content: [cachedText(last.content)] }];
+  }
+
   private async callAnthropic(
     message: string,
     systemPrompt: string,
     fewShotExamples: Array<{ role: string; content: string }>,
-  ): Promise<string> {
+  ): Promise<Completion> {
     const url = `${this.baseUrl}/messages`;
     const headers: Record<string, string> = {
       "content-type": "application/json",
@@ -173,14 +221,14 @@ export class OpenAICompatibleProvider implements ModelProvider {
     }
 
     const messages = [
-      ...fewShotExamples.map((ex) => ({ role: ex.role, content: ex.content })),
+      ...this.withCacheBreakpoint(fewShotExamples.map((ex) => ({ role: ex.role, content: ex.content }))),
       { role: "user" as const, content: message },
     ];
 
     const body = {
       model: this.model,
       max_tokens: 1024,
-      system: systemPrompt,
+      system: this.cacheBreakpoints && fewShotExamples.length === 0 ? [cachedText(systemPrompt)] : systemPrompt,
       messages,
     };
 
@@ -201,15 +249,19 @@ export class OpenAICompatibleProvider implements ModelProvider {
 
     const json = (await response.json()) as {
       content: Array<{ text: string }>;
+      usage?: { input_tokens?: number; output_tokens?: number };
     };
-    return json.content[0].text;
+    return {
+      text: json.content[0].text,
+      usage: json.usage && { inputTokens: json.usage.input_tokens ?? 0, outputTokens: json.usage.output_tokens ?? 0 },
+    };
   }
 
   private async callOpenAI(
     message: string,
     systemPrompt: string,
     fewShotExamples: Array<{ role: string; content: string }>,
-  ): Promise<string> {
+  ): Promise<Completion> {
     const url = `${this.baseUrl}/chat/completions`;
     const headers: Record<string, string> = {
       "content-type": "application/json",
@@ -221,8 +273,10 @@ export class OpenAICompatibleProvider implements ModelProvider {
     const makeMessages = (useSystemRole: boolean) => {
       if (useSystemRole) {
         return [
-          { role: "system" as const, content: systemPrompt },
-          ...fewShotExamples.map((ex) => ({ role: ex.role, content: ex.content })),
+          ...this.withCacheBreakpoint([
+            { role: "system", content: systemPrompt },
+            ...fewShotExamples.map((ex) => ({ role: ex.role, content: ex.content })),
+          ]),
           { role: "user" as const, content: message },
         ];
       }
@@ -233,11 +287,12 @@ export class OpenAICompatibleProvider implements ModelProvider {
       ];
     };
 
-    const doCall = async (useSystemRole: boolean): Promise<string> => {
+    const doCall = async (useSystemRole: boolean): Promise<Completion> => {
       const body = {
         model: this.model,
         messages: makeMessages(useSystemRole),
         temperature: 0,
+        ...(this.reasoningEffort ? { reasoning_effort: this.reasoningEffort } : {}),
       };
 
       log.debug("Calling OpenAI-compatible API", { url, model: this.model, useSystemRole });
@@ -262,8 +317,12 @@ export class OpenAICompatibleProvider implements ModelProvider {
 
       const json = (await response.json()) as {
         choices: Array<{ message: { content: string } }>;
+        usage?: { prompt_tokens?: number; completion_tokens?: number };
       };
-      return json.choices[0].message.content;
+      return {
+        text: json.choices[0].message.content,
+        usage: json.usage && { inputTokens: json.usage.prompt_tokens ?? 0, outputTokens: json.usage.completion_tokens ?? 0 },
+      };
     };
 
     return doCall(true);

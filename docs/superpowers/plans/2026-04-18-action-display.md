@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Show actor-aware status lines ("Waiting on Guy") and next-action descriptions in the Fleet/Stream detail pane, backed by persisted `actionRequiredFrom` and `nextAction` fields.
+**Goal:** Show actor-aware status lines ("Waiting on Dana") and next-action descriptions in the Fleet/Stream detail pane, backed by persisted `actionRequiredFrom` and `nextAction` fields.
 
 **Architecture:** Add two columns to the events table, thread them through the graph and pipeline layers, extend `buildUnifiedStatus()` to resolve actor names against an `OperatorIdentityMap`, and render the `nextAction` line in the UI. Add `getAuthenticatedUser()` to the `TaskAdapter` interface so operator identities are collected from all adapters.
 
@@ -59,11 +59,11 @@ describe("Event actionRequiredFrom and nextAction persistence", () => {
       rawText: "Please approve PR #716",
       timestamp: new Date().toISOString(),
       targetedAtOperator: true,
-      actionRequiredFrom: ["U_GUY123", "U_OPERATOR"],
+      actionRequiredFrom: ["U_DANA123", "U_OPERATOR"],
       nextAction: "Review and approve PR #716",
     });
 
-    expect(event.actionRequiredFrom).toEqual(["U_GUY123", "U_OPERATOR"]);
+    expect(event.actionRequiredFrom).toEqual(["U_DANA123", "U_OPERATOR"]);
     expect(event.nextAction).toBe("Review and approve PR #716");
   });
 
@@ -498,7 +498,7 @@ In `tests/server/stream-api.test.ts`, add these tests in the `buildUnifiedStatus
         nextAction: "Approve PR #716",
       };
       const operatorIdentities: OperatorIdentityMap = new Map([
-        ["slack", { userId: "U_OPERATOR", userName: "Nir" }],
+        ["slack", { userId: "U_OPERATOR", userName: "Alex" }],
       ]);
       const agentMap = new Map([["a1", "Byte"]]);
       const result = buildUnifiedStatus(workItem, blockEvent, operatorIdentities, agentMap);
@@ -515,19 +515,19 @@ In `tests/server/stream-api.test.ts`, add these tests in the `buildUnifiedStatus
       const blockEvent: Event = {
         id: "e1", threadId: "t1", messageId: "m1", workItemId: "AI-100",
         agentId: "a1", status: "blocked_on_human", confidence: 0.9,
-        reason: "Needs Guy's review", rawText: "Waiting for Guy",
+        reason: "Needs Dana's review", rawText: "Waiting for Dana",
         timestamp: new Date(Date.now() - 130 * 60000).toISOString(),
         createdAt: new Date().toISOString(), entryType: "block",
         targetedAtOperator: false,
-        actionRequiredFrom: ["U_GUY123"],
+        actionRequiredFrom: ["U_DANA123"],
         nextAction: "Review PR #716",
       };
       const operatorIdentities: OperatorIdentityMap = new Map([
-        ["slack", { userId: "U_OPERATOR", userName: "Nir" }],
+        ["slack", { userId: "U_OPERATOR", userName: "Alex" }],
       ]);
-      const agentMap = new Map([["U_GUY123", "Guy"]]);
+      const agentMap = new Map([["U_DANA123", "Dana"]]);
       const result = buildUnifiedStatus(workItem, blockEvent, operatorIdentities, agentMap);
-      expect(result).toMatch(/Waiting on Guy · 2h \d+m/);
+      expect(result).toMatch(/Waiting on Dana · 2h \d+m/);
     });
 
     it("shows 'Needs your decision' when operator is action taker for needs_decision", () => {
@@ -548,7 +548,7 @@ In `tests/server/stream-api.test.ts`, add these tests in the `buildUnifiedStatus
         nextAction: "Choose between 3 palette options",
       };
       const operatorIdentities: OperatorIdentityMap = new Map([
-        ["slack", { userId: "U_OPERATOR", userName: "Nir" }],
+        ["slack", { userId: "U_OPERATOR", userName: "Alex" }],
       ]);
       const agentMap = new Map<string, string>();
       const result = buildUnifiedStatus(workItem, blockEvent, operatorIdentities, agentMap);
@@ -565,19 +565,19 @@ In `tests/server/stream-api.test.ts`, add these tests in the `buildUnifiedStatus
       const blockEvent: Event = {
         id: "e1", threadId: "t1", messageId: "m1", workItemId: "AI-100",
         agentId: "a1", status: "needs_decision", confidence: 0.9,
-        reason: "Guy needs to decide", rawText: "Decision needed",
+        reason: "Dana needs to decide", rawText: "Decision needed",
         timestamp: new Date(Date.now() - 90 * 60000).toISOString(),
         createdAt: new Date().toISOString(), entryType: "block",
         targetedAtOperator: false,
-        actionRequiredFrom: ["U_GUY123"],
+        actionRequiredFrom: ["U_DANA123"],
         nextAction: null,
       };
       const operatorIdentities: OperatorIdentityMap = new Map([
-        ["slack", { userId: "U_OPERATOR", userName: "Nir" }],
+        ["slack", { userId: "U_OPERATOR", userName: "Alex" }],
       ]);
-      const agentMap = new Map([["U_GUY123", "Guy"]]);
+      const agentMap = new Map([["U_DANA123", "Dana"]]);
       const result = buildUnifiedStatus(workItem, blockEvent, operatorIdentities, agentMap);
-      expect(result).toMatch(/Needs Guy's decision · 1h \d+m/);
+      expect(result).toMatch(/Needs Dana's decision · 1h \d+m/);
     });
 
     it("falls back to hardcoded labels when actionRequiredFrom is null", () => {
@@ -621,7 +621,7 @@ In `tests/server/stream-api.test.ts`, add these tests in the `buildUnifiedStatus
         nextAction: null,
       };
       const operatorIdentities: OperatorIdentityMap = new Map([
-        ["slack", { userId: "U_OPERATOR", userName: "Nir" }],
+        ["slack", { userId: "U_OPERATOR", userName: "Alex" }],
       ]);
       const agentMap = new Map<string, string>();
       const result = buildUnifiedStatus(workItem, blockEvent, operatorIdentities, agentMap);
@@ -774,11 +774,11 @@ In `tests/core/pipeline.test.ts`, add a test that verifies actionRequiredFrom an
       status: "blocked_on_human",
       entryType: "block",
       confidence: 0.9,
-      reason: "Needs Guy's review",
+      reason: "Needs Dana's review",
       workItemIds: [],
       title: "PR review needed",
       targetedAtOperator: false,
-      actionRequiredFrom: ["U_GUY123"],
+      actionRequiredFrom: ["U_DANA123"],
       nextAction: "Review and approve PR #716",
     };
 
@@ -791,7 +791,7 @@ In `tests/core/pipeline.test.ts`, add a test that verifies actionRequiredFrom an
       channelName: "test",
       userId: "U1",
       userName: "Byte",
-      text: "Waiting for Guy to review PR #716",
+      text: "Waiting for Dana to review PR #716",
       timestamp: new Date().toISOString(),
       platform: "slack",
     };
@@ -801,7 +801,7 @@ In `tests/core/pipeline.test.ts`, add a test that verifies actionRequiredFrom an
     const events = graph.getEventsForWorkItem(`thread:thread-action-1`);
     const mainEvent = events.find((e) => e.messageId === "msg-action-1");
     expect(mainEvent).toBeDefined();
-    expect(mainEvent!.actionRequiredFrom).toEqual(["U_GUY123"]);
+    expect(mainEvent!.actionRequiredFrom).toEqual(["U_DANA123"]);
     expect(mainEvent!.nextAction).toBe("Review and approve PR #716");
   });
 ```
