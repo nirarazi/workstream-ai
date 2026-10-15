@@ -1136,6 +1136,17 @@ describe("OpenAICompatibleProvider: timed-out attempts", () => {
     expect(onTimedOutAttempt).toHaveBeenCalledTimes(1);
     vi.restoreAllMocks();
   });
+
+  it("retries a timeout once, not five times: a second one is likely the request itself", async () => {
+    const timeout = () => Object.assign(new Error("The operation was aborted due to timeout"), { name: "TimeoutError" });
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () => { throw timeout(); });
+    const provider = new OpenAICompatibleProvider({ name: "test", baseUrl: "http://localhost:11434/v1", model: "m" });
+
+    await expect(provider.classify("OPS-100 is done", "sys", [])).rejects.toThrow("timeout");
+
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    vi.restoreAllMocks();
+  });
 });
 
 describe("Classifier: marking a missing answer", () => {

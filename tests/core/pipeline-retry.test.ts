@@ -262,8 +262,8 @@ describe("Pipeline: during an outage", () => {
       unavailableEveryPoll &&= t.pipeline.isModelUnavailable();
     }
     expect(unavailableEveryPoll).toBe(true);
-    // At most one read per 2 minutes (the cap), against 240 without the gate
-    expect(t.readThreads.mock.calls.length).toBeLessThanOrEqual(70);
+    // At most one read per minute (the cap), against 240 without the gate
+    expect(t.readThreads.mock.calls.length).toBeLessThanOrEqual(125);
     t.done();
   });
 
@@ -285,7 +285,34 @@ describe("Pipeline: during an outage", () => {
     both = false; // T3 is deleted on the platform; its failure record stays behind
     const before = t.readThreads.mock.calls.length;
     for (let i = 0; i < 10; i++) await t.poll(); // 5 minutes
-    expect(t.readThreads.mock.calls.length - before).toBeLessThanOrEqual(3);
+    expect(t.readThreads.mock.calls.length - before).toBeLessThanOrEqual(6);
     t.done();
+  });
+});
+
+describe("Pipeline: a reply that keeps failing", () => {
+  it("doesn't hide the later messages in its thread", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    let clock = Date.parse("2026-10-15T08:00:00.000Z");
+    vi.setSystemTime(clock);
+    const db = new Database(":memory:");
+    const graph = new ContextGraph(db);
+    // In one thread: a reply that always fails, then a real "blocked on you"
+    const t = thread("T1", "2026-10-15T05:00:00.000Z", "C1", "2026-10-15T05:05:00.000Z");
+    const classify = vi.fn(async (text: string) => (text.includes("T1-m1") ? UNREACHABLE : ANSWER));
+    const pipeline = new Pipeline({ name: "fake", readThreads: vi.fn(async () => [t]), getThreadMessages: vi.fn(async () => []) } as any,
+      { classify } as any, graph, new WorkItemLinker(graph, [new DefaultExtractor({ ticketPatterns: [], prPatterns: [] })]), undefined, CONFIG);
+
+    await pipeline.processOnce(); // first failure: the next message waits, to keep the thread in order
+    expect(graph.hasEvent("T1-m2", "T1")).toBe(false);
+    clock += 30_000;
+    vi.setSystemTime(clock);
+    await pipeline.processOnce(); // second failure: the next message goes ahead
+
+    expect(graph.getEventByMessageId("T1-m2", "T1")!.reason).toBe("working on it");
+    expect(graph.hasEvent("T1-m1", "T1")).toBe(false); // still held for a retry
+    expect(graph.getPollCursor("C1")!.lastTimestamp).toBe("2026-10-15T04:59:59.999Z"); // and the thread is read again
+    vi.useRealTimers();
+    db.close();
   });
 });

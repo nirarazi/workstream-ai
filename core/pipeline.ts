@@ -36,7 +36,7 @@ const RETRY_BASE_MS = 30_000;
 const RETRY_MAX_MS = 30 * 60 * 1000;
 
 /** While the model looks unavailable, read the platform no more often than this (new messages wait at most this) */
-const OUTAGE_READ_MAX_WAIT_MS = 2 * 60 * 1000;
+const OUTAGE_READ_MAX_WAIT_MS = 60 * 1000;
 
 /** After the provider refuses the credentials, try again this often (a settings save resumes at once) */
 const AUTH_PAUSE_MS = 5 * 60 * 1000;
@@ -115,6 +115,11 @@ export class Pipeline {
   /** Why classification is paused right now, if it is: shown as a degraded model status */
   pauseReason(): "budget" | "auth" | null {
     return Date.now() < this.pausedUntil ? this.pausedFor : null;
+  }
+
+  /** Whether this message has failed more than once, so later messages in its thread go ahead without it */
+  private failedRepeatedly(message: Message, thread: Thread): boolean {
+    return (this.failedMessages.get(`${thread.id}:${message.id}`)?.attempts ?? 0) >= 2;
   }
 
   /** Whether the last poll got failures and no real model answers (an outage, or an account-wide refusal) */
@@ -287,7 +292,9 @@ export class Pipeline {
           if (outcome !== "waiting") errors++;
           held = true;
           if (outcome === "paused") paused = true;
-          break; // later messages in the thread wait, so they're classified in order
+          // Later messages wait so they're classified in order, but only behind a first failure: a message that
+          // keeps failing (or a crafted reply) mustn't hide the rest of its thread for hours
+          if (outcome === "paused" || !this.failedRepeatedly(message, thread)) break;
         } catch (err) {
           if (err instanceof PipelineStopped) break;
           log.error("Failed to process message", message.id, err);
@@ -385,7 +392,7 @@ export class Pipeline {
               // No cursor here: an active thread is fetched again on the next poll
               if (outcome !== "waiting") errors++;
               if (outcome === "paused") paused = true;
-              break;
+              if (outcome === "paused" || !this.failedRepeatedly(msg, threadObj)) break;
             } catch (err) {
               if (err instanceof PipelineStopped) break;
               log.error("Failed to process re-polled message", msg.id, err);
@@ -418,7 +425,7 @@ export class Pipeline {
     if (this.modelUnavailable) {
       // Nothing could be classified: re-reading the platform before a held message is due again (up to 30 min
       // with backoff) only costs reads and rate limit. Gate only while several messages are held, so a single
-      // message that keeps failing doesn't delay new ones; capped, so a new message waits at most 2 minutes.
+      // message that keeps failing doesn't delay new ones; capped, so a new message waits at most a minute.
       const now = Date.now();
       let earliest = now + OUTAGE_READ_MAX_WAIT_MS;
       let held = 0;

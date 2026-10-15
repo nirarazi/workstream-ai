@@ -197,6 +197,7 @@ export class OpenAICompatibleProvider implements ModelProvider {
     options?: ClassifyOptions,
   ): Promise<Completion> {
     let lastError: unknown;
+    let timedOutBefore = false;
 
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
       try {
@@ -212,9 +213,13 @@ export class OpenAICompatibleProvider implements ModelProvider {
         return completion;
       } catch (error) {
         lastError = error;
-        if (error instanceof Error && error.name === "TimeoutError") options?.onTimedOutAttempt?.();
+        const timedOut = error instanceof Error && error.name === "TimeoutError";
+        if (timedOut) options?.onTimedOutAttempt?.();
+        // A second timeout is likely the request itself (a message that takes too long), not a blip: stop there
+        const retryTimeout = !timedOut || !timedOutBefore;
+        timedOutBefore ||= timedOut;
 
-        if (attempt < MAX_RETRIES && isRetryable(error)) {
+        if (attempt < MAX_RETRIES && isRetryable(error) && retryTimeout) {
           const serverDelay = error instanceof ApiError && error.retryAfterSeconds
             ? error.retryAfterSeconds * 1000
             : undefined;
