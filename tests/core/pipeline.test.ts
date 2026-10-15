@@ -1474,9 +1474,9 @@ describe("Pipeline", () => {
       const channelContext = [
         {
           workItemId: "thread:ts1",
-          workItemTitle: "Partner approval",
+          workItemTitle: "Vendor terms",
           senderName: "Dana",
-          text: "I'm OK with it. But would a partner?",
+          text: "Fine by me. But will the vendor accept it?",
           timestamp: new Date(Date.now() - 120000).toISOString(),
         },
       ];

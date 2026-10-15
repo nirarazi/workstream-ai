@@ -101,7 +101,7 @@ export default function Sidekick({ onClose }: SidekickProps): JSX.Element {
                 {[
                   "What happened overnight?",
                   "Which items are blocked?",
-                  "What is Relay working on?",
+                  "What is my coding agent working on?",
                 ].map((suggestion) => (
                   <button
                     key={suggestion}

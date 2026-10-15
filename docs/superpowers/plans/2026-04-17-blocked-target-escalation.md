@@ -66,7 +66,7 @@ escalation:
     - name: "Never escalate leads"
       description: "CRM lead alerts never escalate regardless of duration"
       condition:
-        channel: ["leads-from-dev", "leads-from-prod"]
+        channel: ["fleet-alerts-dev", "fleet-alerts-prod"]
       action: suppress
 ```
 
@@ -92,7 +92,7 @@ Run escalation rules against items that are NOT `targetedAtOperator` and promote
 - [ ] **Step 2:** For each candidate, evaluate rules. Return matches with the triggering rule.
 - [ ] **Step 3:** Modify inbox endpoint to merge and sort: operator-targeted items first, then escalated items
 - [ ] **Step 4:** Test: item blocked on "Dana" for 4h with default 3h rule → appears in inbox as escalated
-- [ ] **Step 5:** Test: item from #leads-from-dev with suppress rule → does NOT appear
+- [ ] **Step 5:** Test: item from #fleet-alerts-dev with suppress rule → does NOT appear
 - [ ] **Step 6:** Commit
 
 ### Task 4: Escalation badge in the UI

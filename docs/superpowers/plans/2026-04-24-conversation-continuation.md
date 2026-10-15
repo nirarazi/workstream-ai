@@ -230,7 +230,7 @@ describe("getRecentChannelContext", () => {
     graph.insertEvent({
       threadId: "ts1", messageId: "msg1", workItemId: "thread:ts1",
       agentId: "U1", status: "needs_decision", confidence: 0.9,
-      reason: "test", rawText: "I'm OK with it. But would a partner?",
+      reason: "test", rawText: "Fine by me. But will the vendor accept it?",
       timestamp: new Date(now.getTime() - 120000).toISOString(), // 2 min ago
     });
     graph.insertEvent({
@@ -248,7 +248,7 @@ describe("getRecentChannelContext", () => {
     expect(context).toHaveLength(1);
     expect(context[0].workItemId).toBe("thread:ts1");
     expect(context[0].senderName).toBe("Dana");
-    expect(context[0].text).toContain("OK with it");
+    expect(context[0].text).toContain("Fine by me");
   });
 
   it("excludes messages older than the window", () => {
@@ -430,8 +430,8 @@ describe("channel context in prompt", () => {
     });
 
     await classifier.classify(
-      "No big difference from floating it over",
-      [{ id: "thread:ts1", title: "Partner approval", reasons: ["same channel"] }],
+      "Same terms as last year, so probably yes",
+      [{ id: "thread:ts1", title: "Vendor terms", reasons: ["same channel"] }],
       null,
       { senderName: "Alex", senderType: "human", channelName: "DM: Dana" },
       [],
@@ -439,9 +439,9 @@ describe("channel context in prompt", () => {
       [
         {
           workItemId: "thread:ts1",
-          workItemTitle: "Partner approval",
+          workItemTitle: "Vendor terms",
           senderName: "Dana",
-          text: "I'm OK with it. But would a partner?",
+          text: "Fine by me. But will the vendor accept it?",
           timestamp: new Date(Date.now() - 120000).toISOString(),
         },
       ],
@@ -449,7 +449,7 @@ describe("channel context in prompt", () => {
 
     const systemPrompt = classifySpy.mock.calls[0][1];
     expect(systemPrompt).toContain("Recent messages from the same channel");
-    expect(systemPrompt).toContain("I'm OK with it. But would a partner?");
+    expect(systemPrompt).toContain("Fine by me. But will the vendor accept it?");
     expect(systemPrompt).toContain("thread:ts1");
     expect(systemPrompt).toContain("Dana");
   });
@@ -570,9 +570,9 @@ describe("continuation detection", () => {
     const channelContext = [
       {
         workItemId: "thread:ts1",
-        workItemTitle: "Partner approval",
+        workItemTitle: "Vendor terms",
         senderName: "Dana",
-        text: "I'm OK with it. But would a partner?",
+        text: "Fine by me. But will the vendor accept it?",
         timestamp: new Date(Date.now() - 120000).toISOString(),
       },
     ];
@@ -591,7 +591,7 @@ describe("continuation detection", () => {
       confidence: 0.9,
       reason: "continuation",
       workItemIds: ["thread:ts1"],
-      title: "Partner approval",
+      title: "Vendor terms",
       entryType: "block",
       targetedAtOperator: true,
       actionRequiredFrom: null,

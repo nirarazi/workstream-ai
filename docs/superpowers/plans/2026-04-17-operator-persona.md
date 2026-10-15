@@ -69,7 +69,7 @@ Periodically analyze corrections to find patterns. If the operator has dismissed
 - Test: `tests/persona/analyzer.test.ts`
 
 **Pattern types to detect:**
-- Channel patterns: "You dismissed 4 items from #leads-from-dev"
+- Channel patterns: "You dismissed 4 items from #fleet-alerts-dev"
 - Agent patterns: "You marked 3 items from 'CRM Bot' as not for you"
 - Content patterns: "You dismissed 5 items containing 'new lead'"
 

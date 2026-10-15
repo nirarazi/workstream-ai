@@ -345,7 +345,7 @@ In `tests/server/stream-api.test.ts`, add a test that verifies the stream API re
       id: "OPS-300", source: "jira", title: "Blocked task",
       currentAtcStatus: "blocked_on_human", currentConfidence: 0.9,
     });
-    graph.upsertThread({ id: "t1", channelId: "C1", channelName: "orchestrator", platform: "slack", workItemId: "OPS-300" });
+    graph.upsertThread({ id: "t1", channelId: "C1", channelName: "fleet-ops", platform: "slack", workItemId: "OPS-300" });
     graph.upsertAgent({ id: "a1", name: "Relay", platform: "slack", platformUserId: "U1" });
     graph.insertEvent({
       threadId: "t1", messageId: "m1", workItemId: "OPS-300", agentId: "a1",

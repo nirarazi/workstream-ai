@@ -2,7 +2,7 @@
 
 ## The Core Challenge
 
-workstream.ai reads raw messages from messaging platforms and must decide: **which work item does this message belong to?** Get it right, and the inbox shows coherent streams of work. Get it wrong, and the operator sees 52 separate "New lead" items instead of one stream, or misses a critical block because it was linked to the wrong item.
+workstream.ai reads raw messages from messaging platforms and must decide: **which work item does this message belong to?** Get it right, and the inbox shows coherent streams of work. Get it wrong, and the operator sees 30 separate "Build failed" items instead of one stream, or misses a critical block because it was linked to the wrong item.
 
 Today, "work item" and "stream" are the same concept. A work item _is_ a stream — it accumulates messages, events, and status over time. The question is how reliably we can route each incoming message to the right stream.
 
@@ -33,7 +33,7 @@ LLM-suggested IDs are validated against known ticket prefixes before being accep
 If no work item ID is found (neither extracted nor inferred) and the message isn't noise, a synthetic work item is created with ID `thread:<thread-id>`. This groups all messages in the same Slack thread under one work item.
 
 **Strengths:** Ensures no actionable message is orphaned. Thread-level grouping is natural for conversations.
-**Weaknesses:** Each thread becomes its own work item. 52 lead alert threads = 52 work items. No cross-thread grouping.
+**Weaknesses:** Each thread becomes its own work item. 30 build alert threads = 30 work items. No cross-thread grouping.
 
 ### Thread Inheritance
 
@@ -43,11 +43,11 @@ Once a thread is linked to a work item, subsequent messages in that thread inher
 
 ## Where It Breaks Down
 
-### Problem 1: Notification Spam (the 52 Leads)
+### Problem 1: Notification Spam (the 30 Build Alerts)
 
 Notification bots (CRM alerts, monitoring, CI/CD) post templated messages to Slack. Each message starts a new thread. Each thread becomes a separate synthetic work item. The inbox fills with near-identical items.
 
-The root cause: **the system has no concept of "message type" or "stream category."** It treats a CRM lead alert the same as an agent asking for approval. The classifier sees "Pending" and says `blocked_on_human` because, read literally, someone does need to act on the lead.
+The root cause: **the system has no concept of "message type" or "stream category."** It treats a CI build alert the same as an agent asking for approval. The classifier sees "Failed" and says `blocked_on_human` because, read literally, someone does need to act on the build.
 
 ### Problem 2: Cross-Thread Continuity
 
@@ -55,11 +55,11 @@ An agent posts about `OPS-382` in thread A on Monday. On Wednesday, the same age
 
 ### Problem 3: No Feedback Loop
 
-When the operator dismisses a work item, that signal is lost. The system doesn't learn that "lead alerts from Example Co Sync are noise to this operator." Every new lead alert is classified from scratch.
+When the operator dismisses a work item, that signal is lost. The system doesn't learn that "build alerts from CI Bot are noise to this operator." Every new build alert is classified from scratch.
 
 ### Problem 4: Sender Identity is Underused
 
-The system knows `is_bot=true` and the sender name, but treats all bots as "agents." A Slack bot posting CRM alerts is fundamentally different from an AI agent reporting work status, but the classifier sees both as `[Sender: X (agent)]`.
+The system knows `is_bot=true` and the sender name, but treats all bots as "agents." A Slack bot posting CI alerts is fundamentally different from an AI agent reporting work status, but the classifier sees both as `[Sender: X (agent)]`.
 
 ---
 
@@ -67,10 +67,10 @@ The system knows `is_bot=true` and the sender name, but treats all bots as "agen
 
 Instead of thinking about work items as isolated tickets, think of them as **streams** — ongoing flows of related activity that the operator has a relationship with.
 
-Some streams are high-signal (an agent blocked on a PR review). Some are low-signal (CRM lead notifications). The operator's relationship to each stream determines how it surfaces:
+Some streams are high-signal (an agent blocked on a PR review). Some are low-signal (CI build notifications). The operator's relationship to each stream determines how it surfaces:
 
 - **A stream I own:** Every event surfaces in my inbox. I act on these.
-- **A stream I watch:** I see a digest or exceptions. "12 new leads today" not 12 inbox items.
+- **A stream I watch:** I see a digest or exceptions. "12 builds failed today" not 12 inbox items.
 - **A stream I've muted:** Exists in the graph, doesn't surface. I can search for it.
 
 Today, work item = stream, and every stream is implicitly "owned." The product improvement path is giving the operator tools to change that relationship — starting with the ability to say "this type of thing is not actionable for me."
@@ -226,7 +226,7 @@ Replace `getOpenWorkItemSummaries()` (100 items, no ranking) with `findCandidate
 
 ### 2. Operator Feedback on Dismiss (Near-term)
 
-When the operator dismisses a work item, offer: **"Silence similar items from this sender?"** This creates a rule: `{sender: "Example Co Sync", channel: "C09..."} -> auto-resolve`. No ML, no pattern matching — just a sender-level mute. Covers the 52-leads case directly.
+When the operator dismisses a work item, offer: **"Silence similar items from this sender?"** This creates a rule: `{sender: "CI Bot", channel: "C09..."} -> auto-resolve`. No ML, no pattern matching — just a sender-level mute. Covers the 30-build-alerts case directly.
 
 ### 3. Better Sender Classification (Near-term)
 
@@ -244,7 +244,7 @@ Add a `stream_preference` to work items: own / watch / mute. The inbox query fil
 
 ## Design Principles
 
-1. **Start permissive, learn to filter.** Show too much, let the operator train it down. Missing a critical block is worse than showing a noisy lead alert.
+1. **Start permissive, learn to filter.** Show too much, let the operator train it down. Missing a critical block is worse than showing a noisy build alert.
 
 2. **One human label > 1000 LLM classifications.** When the operator acts on something (dismiss, reply, silence), that signal is gold. Use it.
 

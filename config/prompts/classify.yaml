@@ -21,7 +21,7 @@ system: |
 
   - **completed**: The agent finished a task. Look for: "done", "completed", "merged", "deployed", "shipped", confirmation of task completion.
   - **in_progress**: Work is actively underway. Look for: "working on", "implementing", "building", progress updates, partial completion.
-  - **blocked_on_human**: A human has to do work before the agent can continue: examine or produce something. This includes manual actions (provide credentials, fix access, make a call) and approving or reviewing a work product (a draft, a PR, a quote, a contract) — the human takes responsibility for it until they respond. Look for: "waiting for", "need approval", "please review", "blocked on", "can you", questions directed at a human.
+  - **blocked_on_human**: A human has to do work before the agent can continue: examine or produce something. This includes manual actions (provide credentials, fix access, make a call) and approving or reviewing a work product (a draft, a PR, an invoice, a contract) — the human takes responsibility for it until they respond. Look for: "waiting for", "need approval", "please review", "blocked on", "can you", questions directed at a human.
   - **needs_decision**: A human has to choose a direction, with no work product to inspect. The answer is a judgment call and the work goes straight back to the agent. Look for: "should I", "which option", "two approaches", presenting alternatives, requesting direction (e.g. "REST or GraphQL?", "dispatch tonight or wait?", "pause outreach?").
   - **noise**: Status update, system message, greeting, or informational — no action needed. Look for: greetings, acknowledgments, "ok", system notifications, routine status without new information.
 
@@ -55,7 +55,7 @@ system: |
   5. **Blocked on infrastructure ≠ blocked on human.** If the agent is blocked by a system outage, timeout, or external service failure but says it will retry or recover on its own, classify as "in_progress" (with entry_type "escalation"). Only use "blocked_on_human" when the agent explicitly needs the operator to take an action. "Will retry", "waiting for recovery", "next heartbeat" are signs of self-healing — NOT blocked on human.
   6. **Status reports about other agents or people are not blocks.** If an agent is reporting another agent's state ("Quill is blocked on Dana's review") or giving a status update about someone else's work, this is informational — classify as "in_progress" or "noise" unless the agent is explicitly asking the operator to intervene. Key signals: "All good", "just an update", "FYI", reporting what others are doing. The word "blocked" in a status report about someone else does NOT make it blocked_on_human.
   7. **Link to candidate work items when they match.** When a "Candidate Work Items" section is provided, these are the most likely matches based on graph signals (same agent, same channel, recency, keyword overlap). If the message is clearly about one of these candidates, return its ID in workItemIds. If none match the topic, return an empty workItemIds array — do NOT force a match. Signals for a match: same error message, same task being discussed, follow-up on a previously reported problem. Do NOT link just because the candidate is from the same agent — the topic must match.
-  8. **Notification bots are not agents.** When the sender type is "(notification)", the message is from an automated system (CRM alert, CI/CD, monitoring), NOT from an AI agent. Notification messages are typically "noise" — they are informational system alerts. Only classify a notification message as "blocked_on_human" if it contains an explicit, urgent request directed at a specific person (e.g. "CRITICAL: production down, @operator please restart"). Templated alerts like "New lead pending review" or "Order pending approval" are "noise" — the system is reporting status, not asking the operator to act in this channel.
+  8. **Notification bots are not agents.** When the sender type is "(notification)", the message is from an automated system (CRM alert, CI/CD, monitoring), NOT from an AI agent. Notification messages are typically "noise" — they are informational system alerts. Only classify a notification message as "blocked_on_human" if it contains an explicit, urgent request directed at a specific person (e.g. "CRITICAL: production down, @operator please restart"). Templated alerts like "New lead pending review" or "Order pending fulfillment" are "noise" — the system is reporting status, not asking the operator to act in this channel.
 
   Respond ONLY with the JSON object, no markdown formatting.
 
@@ -118,7 +118,7 @@ few_shot_examples:
       title: "Staging database disk space low"
 
   - role: user
-    content: "[Sender: Atlas (agent) | Channel: #fleet-ops]\nQuill's thread session is running — just posted a status update. Full status: Phases 1-5 complete, stat sweep done, blocked on Dana's test email review. Dana said goodnight and it's morning in their timezone now — Quill expects them to be waking up soon. All good."
+    content: "[Sender: Atlas (agent) | Channel: #fleet-ops]\nQuill posted an update in its thread. The competitor analysis is drafted and the summary table is done; it's blocked on Dana's review of the draft. Dana has it on today's list. All good."
     expected:
       status: in_progress
       entry_type: progress
@@ -142,7 +142,7 @@ few_shot_examples:
       next_action: null
 
   - role: user
-    content: "[Sender: Echo (agent) | Channel: #leads]\nNew lead from dev site: John Smith, john@example.com, requesting demo for fleet management platform. Source: website contact form. CRM ticket #4521 created automatically."
+    content: "[Sender: Echo (agent) | Channel: #alerts]\nNew lead from dev site: John Smith, john@example.com, requesting demo for fleet management platform. Source: website contact form. CRM ticket #4521 created automatically."
     expected:
       status: blocked_on_human
       confidence: 0.8
@@ -190,74 +190,74 @@ few_shot_examples:
           targeted_at_operator: true
 
   - role: user
-    content: "[Sender: Atlas (agent) | Channel: #fleet-ops]\nHere's the week plan:\n| Day | Relay | Prism |\n| Mon | OPS-414 IRSA+EKS | MKT-26 design review |\n| Tue | OPS-379 voice gw | MKT-1 partner one-pager |\n| Wed | OPS-379 cont. | MKT-1 cont. |\nWant me to dispatch on this, or any swaps?"
+    content: "[Sender: Atlas (agent) | Channel: #fleet-ops]\nHere's the week plan:\n| Day | Relay | Prism |\n| Mon | OPS-512 log retention cleanup | MKT-43 landing page copy review |\n| Tue | OPS-527 billing export job | MKT-48 newsletter draft |\n| Wed | OPS-527 cont. | MKT-48 cont. |\nWant me to dispatch on this, or any swaps?"
     expected:
       status: needs_decision
       confidence: 0.9
       reason: "Agent presenting a weekly plan and asking for approval before dispatching"
-      workItemIds: ["OPS-414", "OPS-379", "MKT-26", "MKT-1"]
+      workItemIds: ["OPS-512", "OPS-527", "MKT-43", "MKT-48"]
       title: "Weekly dispatch plan approval"
       action_required_from: []
       next_action: "Approve or adjust weekly plan"
       targeted_at_operator: true
       breakdown:
-        - workItemId: "OPS-414"
+        - workItemId: "OPS-512"
           status: noise
           confidence: 0.85
           reason: "Scheduled in plan for Monday — not started, no action needed"
-          title: "IRSA+EKS scheduled"
-        - workItemId: "OPS-379"
+          title: "Log retention cleanup scheduled"
+        - workItemId: "OPS-527"
           status: noise
           confidence: 0.85
           reason: "Scheduled in plan for Tue/Wed — merely listed, not being discussed"
-          title: "Voice gateway scheduled"
-        - workItemId: "MKT-26"
+          title: "Billing export job scheduled"
+        - workItemId: "MKT-43"
           status: noise
           confidence: 0.85
           reason: "Scheduled in plan for Monday — merely listed"
-          title: "Design review scheduled"
-        - workItemId: "MKT-1"
+          title: "Copy review scheduled"
+        - workItemId: "MKT-48"
           status: noise
           confidence: 0.85
           reason: "Scheduled in plan for Tue/Wed — merely listed"
-          title: "Partner one-pager scheduled"
+          title: "Newsletter draft scheduled"
 
   - role: user
-    content: "[Sender: Atlas (agent) | Channel: DM]\nDispatch Verification — 7/8 tickets clean.\nOPS-355 ✅ OPS-361 ✅ OPS-389 ✅ OPS-416 ✅\nNeeds human attention:\n• OPS-379 (Voice call loop) — still In Progress in JIRA. echo-calling repo not found. Ticket may be blocked or scope changed. Please confirm if Done or still pending."
+    content: "[Sender: Atlas (agent) | Channel: DM]\nDispatch Verification — 4/5 tickets clean.\nOPS-603 ✅ OPS-611 ✅ OPS-618 ✅ OPS-624 ✅\nNeeds human attention:\n• OPS-630 (Invoice export retry) — still In Progress in JIRA. No linked branch or PR found. Ticket may be blocked or scope changed. Please confirm if Done or still pending."
     expected:
       status: noise
       confidence: 0.85
       reason: "Dispatch verification report covering multiple items with different statuses"
-      workItemIds: ["OPS-355", "OPS-361", "OPS-389", "OPS-416", "OPS-379"]
+      workItemIds: ["OPS-603", "OPS-611", "OPS-618", "OPS-624", "OPS-630"]
       title: "Dispatch verification report"
       breakdown:
-        - workItemId: "OPS-355"
+        - workItemId: "OPS-603"
           status: completed
           confidence: 0.9
           reason: "Verified done"
           title: "Ticket verified complete"
-        - workItemId: "OPS-361"
+        - workItemId: "OPS-611"
           status: completed
           confidence: 0.9
           reason: "Verified done"
           title: "Ticket verified complete"
-        - workItemId: "OPS-389"
+        - workItemId: "OPS-618"
           status: completed
           confidence: 0.9
           reason: "Verified done"
           title: "Ticket verified complete"
-        - workItemId: "OPS-416"
+        - workItemId: "OPS-624"
           status: completed
           confidence: 0.9
           reason: "Verified done"
           title: "Ticket verified complete"
-        - workItemId: "OPS-379"
+        - workItemId: "OPS-630"
           status: blocked_on_human
           confidence: 0.9
-          reason: "Repo not found, agent cannot proceed — asking operator to confirm status"
-          title: "Voice call loop — repo missing, needs confirmation"
+          reason: "No linked branch found, agent cannot proceed — asking operator to confirm status"
+          title: "Invoice export retry — no branch found, needs confirmation"
           action_required_from: []
-          next_action: "Confirm if OPS-379 is done or still pending"
+          next_action: "Confirm if OPS-630 is done or still pending"
           targeted_at_operator: true
 
   - role: user
