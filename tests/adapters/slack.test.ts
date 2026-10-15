@@ -241,6 +241,40 @@ describe("SlackAdapter", () => {
         expect(readChannels()).toEqual([...ids.slice(10), ...dms]);
       });
 
+      it("never let DMs keep a channel that has waited longer from being read", async () => {
+        const dms = Array.from({ length: 30 }, (_, i) => `DM${String(i).padStart(2, "0")}`);
+        mockConversationsList.mockResolvedValue({
+          channels: [...dms.map((id) => ({ id, is_im: true, user: "U-relay" })), { id: "CQ00", name: "planning" }],
+          response_metadata: { next_cursor: "" },
+        });
+        at("12:00:00");
+        await adapter.readThreads(since);
+
+        const readTimes: string[] = [];
+        // Five minutes apart, so the DMs are always due again: more of them than one poll reads
+        for (const time of ["12:05:00", "12:10:00", "12:15:00", "12:20:00"]) {
+          mockConversationsHistory.mockClear();
+          at(time);
+          await adapter.readThreads(since);
+          if (readChannels().includes("CQ00")) readTimes.push(time);
+        }
+        // Behind the DMs for a while, but not for ever
+        expect(readTimes).toEqual(["12:20:00"]);
+      });
+
+      it("don't give group DMs a head start", async () => {
+        mockConversationsList.mockResolvedValue({
+          channels: [...ids.map((id) => ({ id, name: id })), { id: "GDM1", is_mpim: true, name: "mpdm-dana--alex-1" }],
+          response_metadata: { next_cursor: "" },
+        });
+        at("12:00:00");
+        await adapter.readThreads(since);
+        mockConversationsHistory.mockClear();
+        at("12:05:00");
+        await adapter.readThreads(since);
+        expect(readChannels()).toEqual(ids.slice(0, 15));
+      });
+
       it("keep their place in the queue when the poll fails", async () => {
         listChannels(ids);
         at("12:00:00");
