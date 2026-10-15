@@ -1006,6 +1006,15 @@ export function createApp(state: EngineState): Hono {
   });
 
   // --- POST /api/setup ---
+  // One save at a time: a save stops the pipeline, awaits adapter connects, then starts a new one, so two
+  // overlapping saves (a double click) each started a pipeline and the first was never stopped
+  let settingsSave: Promise<unknown> = Promise.resolve();
+  app.use("/api/setup", async (c, next) => {
+    if (c.req.method !== "POST") return next();
+    const run = settingsSave.then(() => next());
+    settingsSave = run.catch(() => undefined);
+    await run;
+  });
   app.post("/api/setup", async (c) => {
     const body = await c.req.json<{
       messaging?: {
