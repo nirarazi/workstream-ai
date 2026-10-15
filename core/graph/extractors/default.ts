@@ -1,6 +1,7 @@
 // core/graph/extractors/default.ts — Regex-based work item ID extractor
 //
-// Only extracts IDs that match known ticket prefixes (e.g. OPS-, ENG-, MKT-).
+// Extracts IDs that match the configured ticket prefixes (e.g. OPS-, ENG-, MKT-). With none configured, it
+// accepts any KEY-123 key except technical terms such as UTF-8 or SHA-256.
 // This avoids false positives like "Gateway restart #2" → "PR-2".
 // Ambiguous references (PR #N, bare #N) are left to the LLM classifier's
 // workItemIds field, which understands context.

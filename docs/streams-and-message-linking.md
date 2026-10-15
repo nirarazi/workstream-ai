@@ -14,7 +14,7 @@ Messages reach a work item through three paths, tried in order:
 
 ### Path 1: Regex Extraction (High Confidence)
 
-The `DefaultExtractor` scans message text for patterns matching configured ticket prefixes (e.g., `OPS-382`, `ENG-205`). Only IDs whose prefix appears in `config.taskAdapter.ticketPrefixes` are accepted.
+The `DefaultExtractor` scans message text for patterns matching configured ticket prefixes (e.g., `OPS-382`, `ENG-205`). When `config.taskAdapter.ticketPrefixes` is set, only IDs with one of those prefixes are accepted. When it's empty (the default), any KEY-123 style ID is accepted except technical terms such as `UTF-8` or `SHA-256`.
 
 **Strengths:** Deterministic, zero false positives when prefixes are configured, fast.
 **Weaknesses:** Only works when the message contains a literal ticket ID. Many messages don't mention one — agents say "working on the deployment" not "working on OPS-382."
@@ -23,7 +23,7 @@ The `DefaultExtractor` scans message text for patterns matching configured ticke
 
 The classifier receives the message plus a list of currently open work items (`getOpenWorkItemSummaries()`). The prompt instructs it to return matching IDs in `workItemIds` — either ticket IDs it spotted in context, or existing open work item IDs that match the topic.
 
-LLM-suggested IDs are validated against known ticket prefixes before being accepted. Invalid IDs (e.g., `Q-456` when only `OPS-`, `ENG-`, `MKT-` are configured) are discarded.
+LLM-suggested IDs are validated before being accepted: against the configured ticket prefixes, or with none configured, they must look like a ticket key or a pull request. Invalid IDs (e.g., `Q-456` when only `OPS-`, `ENG-`, `MKT-` are configured) are discarded.
 
 **Strengths:** Semantic understanding — can link "the deployment is blocked" to `OPS-382` if it appears in the open items list. Handles follow-up messages that don't repeat the ticket ID.
 **Weaknesses:** Non-deterministic. Limited by context window (100 open items max). Can hallucinate IDs. Expensive per message (one LLM call each).
