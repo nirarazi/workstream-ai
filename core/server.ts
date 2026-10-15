@@ -1125,7 +1125,9 @@ export function createApp(state: EngineState): Hono {
 
         // Write non-sensitive config
         if (fields.baseUrl) {
+          // Merge, so settings the form doesn't manage (ticketPrefixes) survive a save
           localConfig.taskAdapter = {
+            ...((localConfig.taskAdapter ?? {}) as Record<string, unknown>),
             enabled: true,
             baseUrl: fields.baseUrl,
           };
