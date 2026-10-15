@@ -372,8 +372,9 @@ export class Pipeline {
   }
 
   private isValidWorkItemId(id: string): boolean {
-    // Also allow synthetic IDs (thread:xxx)
-    if (id.startsWith("thread:")) return true;
+    // Also allow synthetic IDs (thread:xxx), and any work item that already exists (e.g. one an agent created over
+    // MCP as "deploy-payments"): the prompt offers those as candidates
+    if (id.startsWith("thread:") || this.graph.getWorkItemById(id)) return true;
     const prefixes = this.getValidPrefixes();
     // No prefixes configured: accept a ticket key (but not a technical term like UTF-8) or a pull request
     if (prefixes.length === 0) return looksLikeTicketKey(id) || /^PR\s*#?\d+$/i.test(id);

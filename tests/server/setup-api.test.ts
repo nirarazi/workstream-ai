@@ -291,12 +291,13 @@ describe("POST /api/setup preserves what the form doesn't manage", () => {
 
     const state = makeState();
     try {
-      // The response is a 500 (Jira is unreachable); what matters is what was written before the reconnect
-      await createApp(state).request("/api/setup", {
+      // Jira is unreachable, so the save fails at the reconnect; what matters is what was written before it
+      const res = await createApp(state).request("/api/setup", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ task: { adapter: "jira", fields: { email: "dana@example.com", token: "test-token", baseUrl: "https://new.example.atlassian.net" } } }),
       });
+      expect(res.status).toBe(500);
     } finally {
       state.db.close();
       fetchSpy.mockRestore();

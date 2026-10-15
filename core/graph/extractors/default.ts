@@ -10,14 +10,16 @@ import type { Extractor } from "./interface.js";
 
 // Technical terms shaped like ticket keys. With no ticket prefixes configured, these would otherwise
 // become work items and group unrelated threads under, say, "UTF-8".
+// Teams whose real project key is on this list set taskAdapter.ticketPrefixes.
 const NOT_TICKET_KEYS = new Set([
   "UTF", "SHA", "MD", "ISO", "RFC", "CVE", "CWE", "GPT", "AES", "RSA", "ECDSA", "TLS", "SSL", "HTTP", "IPV",
-  "COVID", "WCAG", "PCI", "SOC", "ES", "ECMA", "IEEE", "ANSI", "ASCII", "BASE", "UUID", "OAUTH", "TOP",
+  "COVID", "WCAG", "ECMA", "IEEE", "ANSI", "ASCII", "BASE", "UUID", "OAUTH", "TOP", "PEP", "RC", "INT", "FP",
+  "BF", "CRC", "WPA", "PKCS", "NIST", "SP",
 ]);
 
 /** Whether `id` looks like a ticket key (KEY-123) and isn't a technical term such as UTF-8 or SHA-256 */
 export function looksLikeTicketKey(id: string): boolean {
-  const m = /^([A-Z][A-Z0-9]*)-\d+$/.exec(id.toUpperCase());
+  const m = /^([A-Z][A-Z0-9]+)-\d+$/.exec(id.toUpperCase());
   return m !== null && !NOT_TICKET_KEYS.has(m[1]);
 }
 
