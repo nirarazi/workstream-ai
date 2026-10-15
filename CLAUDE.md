@@ -305,7 +305,7 @@ Secondary criteria:
 
 ## Shipping Changes: Required Reviews on Every PR
 
-Every pull request gets a code review from the `Code Reviewer` subagent and a security review from the `Security Engineer` subagent. Their findings are verified, fixed, and re-reviewed in a loop until the PR is clean. The full process, shared with other coding agents, is in AGENTS.md:
+Every pull request gets a code review from the `Code Reviewer` subagent and a security review from the `Security Engineer` subagent (or the fallback described in AGENTS.md). Their findings are verified, fixed, and re-reviewed in a loop until the PR is clean. The full process, shared with other coding agents, is in AGENTS.md:
 
 @AGENTS.md
 
