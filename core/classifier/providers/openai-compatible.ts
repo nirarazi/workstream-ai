@@ -60,14 +60,18 @@ function classifyRefusal(err: ApiError): Error {
  */
 export function describeProviderError(error: unknown): string {
   if (error instanceof ApiError) return `${error.status !== undefined ? `HTTP ${error.status}` : "API error"} from the model provider`;
+  // A parse error's message quotes the reply, so only its name is kept
+  if (error instanceof SyntaxError) return error.name;
   return error instanceof Error ? `${error.name}: ${error.message.slice(0, 200)}` : String(error).slice(0, 200);
 }
 
+const RETRYABLE_STATUS = new Set([408, 429, 502, 503, 504]);
+
 function isRetryable(error: unknown): boolean {
+  // Decide on the status, not the message: an API error's message includes a body that can echo anything
+  if (error instanceof ApiError) return error.status !== undefined && RETRYABLE_STATUS.has(error.status);
   if (error instanceof Error) {
     if (error.name === "TimeoutError" || error.message.includes("timeout")) return true;
-    if (error.message.includes("429")) return true;
-    if (error.message.includes("502") || error.message.includes("503") || error.message.includes("504")) return true;
   }
   return false;
 }

@@ -209,7 +209,9 @@ export class Classifier {
     // Without the LLM's answer there's no title or links; the whole message is tried again later
     if (base.failed) return base;
     if (decisionResult.status === "rejected") {
-      log.warn("Decision gate failed — using the LLM classification", decisionResult.reason);
+      // Name only: decision providers' errors can carry response bodies or refusal text
+      const reason = decisionResult.reason;
+      log.warn("Decision gate failed — using the LLM classification", reason instanceof Error ? reason.name : "error");
       return base;
     }
     return applyDecision(base, decisionResult.value, senderContext?.senderType);
