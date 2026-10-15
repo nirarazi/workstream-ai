@@ -50,6 +50,11 @@ export interface Classification {
   nextAction: string | null;
   /** Per-work-item statuses when a message is a summary/brief mentioning multiple items */
   breakdown?: ClassificationBreakdown[];
+  /**
+   * Set when no model answer was obtained: "error" (the call failed or came back empty) or "budget" (the
+   * daily LLM budget is spent). The other fields are then a noise placeholder, not a classification.
+   */
+  failed?: "error" | "budget";
 }
 
 export interface Message {

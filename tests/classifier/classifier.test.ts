@@ -1068,3 +1068,27 @@ describe("OpenAICompatibleProvider", () => {
     fetchSpy.mockRestore();
   });
 });
+
+describe("Classifier: marking a missing answer", () => {
+  it("marks a provider error as failed, so the pipeline retries instead of storing the placeholder", async () => {
+    const classifier = new Classifier(failingProvider(new Error("API timeout")), SYSTEM_PROMPT, FEW_SHOT);
+    const result = await classifier.classify("OPS-100 is done");
+    expect(result.failed).toBe("error");
+  });
+
+  it("marks a spent budget separately, since that waits for the reset rather than a retry", async () => {
+    const { BudgetExhaustedError } = await import("../../core/usage/tracker.js");
+    const classifier = new Classifier(failingProvider(new BudgetExhaustedError()), SYSTEM_PROMPT, FEW_SHOT);
+    const result = await classifier.classify("OPS-100 is done");
+    expect(result.failed).toBe("budget");
+  });
+
+  it("doesn't mark a real answer", async () => {
+    const classifier = new Classifier(
+      mockProvider({ status: "completed", confidence: 0.9, reason: "done", workItemIds: [], title: "Done" }),
+      SYSTEM_PROMPT,
+      FEW_SHOT,
+    );
+    expect((await classifier.classify("OPS-100 is done")).failed).toBeUndefined();
+  });
+});
