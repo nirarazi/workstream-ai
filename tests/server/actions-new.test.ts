@@ -107,6 +107,24 @@ describe("dismiss and noise actions", () => {
     expect(wi?.currentAtcStatus).toBe("blocked_on_human"); // status unchanged
   });
 
+  it("close clears the reopened mark and records when it was closed", async () => {
+    graph.setReopened("OPS-200", "2026-10-15T09:00:00.000Z");
+    const app = createApp(makeState(graph, db));
+    const before = new Date().toISOString();
+
+    const res = await app.request("/api/action", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ workItemId: "OPS-200", action: "close" }),
+    });
+
+    expect(res.status).toBe(200);
+    const wi = graph.getWorkItemById("OPS-200")!;
+    expect(wi.currentAtcStatus).toBe("completed");
+    expect(wi.reopenedAt).toBeNull();
+    expect(wi.statusAt! >= before).toBe(true); // a message posted before now can't reopen it
+  });
+
   it("noise action reclassifies work item as noise", async () => {
     const state = makeState(graph, db);
     const app = createApp(state);

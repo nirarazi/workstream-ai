@@ -185,18 +185,18 @@ accuracy on the reference fleet) has never been measured.
      - **Searchable history:** "why did we pick REST for the reports API?"
    - Decisions made by other humans (Dana) are also Catch-up material (6).
 
-8. **Reopen completed work items.** When a work item is `completed`, the pipeline stores every new
-   message on it as noise with confidence 0 and never classifies it (`core/pipeline.ts`, "Work item
-   already completed"). An agent reporting a regression, a failed deploy or a follow-up question on a
-   done ticket never reaches the inbox; in the first live run with the decision gate, 15 of ~200
-   messages were skipped this way. Proposal:
-   - Classify these messages like any other. A cheap pre-check (sender is an agent, or the text matches
-     failure/question patterns) can keep the cost down if needed.
-   - When a message on a completed item comes back `blocked_on_human` or `needs_decision`, reopen the
-     item and show it in the inbox with a "reopened" marker, so the operator knows it was done before.
-   - Only a human (or the task adapter, e.g. Jira moving back to In Progress) reopens without a
-     blocker; agent chatter after completion stays out of the inbox.
-   - Eval: add labelled post-completion messages to the eval set and count missed interrupts on them.
+8. **Reopen completed work items.** ✅ Messages on a `completed` work item used to be stored as noise
+   without being classified, so a regression or follow-up on a done ticket never reached the inbox. Now:
+   - They're classified like any other message.
+   - A blocker (`blocked_on_human`) or decision (`needs_decision`) reopens the item, shown with a
+     "Reopened" marker. A human saying work resumed reopens it as `in_progress`. Agent chatter after
+     completion leaves it done.
+   - Approve and Close record when the item was closed, so an older message classified later can't
+     reopen it.
+   - Late replies on threads up to 3 days old are now read whatever the thread's status (see the Slack
+     adapter's read-back to the reply window), so these messages are actually seen.
+   - Still open: reopening from the task adapter (Jira moving back to In Progress), and labelled
+     post-completion messages in the eval set.
 
 **Local (offline) classification — findings from 2026-10-12, on an M4 with 16 GB:**
 - **Generative local models aren't viable on a typical laptop yet.**

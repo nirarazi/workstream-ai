@@ -77,6 +77,7 @@ function toWorkItem(row: WorkItemRow): WorkItem {
     dismissReason: (row.dismiss_reason as DismissReason | null) ?? null,
     mergedInto: row.merged_into ?? null,
     statusAt: row.status_at ?? null,
+    reopenedAt: row.reopened_at ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -418,6 +419,11 @@ export class ContextGraph {
     return Boolean(newValue);
   }
 
+  /** Mark a completed work item as brought back by a message at `at`, or clear the mark (null) when it's closed. */
+  setReopened(workItemId: string, at: string | null): void {
+    this.db.db.prepare("UPDATE work_items SET reopened_at = ? WHERE id = ?").run(at, workItemId);
+  }
+
   dismissWorkItem(workItemId: string, reason: DismissReason = "operator"): void {
     this.db.db
       .prepare("UPDATE work_items SET dismissed_at = ?, dismiss_reason = ? WHERE id = ?")
@@ -533,6 +539,22 @@ export class ContextGraph {
       "UPDATE threads SET work_item_id = NULL, manually_linked = 0 WHERE id = ?"
     ).run(threadId);
     log.debug("Unlinked thread", threadId);
+  }
+
+  /**
+   * Threads active since `since` (ISO), with the timestamp of the latest message processed in each: what the
+   * messaging adapter compares a thread's latest reply against to find late replies.
+   */
+  getLatestEventTimes(since: string): Map<string, string> {
+    const rows = this.db.db
+      .prepare(`
+        SELECT e.thread_id AS threadId, MAX(e.timestamp) AS latest FROM threads t
+        JOIN events e ON e.thread_id = t.id
+        WHERE t.last_activity >= ?
+        GROUP BY e.thread_id
+      `)
+      .all(since) as Array<{ threadId: string; latest: string }>;
+    return new Map(rows.map((r) => [r.threadId, r.latest]));
   }
 
   /** Return threads linked to active (non-completed, non-noise) work items, ordered by most recent activity */
@@ -1599,6 +1621,7 @@ function mapActionableRow(row: Record<string, unknown>): ActionableItem {
     dismissedAt: (row.dismissed_at as string | null) ?? null,
     dismissReason: (row.dismiss_reason as DismissReason | null) ?? null,
     statusAt: (row.status_at as string | null) ?? null,
+    reopenedAt: (row.reopened_at as string | null) ?? null,
     createdAt: row.created_at as string,
     updatedAt: row.updated_at as string,
   };

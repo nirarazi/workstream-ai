@@ -111,6 +111,8 @@ export interface WorkItem {
   mergedInto: string | null;
   /** When the message that last set the status was posted; an older message classified later doesn't override it */
   statusAt: string | null;
+  /** When a later message brought this item back after it was completed; null once it's closed again */
+  reopenedAt: string | null;
   createdAt: string;
   updatedAt: string;
 }

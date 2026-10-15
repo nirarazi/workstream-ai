@@ -3,7 +3,7 @@
 import { createHash } from "node:crypto";
 import { createLogger } from "./logger.js";
 import type { Config } from "./config.js";
-import type { Classification, Message, OperatorIdentityMap, Thread, ThreadContext } from "./types.js";
+import type { Classification, Message, OperatorIdentityMap, StatusCategory, Thread, ThreadContext } from "./types.js";
 import type { MessagingAdapter } from "./adapters/messaging/interface.js";
 import type { TaskAdapter } from "./adapters/tasks/interface.js";
 import type { Classifier } from "./classifier/index.js";
@@ -37,6 +37,16 @@ const RETRY_MAX_MS = 30 * 60 * 1000;
 
 /** Classified threads that started within this long stay in the history window, so late replies to them are read */
 const REPLY_WINDOW_MS = 24 * 60 * 60 * 1000;
+/**
+ * Whether a message on a completed work item brings it back: a blocker or a decision does (it needs the operator
+ * again), and so does a human saying work resumed. An agent reporting progress after completion doesn't.
+ */
+function reopens(status: StatusCategory, message: Message): boolean {
+  return status === "blocked_on_human" || status === "needs_decision" || (status === "in_progress" && message.senderType === "human");
+}
+
+/** Known threads that started within this long are checked for late replies, whatever their status */
+const LATE_REPLY_WINDOW_MS = 3 * 24 * 60 * 60 * 1000;
 
 /** While the model looks unavailable, read the platform no more often than this (new messages wait at most this) */
 const OUTAGE_READ_MAX_WAIT_MS = 60 * 1000;
@@ -217,10 +227,15 @@ export class Pipeline {
 
     let threads: Thread[];
     try {
+      const lateReplyWindowStart = new Date(Date.now() - LATE_REPLY_WINDOW_MS);
       threads = await this.messagingAdapter.readThreads(
         globalSince,
         channels.length > 0 ? channels : undefined,
         perChannelSince.size > 0 ? perChannelSince : undefined,
+        {
+          knownThreads: this.graph.getLatestEventTimes(lateReplyWindowStart.toISOString()),
+          replyWindowStart: lateReplyWindowStart,
+        },
       );
     } catch (err) {
       log.error("Failed to read threads from messaging adapter", err);
@@ -265,8 +280,16 @@ export class Pipeline {
     // Track thread IDs covered by this channel history poll
     const polledThreadIds = new Set<string>();
 
+    // A thread that started before its channel's cursor came back for a late reply. It's found again the same way
+    // if it has to be retried, so it never moves the cursor, in either direction.
+    const behindCursor = (t: Thread) => {
+      const stored = perChannelSince.get(t.channelId);
+      return stored !== undefined && Date.parse(threadStart(t)) < stored.getTime();
+    };
+
     // Keep a channel's cursor just before a thread that has to be read again
     const holdBack = (t: Thread) => {
+      if (behindCursor(t)) return;
       const before = Date.parse(threadStart(t)) - 1;
       const prior = heldBack.get(t.channelId);
       const at = Number.isNaN(before) ? null : new Date(before).toISOString();
@@ -327,6 +350,7 @@ export class Pipeline {
         continue;
       }
 
+      if (behindCursor(thread)) continue;
       // Track the latest timestamp for poll cursor updates
       // (a deferred channel advances only to this thread's start; later replies come back via re-polls)
       const cursorTs = deferredChannels.has(channelId)
@@ -696,47 +720,6 @@ export class Pipeline {
       }
     }
 
-    // Step 0c: Skip classification if the work item is already completed
-    if (inheritedWorkItemId) {
-      const existingWI = this.graph.getWorkItemById(inheritedWorkItemId);
-      if (existingWI?.currentAtcStatus === "completed") {
-        log.debug("Skipping classification for completed work item", inheritedWorkItemId);
-        // Still record the event so the message isn't lost
-        this.graph.upsertAgent({
-          id: message.userId,
-          name: message.userName,
-          platform: message.platform,
-          platformUserId: message.userId,
-          avatarUrl: message.userAvatarUrl ?? null,
-          isBot: message.senderType === "agent" ? true : message.senderType === "human" ? false : null,
-        });
-        this.graph.insertEvent({
-          threadId: thread.id,
-          messageId: message.id,
-          workItemId: inheritedWorkItemId,
-          agentId: message.userId,
-          status: "noise",
-          confidence: 0,
-          reason: "Work item already completed — skipping classification",
-          rawText: message.text,
-          timestamp: message.timestamp,
-          actionRequiredFrom: null,
-          nextAction: null,
-        });
-        return {
-          status: "noise",
-          entryType: "noise" as const,
-          confidence: 0,
-          reason: "Work item already completed — skipping classification",
-          workItemIds: [inheritedWorkItemId],
-          title: "",
-          targetedAtOperator: false,
-          actionRequiredFrom: null,
-          nextAction: null,
-        };
-      }
-    }
-
     // Step 0d: Skip classification for duplicate message content
     const contentHash = this.getContentHash(message.text, thread.id);
     if (this.recentContentHashes.has(contentHash)) {
@@ -976,9 +959,12 @@ export class Pipeline {
         const itemTitle = itemClassification?.title ?? classification.title;
 
         // A message classified late (held for a retry) doesn't overwrite the status a newer message already set
-        const shouldUpdate =
-          (!existing.currentConfidence || itemConfidence >= existing.currentConfidence) &&
-          !this.isOlderThanStatus(existing, message);
+        const newer = !this.isOlderThanStatus(existing, message);
+        // Done stays done, except for a blocker or decision (back to the inbox), or a human saying work resumed.
+        // Agent chatter after completion ("thanks, merged") doesn't reopen it, however confident.
+        const shouldUpdate = existing.currentAtcStatus === "completed"
+          ? newer && reopens(itemStatus, message)
+          : (!existing.currentConfidence || itemConfidence >= existing.currentConfidence) && newer;
 
         if (shouldUpdate) {
           this.graph.upsertWorkItem({
@@ -990,6 +976,10 @@ export class Pipeline {
             // Set LLM title if work item has no title yet (e.g. extracted IDs with no Jira enrichment)
             ...(itemTitle && !existing.title ? { title: itemTitle } : {}),
           });
+          if (existing.currentAtcStatus === "completed") {
+            this.graph.setReopened(workItemId, message.timestamp);
+            log.info("Reopened completed work item", workItemId, itemStatus);
+          }
         }
       }
     }

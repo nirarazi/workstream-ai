@@ -160,6 +160,8 @@ function createMockGraph(): ContextGraph {
     getBotType: vi.fn().mockReturnValue(null),
     upsertEnrichment: vi.fn(),
     getActiveThreads: vi.fn().mockReturnValue([]),
+    getLatestEventTimes: vi.fn().mockReturnValue(new Map()),
+    setReopened: vi.fn(),
     getRecentChannelContext: vi.fn().mockReturnValue([]),
     expireInactiveItems: vi.fn().mockReturnValue(0),
     findRecurringWorkItem: vi.fn().mockReturnValue(null),

@@ -1,7 +1,7 @@
 // core/adapters/messaging/slack/index.ts — Slack messaging adapter
 
 import { WebClient } from "@slack/web-api";
-import type { MessagingAdapter } from "../interface.js";
+import type { MessagingAdapter, ReadThreadsOptions } from "../interface.js";
 import type { AdapterSetupInfo } from "../../setup.js";
 import type { Credentials, Thread, Message } from "../../../types.js";
 import type { ContextGraph } from "../../../graph/index.js";
@@ -19,6 +19,8 @@ interface SlackMessage {
   ts?: string;
   thread_ts?: string;
   reply_count?: number;
+  /** On a thread's parent message: ts of its latest reply */
+  latest_reply?: string;
   text?: string;
   user?: string;
   bot_id?: string;
@@ -148,6 +150,13 @@ const QUIET_POLL_MS = 5 * 60 * 1000;
 const QUIET_READS_PER_POLL = 15;
 /** A channel that failed to read (left, archived, removed) is retried this often, in the quiet queue's slots. */
 const UNREADABLE_RETRY_MS = 30 * 60 * 1000;
+/**
+ * Replies don't show up in channel history, only their thread's parent does (with its latest reply's time). So
+ * this often, a channel is read back to the reply window, not just from its cursor, to find known threads with
+ * late replies. Active channels take turns, a few per poll; quiet channels are read this way every time.
+ */
+const WIDE_READ_MS = 5 * 60 * 1000;
+const WIDE_READS_PER_POLL = 5;
 
 export class SlackAdapter implements MessagingAdapter {
   /** Channels that error on read (deleted, archived, left) — logged once, then retried every UNREADABLE_RETRY_MS. */
@@ -155,6 +164,8 @@ export class SlackAdapter implements MessagingAdapter {
   /** Latest message time seen per channel (epoch ms), and when each channel was last read. */
   private readonly channelLastActivity = new Map<string, number>();
   private readonly channelLastRead = new Map<string, number>();
+  /** When each channel was last read back to the reply window (see WIDE_READ_MS). */
+  private readonly channelLastWideRead = new Map<string, number>();
   readonly name = "slack";
   readonly displayName = "Slack";
 
@@ -265,7 +276,24 @@ export class SlackAdapter implements MessagingAdapter {
     return new Set(due.slice(0, QUIET_READS_PER_POLL).map((c) => c.id));
   }
 
-  async readThreads(since: Date, channels?: string[], perChannelSince?: Map<string, Date>): Promise<Thread[]> {
+  /** Channels read every poll whose turn it is to be read back to the reply window, least recently first. */
+  private wideReadsDue(channelIds: string[], now: number): Set<string> {
+    const due: Array<{ id: string; lastWide: number }> = [];
+    for (const id of channelIds) {
+      if (this.isReadSlowly(id, now)) continue; // read back to the window whenever they're read
+      const lastWide = this.channelLastWideRead.get(id) ?? 0;
+      if (now - lastWide >= WIDE_READ_MS) due.push({ id, lastWide });
+    }
+    due.sort((a, b) => a.lastWide - b.lastWide);
+    return new Set(due.slice(0, WIDE_READS_PER_POLL).map((c) => c.id));
+  }
+
+  async readThreads(
+    since: Date,
+    channels?: string[],
+    perChannelSince?: Map<string, Date>,
+    options?: ReadThreadsOptions,
+  ): Promise<Thread[]> {
     this.ensureConnected();
 
     const channelIds = channels?.length
@@ -273,7 +301,6 @@ export class SlackAdapter implements MessagingAdapter {
       : await this.getAllChannelIds();
 
     const threads: Thread[] = [];
-    const globalOldest = String(since.getTime() / 1000);
 
     // The cursor is the last processed message, so it also tells us when the channel was last active
     for (const channelId of channelIds) {
@@ -282,8 +309,12 @@ export class SlackAdapter implements MessagingAdapter {
     }
     const pollStart = Date.now();
     const slowDue = this.slowChannelsDue(channelIds, pollStart);
+    const known = options?.knownThreads;
+    const windowStart = known && options?.replyWindowStart ? options.replyWindowStart.getTime() / 1000 : null;
+    const wideDue = windowStart !== null ? this.wideReadsDue(channelIds, pollStart) : new Set<string>();
     // A failed poll's threads are all dropped, so the channels it read keep their place in the quiet queue
     const lastReadBefore = new Map<string, number | undefined>();
+    const lastWideBefore = new Map<string, number | undefined>();
 
     try {
       for (const channelId of channelIds) {
@@ -294,11 +325,16 @@ export class SlackAdapter implements MessagingAdapter {
         const channelSince = perChannelSince?.get(channelId);
 
         if (this.isReadSlowly(channelId, pollStart) && !slowDue.has(channelId)) continue;
+        const slow = this.isReadSlowly(channelId, pollStart);
         lastReadBefore.set(channelId, this.channelLastRead.get(channelId));
         this.channelLastRead.set(channelId, Date.now());
-        const oldest = channelSince
-          ? String(channelSince.getTime() / 1000)
-          : globalOldest;
+        const cursor = channelSince ? channelSince.getTime() / 1000 : since.getTime() / 1000;
+        const wide = windowStart !== null && windowStart < cursor && (slow || wideDue.has(channelId));
+        if (windowStart !== null && (slow || wideDue.has(channelId))) {
+          lastWideBefore.set(channelId, this.channelLastWideRead.get(channelId));
+          this.channelLastWideRead.set(channelId, Date.now());
+        }
+        const oldest = String(wide ? windowStart : cursor);
 
         let messages: Awaited<ReturnType<SlackAdapter["fetchChannelHistory"]>>;
         try {
@@ -323,12 +359,22 @@ export class SlackAdapter implements MessagingAdapter {
             continue;
           }
 
+          if (msg.latest_reply) this.noteActivity(channelId, parseFloat(msg.latest_reply) * 1000);
+          const isParent = !msg.thread_ts || msg.thread_ts === msg.ts;
+          // Before the cursor (read back to the reply window): only known threads with a reply since, never new ones
+          const beforeCursor = wide && parseFloat(msg.ts) < cursor;
+          const latestKnown = known?.get(msg.ts);
+          const latestKnownMs = latestKnown === undefined ? NaN : Date.parse(latestKnown);
+          const hasNewReply = msg.reply_count && msg.reply_count > 0 && msg.thread_ts
+            && (Number.isNaN(latestKnownMs) || !msg.latest_reply || Math.floor(parseFloat(msg.latest_reply) * 1000) > latestKnownMs);
+          if (beforeCursor && (Number.isNaN(latestKnownMs) || !isParent || !hasNewReply)) continue;
+
           if (msg.reply_count && msg.reply_count > 0 && msg.thread_ts) {
-            // This is a parent message with replies — fetch the full thread
-            const replyMessages = await this.fetchThreadReplies(channelId, msg.thread_ts);
+            // A parent message with replies: fetch the full thread, unless nothing's been added since it was processed
+            const replyMessages = hasNewReply ? await this.fetchThreadReplies(channelId, msg.thread_ts) : [msg];
             const thread = this.buildThread(channelId, channelName, msg.thread_ts, replyMessages);
             threads.push(thread);
-          } else if (!msg.thread_ts || msg.thread_ts === msg.ts) {
+          } else if (isParent) {
             // Standalone message (no replies, not a reply itself)
             const thread = this.buildThread(channelId, channelName, msg.ts, [msg]);
             threads.push(thread);
@@ -341,6 +387,10 @@ export class SlackAdapter implements MessagingAdapter {
       for (const [channelId, lastRead] of lastReadBefore) {
         if (lastRead === undefined) this.channelLastRead.delete(channelId);
         else this.channelLastRead.set(channelId, lastRead);
+      }
+      for (const [channelId, lastWide] of lastWideBefore) {
+        if (lastWide === undefined) this.channelLastWideRead.delete(channelId);
+        else this.channelLastWideRead.set(channelId, lastWide);
       }
       throw err;
     }

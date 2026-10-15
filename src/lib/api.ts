@@ -21,6 +21,8 @@ export interface WorkItem {
   pinned: boolean;
   dismissedAt: string | null;
   dismissReason: "operator" | "expired" | null;
+  /** Set when a later message brought a completed item back */
+  reopenedAt?: string | null;
   createdAt: string;
   updatedAt: string;
 }
