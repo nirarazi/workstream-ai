@@ -7,13 +7,13 @@ import { DefaultExtractor } from "../../core/graph/extractors/default.js";
 import { Pipeline } from "../../core/pipeline.js";
 import type { Message } from "../../core/types.js";
 
-function setup(status: string, confidence = 0.6) {
+function setup(status: string, confidence = 0.6, operatorIdentities?: Map<string, { platform: string; userId: string; userName: string }>) {
   const db = new Database(":memory:");
   const graph = new ContextGraph(db);
   const classifyFn = vi.fn().mockResolvedValue({ status, confidence, reason: "r", workItemIds: [], title: "t" });
   const classifier = new Classifier({ name: "mock", classify: classifyFn }, "sys", []);
   const linker = new WorkItemLinker(graph, [new DefaultExtractor({ ticketPatterns: ["\\b([A-Z]{2,6}-\\d+)\\b"], prPatterns: [] })]);
-  const pipeline = new Pipeline({ name: "test", displayName: "Test" } as any, classifier, graph, linker);
+  const pipeline = new Pipeline({ name: "test", displayName: "Test" } as any, classifier, graph, linker, undefined, undefined, operatorIdentities as any);
   // Approved an hour ago, with a confident status
   graph.upsertWorkItem({ id: "OPS-101", source: "jira", currentAtcStatus: "completed", currentConfidence: 0.99, statusAt: "2026-10-15T08:00:00.000Z" });
   graph.upsertThread({ id: "t1", channelId: "C1", platform: "test", workItemId: "OPS-101" });
@@ -63,6 +63,16 @@ describe("Messages on a completed work item", () => {
     expect(item.currentAtcStatus).toBe("in_progress");
     expect(item.reopenedAt).toBe("2026-10-15T09:00:00.000Z");
     db.close();
+  });
+
+  it("don't reopen it on the operator's own message, such as the note sent with Approve", async () => {
+    const operator = new Map([["test", { platform: "test", userId: "U0OPERATOR1", userName: "Alex" }]]);
+    for (const status of ["in_progress", "blocked_on_human"]) {
+      const { db, graph, pipeline } = setup(status, 0.9, operator);
+      await pipeline.processMessage(message({ userId: "U0OPERATOR1", userName: "Alex", senderType: "human", text: "LGTM, go ahead and merge OPS-101" }), "t1", "C1");
+      expect(graph.getWorkItemById("OPS-101")!.currentAtcStatus).toBe("completed");
+      db.close();
+    }
   });
 
   it("don't reopen it when the message was posted before it was closed (classified late)", async () => {

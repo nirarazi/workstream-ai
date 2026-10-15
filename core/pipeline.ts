@@ -39,10 +39,12 @@ const RETRY_MAX_MS = 30 * 60 * 1000;
 const REPLY_WINDOW_MS = 24 * 60 * 60 * 1000;
 /**
  * Whether a message on a completed work item brings it back: a blocker or a decision does (it needs the operator
- * again), and so does a human saying work resumed. An agent reporting progress after completion doesn't.
+ * again), and so does another human saying work resumed. An agent reporting progress after completion doesn't, nor
+ * does the operator's own message (e.g. the note sent with Approve, which comes back as in_progress).
  */
-function reopens(status: StatusCategory, message: Message): boolean {
-  return status === "blocked_on_human" || status === "needs_decision" || (status === "in_progress" && message.senderType === "human");
+function reopens(status: StatusCategory, message: Message, fromOperator: boolean): boolean {
+  if (status === "blocked_on_human" || status === "needs_decision") return true;
+  return status === "in_progress" && message.senderType === "human" && !fromOperator;
 }
 
 /** Known threads that started within this long are checked for late replies, whatever their status */
@@ -131,9 +133,9 @@ export class Pipeline {
   }
 
   /**
-   * Whether the item's status was last set by a message posted after this one. Only messages set status_at, so an
-   * operator action (approve, close, reply) or a mere mention elsewhere never stops an earlier-posted message, for
-   * example a block the operator hadn't seen yet, from updating the status.
+   * Whether the item's status was last set by a message posted after this one, or by Approve/Close after it was
+   * posted. Other operator actions (reply, snooze) and mere mentions elsewhere don't set status_at, so they never stop
+   * an earlier-posted message, for example a block the operator hadn't seen yet, from updating the status.
    */
   private isOlderThanStatus(item: { statusAt: string | null } | null, message: Message): boolean {
     return Boolean(item?.statusAt && message.timestamp < item.statusAt);
@@ -228,14 +230,15 @@ export class Pipeline {
     let threads: Thread[];
     try {
       const lateReplyWindowStart = new Date(Date.now() - LATE_REPLY_WINDOW_MS);
+      const knownThreads = this.graph.getLatestEventTimes(lateReplyWindowStart.toISOString());
+      // A thread with a message waiting for a retry must come back in full, even once a later reply in it is
+      // classified: as if nothing in it had been processed
+      for (const key of this.failedMessages.keys()) knownThreads.set(key.slice(0, key.indexOf(":")), new Date(0).toISOString());
       threads = await this.messagingAdapter.readThreads(
         globalSince,
         channels.length > 0 ? channels : undefined,
         perChannelSince.size > 0 ? perChannelSince : undefined,
-        {
-          knownThreads: this.graph.getLatestEventTimes(lateReplyWindowStart.toISOString()),
-          replyWindowStart: lateReplyWindowStart,
-        },
+        { knownThreads, replyWindowStart: lateReplyWindowStart },
       );
     } catch (err) {
       log.error("Failed to read threads from messaging adapter", err);
@@ -277,8 +280,9 @@ export class Pipeline {
       log.info(`Capped threads with new messages from ${sortedThreads.length} to ${cappedThreads.length} (maxThreadsPerPoll=${maxThreads})`);
     }
 
-    // Track thread IDs covered by this channel history poll
-    const polledThreadIds = new Set<string>();
+    // Track thread IDs covered by this channel history poll. That includes threads it returned with nothing new: the
+    // adapter has just checked them (a thread with a message to retry always comes back in full, so it's pending).
+    const polledThreadIds = new Set<string>(threads.filter((t) => !pendingKey.has(t)).map((t) => t.id));
 
     // A thread that started before its channel's cursor came back for a late reply. It's found again the same way
     // if it has to be retried, so it never moves the cursor, in either direction.
@@ -568,6 +572,10 @@ export class Pipeline {
    * next move is someone else's. Without this, "any news on this?" came back blocked and targeted, and
    * kept the item in the operator's inbox with their own message as the reason.
    */
+  private isOperator(message: Message): boolean {
+    return [...(this.operatorIdentities?.values() ?? [])].some((id) => id.userId === message.userId);
+  }
+
   private fromOperator(message: Message, classification: Classification): Classification {
     const operatorIds = new Set([...(this.operatorIdentities?.values() ?? [])].map((id) => id.userId));
     if (!operatorIds.has(message.userId)) return classification;
@@ -963,7 +971,7 @@ export class Pipeline {
         // Done stays done, except for a blocker or decision (back to the inbox), or a human saying work resumed.
         // Agent chatter after completion ("thanks, merged") doesn't reopen it, however confident.
         const shouldUpdate = existing.currentAtcStatus === "completed"
-          ? newer && reopens(itemStatus, message)
+          ? newer && reopens(itemStatus, message, this.isOperator(message))
           : (!existing.currentConfidence || itemConfidence >= existing.currentConfidence) && newer;
 
         if (shouldUpdate) {

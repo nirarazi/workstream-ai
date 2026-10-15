@@ -917,6 +917,7 @@ export function createApp(state: EngineState): Hono {
             source: workItem.source,
             currentAtcStatus: "noise",
           });
+          state.graph.setReopened(body.workItemId, null);
           const noiseThread = findThreadForWorkItem(body.workItemId);
           state.graph.insertEvent({
             threadId: noiseThread?.id ?? null,

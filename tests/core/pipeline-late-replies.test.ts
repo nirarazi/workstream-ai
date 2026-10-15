@@ -48,6 +48,20 @@ describe("Pipeline: late replies to threads that started before the cursor", () 
     db.close();
   });
 
+  it("asks for a thread in full while one of its messages waits for a retry, even once a later reply is classified", async () => {
+    const classify = vi.fn(async (text: string) => (text.includes("OLD-m2") ? FAILED : ANSWER));
+    const { db, graph, readThreads, pipeline } = setup(classify);
+    readThreads.mockResolvedValue([thread("OLD", "2026-10-15T09:00:00.000Z", "2026-10-15T09:05:00.000Z", "2026-10-15T09:10:00.000Z")]);
+    await pipeline.processOnce(); // m1 classified, m2 fails (m3 waits behind it)
+
+    readThreads.mockResolvedValue([]);
+    await pipeline.processOnce();
+
+    expect(graph.hasEvent("OLD-m1", "OLD")).toBe(true);
+    expect(readThreads.mock.calls[1][3].knownThreads.get("OLD")).toBe(new Date(0).toISOString());
+    db.close();
+  });
+
   it("classifies the late reply without moving the channel's cursor, in either direction", async () => {
     const classify = vi.fn(async () => ANSWER);
     const { db, graph, readThreads, pipeline } = setup(classify);

@@ -542,8 +542,8 @@ export class ContextGraph {
   }
 
   /**
-   * Threads active since `since` (ISO), with the timestamp of the latest message processed in each: what the
-   * messaging adapter compares a thread's latest reply against to find late replies.
+   * Threads active since `since` (ISO), with the timestamp of the latest platform message processed in each: what
+   * the messaging adapter compares a thread's latest reply against to find late replies.
    */
   getLatestEventTimes(since: string): Map<string, string> {
     const rows = this.db.db
@@ -551,6 +551,8 @@ export class ContextGraph {
         SELECT e.thread_id AS threadId, MAX(e.timestamp) AS latest FROM threads t
         JOIN events e ON e.thread_id = t.id
         WHERE t.last_activity >= ?
+          -- operator actions are stamped with the click time, not a message's: they'd hide replies not read yet
+          AND e.message_id NOT LIKE 'operator-%'
         GROUP BY e.thread_id
       `)
       .all(since) as Array<{ threadId: string; latest: string }>;

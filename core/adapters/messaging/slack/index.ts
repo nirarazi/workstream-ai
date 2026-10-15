@@ -310,7 +310,8 @@ export class SlackAdapter implements MessagingAdapter {
     const pollStart = Date.now();
     const slowDue = this.slowChannelsDue(channelIds, pollStart);
     const known = options?.knownThreads;
-    const windowStart = known && options?.replyWindowStart ? options.replyWindowStart.getTime() / 1000 : null;
+    // Nothing known yet (a fresh install): reading back the window can't find anything
+    const windowStart = known?.size && options?.replyWindowStart ? options.replyWindowStart.getTime() / 1000 : null;
     const wideDue = windowStart !== null ? this.wideReadsDue(channelIds, pollStart) : new Set<string>();
     // A failed poll's threads are all dropped, so the channels it read keep their place in the quiet queue
     const lastReadBefore = new Map<string, number | undefined>();
@@ -365,7 +366,7 @@ export class SlackAdapter implements MessagingAdapter {
           const beforeCursor = wide && parseFloat(msg.ts) < cursor;
           const latestKnown = known?.get(msg.ts);
           const latestKnownMs = latestKnown === undefined ? NaN : Date.parse(latestKnown);
-          const hasNewReply = msg.reply_count && msg.reply_count > 0 && msg.thread_ts
+          const hasNewReply = Boolean(msg.reply_count && msg.reply_count > 0 && msg.thread_ts)
             && (Number.isNaN(latestKnownMs) || !msg.latest_reply || Math.floor(parseFloat(msg.latest_reply) * 1000) > latestKnownMs);
           if (beforeCursor && (Number.isNaN(latestKnownMs) || !isParent || !hasNewReply)) continue;
 
