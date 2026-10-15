@@ -26,6 +26,8 @@ Under **OAuth & Permissions**, add these **User Token Scopes** (not Bot Token Sc
 | `groups:read` | List private channels |
 | `im:history` | Read direct messages |
 | `im:read` | List DM conversations |
+| `mpim:history` | Read group direct messages |
+| `mpim:read` | List group direct messages |
 | `users:read` | Resolve agent names and avatars |
 | `chat:write` | Send replies as the operator |
 

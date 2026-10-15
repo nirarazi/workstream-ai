@@ -5,6 +5,7 @@ target/
 *.db-wal
 *.db-shm
 .env*
+!.env.example
 config/local.yaml
 .DS_Store
 .superpowers/
