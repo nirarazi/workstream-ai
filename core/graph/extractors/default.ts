@@ -13,8 +13,8 @@ import type { Extractor } from "./interface.js";
 // Teams whose real project key is on this list set taskAdapter.ticketPrefixes.
 const NOT_TICKET_KEYS = new Set([
   "UTF", "SHA", "MD", "ISO", "RFC", "CVE", "CWE", "GPT", "AES", "RSA", "ECDSA", "TLS", "SSL", "HTTP", "IPV",
-  "COVID", "WCAG", "ECMA", "IEEE", "ANSI", "ASCII", "BASE", "UUID", "OAUTH", "TOP", "PEP", "RC", "INT", "FP",
-  "BF", "CRC", "WPA", "PKCS", "NIST", "SP",
+  "COVID", "WCAG", "ECMA", "IEEE", "ANSI", "ASCII", "BASE", "UUID", "OAUTH", "TOP", "PEP", "RC", "FP",
+  "BF", "CRC", "WPA", "PKCS", "NIST",
 ]);
 
 /** Whether `id` looks like a ticket key (KEY-123) and isn't a technical term such as UTF-8 or SHA-256 */
