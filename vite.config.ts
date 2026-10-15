@@ -16,7 +16,8 @@ export default defineConfig({
     port: 5173,
     strictPort: true,
     watch: {
-      ignored: ["**/src-tauri/**", "**/core/**"],
+      // Worktrees (agent and git) under the repo are other checkouts: their changes must not reload this app
+      ignored: ["**/src-tauri/**", "**/core/**", "**/.claude/**", "**/.worktrees/**"],
     },
     proxy: {
       "/api": "http://127.0.0.1:9847",

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { matchesSearch } from "../../src/components/StreamView.js";
+import { matchesSearch } from "../../src/lib/stream-search.js";
 import type { ActionableItem } from "../../src/lib/api.js";
 
 const item = {

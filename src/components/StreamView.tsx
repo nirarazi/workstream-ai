@@ -9,23 +9,9 @@ import StreamListItem from "./stream/StreamListItem";
 import StreamDetail from "./stream/StreamDetail";
 import UndoToast from "./stream/UndoToast";
 import { type ActionState } from "./StatusBadge";
+import { matchesSearch } from "../lib/stream-search";
 
 const POLL_INTERVAL = 5000;
-
-/** Case-insensitive match on everything shown for an item: ID, title, agent, channel and latest message. */
-export function matchesSearch(item: ActionableItem, query: string): boolean {
-  const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
-  if (terms.length === 0) return true;
-  const haystack = [
-    item.workItem.id,
-    item.workItem.title,
-    item.agent?.name,
-    item.thread?.channelName,
-    item.latestEvent?.rawText,
-    item.latestEvent?.reason,
-  ].filter(Boolean).join("\n").toLowerCase();
-  return terms.every((t) => haystack.includes(t));
-}
 
 interface StreamViewProps {
   mentionables: Mentionable[];
