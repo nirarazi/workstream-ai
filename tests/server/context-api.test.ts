@@ -53,12 +53,12 @@ describe("GET /api/work-item/:id/context", () => {
     // Set up test data
     state.graph.upsertAgent({
       id: "a1",
-      name: "Byte",
+      name: "Relay",
       platform: "slack",
       platformUserId: "U1",
     });
     state.graph.upsertWorkItem({
-      id: "AI-382",
+      id: "OPS-382",
       source: "jira",
       title: "Fix login bug",
       currentAtcStatus: "blocked_on_human",
@@ -67,26 +67,26 @@ describe("GET /api/work-item/:id/context", () => {
     state.graph.upsertThread({
       id: "t1",
       channelId: "C123",
-      channelName: "agent-orchestrator",
+      channelName: "fleet-ops",
       platform: "slack",
-      workItemId: "AI-382",
+      workItemId: "OPS-382",
       messageCount: 3,
     });
     state.graph.insertEvent({
       threadId: "t1",
       messageId: "m1",
-      workItemId: "AI-382",
+      workItemId: "OPS-382",
       agentId: "a1",
       status: "in_progress",
       confidence: 0.9,
       reason: "Agent started work",
-      rawText: "Starting work on AI-382",
+      rawText: "Starting work on OPS-382",
       timestamp: "2026-03-31T08:00:00Z",
     });
     state.graph.insertEvent({
       threadId: "t1",
       messageId: "m2",
-      workItemId: "AI-382",
+      workItemId: "OPS-382",
       agentId: "a1",
       status: "blocked_on_human",
       confidence: 0.95,
@@ -102,14 +102,14 @@ describe("GET /api/work-item/:id/context", () => {
 
   it("returns context with events, enrichments, and quick replies", async () => {
     const app = createApp(state);
-    const res = await app.request("/api/work-item/AI-382/context");
+    const res = await app.request("/api/work-item/OPS-382/context");
 
     expect(res.status).toBe(200);
     const body = await res.json();
 
-    expect(body.workItem.id).toBe("AI-382");
+    expect(body.workItem.id).toBe("OPS-382");
     expect(body.events).toHaveLength(2);
-    expect(body.events[0].rawText).toBe("Starting work on AI-382");
+    expect(body.events[0].rawText).toBe("Starting work on OPS-382");
     expect(body.threads).toHaveLength(1);
     expect(body.quickReplies).toBeInstanceOf(Array);
     expect(body.quickReplies.length).toBeGreaterThan(0);
@@ -123,13 +123,13 @@ describe("GET /api/work-item/:id/context", () => {
 
   it("includes enrichments when available", async () => {
     state.graph.upsertEnrichment({
-      workItemId: "AI-382",
+      workItemId: "OPS-382",
       source: "jira",
       data: { status: "In Review", description: "Fix the login redirect bug" },
     });
 
     const app = createApp(state);
-    const res = await app.request("/api/work-item/AI-382/context");
+    const res = await app.request("/api/work-item/OPS-382/context");
     const body = await res.json();
 
     expect(body.enrichments).toHaveLength(1);
@@ -142,13 +142,13 @@ describe("POST /api/work-item/:id/summarize", () => {
 
   beforeEach(() => {
     state = makeState();
-    state.graph.upsertAgent({ id: "a1", name: "Byte", platform: "slack", platformUserId: "U1" });
-    state.graph.upsertWorkItem({ id: "AI-382", source: "jira", title: "Fix login", currentAtcStatus: "blocked_on_human" });
-    state.graph.upsertThread({ id: "t1", channelId: "C1", platform: "slack", workItemId: "AI-382" });
+    state.graph.upsertAgent({ id: "a1", name: "Relay", platform: "slack", platformUserId: "U1" });
+    state.graph.upsertWorkItem({ id: "OPS-382", source: "jira", title: "Fix login", currentAtcStatus: "blocked_on_human" });
+    state.graph.upsertThread({ id: "t1", channelId: "C1", platform: "slack", workItemId: "OPS-382" });
     state.graph.insertEvent({
       threadId: "t1",
       messageId: "m1",
-      workItemId: "AI-382",
+      workItemId: "OPS-382",
       agentId: "a1",
       status: "blocked_on_human",
       confidence: 0.95,
@@ -174,14 +174,14 @@ describe("POST /api/work-item/:id/summarize", () => {
     );
 
     const app = createApp(state);
-    const res = await app.request("/api/work-item/AI-382/summarize", { method: "POST", headers: { "Content-Type": "application/json" } });
+    const res = await app.request("/api/work-item/OPS-382/summarize", { method: "POST", headers: { "Content-Type": "application/json" } });
 
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.summary).toContain("PR needs approval");
 
     // Verify it was cached
-    const cached = state.graph.getSummary("AI-382");
+    const cached = state.graph.getSummary("OPS-382");
     expect(cached).not.toBeNull();
     expect(cached!.summaryText).toContain("PR needs approval");
 

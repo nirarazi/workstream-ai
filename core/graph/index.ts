@@ -167,7 +167,7 @@ function toSummary(row: SummaryRow): { workItemId: string; summaryText: string; 
   };
 }
 
-/** Ticket-style IDs ("AI-101", "OPS-7") in a message, upper-cased. */
+/** Ticket-style IDs ("OPS-101", "ENG-7") in a message, upper-cased. */
 function ticketIds(text: string): Set<string> {
   return new Set((text.match(/\b[A-Z][A-Z0-9]+-\d+\b/g) ?? []).map((id) => id.toUpperCase()));
 }

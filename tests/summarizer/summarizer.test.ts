@@ -7,12 +7,12 @@ const sampleEvents: Event[] = [
     id: "e1",
     threadId: "t1",
     messageId: "m1",
-    workItemId: "AI-382",
+    workItemId: "OPS-382",
     agentId: "a1",
     status: "in_progress",
     confidence: 0.9,
     reason: "Agent started work",
-    rawText: "Starting work on AI-382. Will submit PR shortly.",
+    rawText: "Starting work on OPS-382. Will submit PR shortly.",
     timestamp: "2026-03-31T08:00:00Z",
     createdAt: "2026-03-31T08:00:00Z",
   },
@@ -20,7 +20,7 @@ const sampleEvents: Event[] = [
     id: "e2",
     threadId: "t1",
     messageId: "m2",
-    workItemId: "AI-382",
+    workItemId: "OPS-382",
     agentId: "a1",
     status: "blocked_on_human",
     confidence: 0.95,
@@ -33,7 +33,7 @@ const sampleEvents: Event[] = [
 
 describe("Summarizer", () => {
   it("generates a summary from events using the LLM", async () => {
-    const summaryText = "- Agent started work on AI-382\n- PR #716 submitted, awaiting review\n- Currently blocked: needs human approval to merge";
+    const summaryText = "- Agent started work on OPS-382\n- PR #716 submitted, awaiting review\n- Currently blocked: needs human approval to merge";
 
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
       new Response(
@@ -50,9 +50,9 @@ describe("Summarizer", () => {
       apiKey: "test-key",
     });
 
-    const result = await summarizer.summarize(sampleEvents, "AI-382");
+    const result = await summarizer.summarize(sampleEvents, "OPS-382");
 
-    expect(result).toContain("AI-382");
+    expect(result).toContain("OPS-382");
     expect(typeof result).toBe("string");
     expect(result.length).toBeGreaterThan(0);
 
@@ -70,9 +70,9 @@ describe("Summarizer", () => {
       apiKey: "test-key",
     });
 
-    const result = await summarizer.summarize(sampleEvents, "AI-382");
+    const result = await summarizer.summarize(sampleEvents, "OPS-382");
 
-    expect(result).toContain("AI-382");
+    expect(result).toContain("OPS-382");
     expect(result.length).toBeGreaterThan(0);
 
     fetchSpy.mockRestore();
@@ -94,12 +94,12 @@ describe("Summarizer", () => {
       apiKey: "test-key",
     });
 
-    await summarizer.summarize(sampleEvents, "AI-382");
+    await summarizer.summarize(sampleEvents, "OPS-382");
 
     const body = JSON.parse((fetchSpy.mock.calls[0][1] as RequestInit).body as string);
     const userMessage = body.messages.find((m: { role: string }) => m.role === "user");
-    expect(userMessage.content).toContain("AI-382");
-    expect(userMessage.content).toContain("Starting work on AI-382");
+    expect(userMessage.content).toContain("OPS-382");
+    expect(userMessage.content).toContain("Starting work on OPS-382");
     expect(userMessage.content).toContain("blocked_on_human");
 
     fetchSpy.mockRestore();

@@ -182,11 +182,11 @@ The sidekick has read-only access to the context graph. It can answer:
 
 | Query type | Example | Data source |
 |------------|---------|-------------|
-| Agent lookup | "What is Byte working on?" | work_items + agents |
-| Work item status | "What's the status of AI-382?" | work_items + events + enrichments |
+| Agent lookup | "What is Relay working on?" | work_items + agents |
+| Work item status | "What's the status of OPS-382?" | work_items + events + enrichments |
 | Time-based queries | "What happened overnight?" / "What completed today?" | events filtered by timestamp |
 | Fleet summary | "How many items are blocked right now?" | work_items aggregate |
-| Thread history | "Summarize the conversation about AI-500" | events for work item, passed to LLM |
+| Thread history | "Summarize the conversation about OPS-500" | events for work item, passed to LLM |
 | Anomaly queries | "Which agents have been quiet?" | agents + last_seen timestamps |
 
 ### Architecture

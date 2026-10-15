@@ -31,7 +31,7 @@ describe("ActionHandler", () => {
     db.close();
   });
 
-  function seedWorkItem(id = "AI-100") {
+  function seedWorkItem(id = "OPS-100") {
     graph.upsertWorkItem({
       id,
       source: "jira",
@@ -40,11 +40,11 @@ describe("ActionHandler", () => {
     });
   }
 
-  function seedThread(workItemId = "AI-100", threadId = "T001", channelId = "C001") {
+  function seedThread(workItemId = "OPS-100", threadId = "T001", channelId = "C001") {
     graph.upsertThread({
       id: threadId,
       channelId,
-      channelName: "agent-orchestrator",
+      channelName: "fleet-ops",
       platform: "slack",
       workItemId,
     });
@@ -65,10 +65,10 @@ describe("ActionHandler", () => {
       const adapter = createMockAdapter();
       const handler = new ActionHandler(graph, adapter);
 
-      const result = await handler.execute("AI-100", "approve", "Looks good");
+      const result = await handler.execute("OPS-100", "approve", "Looks good");
       expect(result).toEqual({ ok: true });
 
-      const updated = graph.getWorkItemById("AI-100");
+      const updated = graph.getWorkItemById("OPS-100");
       expect(updated?.currentAtcStatus).toBe("completed");
 
       expect(adapter.replyToThread).toHaveBeenCalledWith(
@@ -82,9 +82,9 @@ describe("ActionHandler", () => {
       seedWorkItem();
       const handler = new ActionHandler(graph);
 
-      const result = await handler.execute("AI-100", "approve");
+      const result = await handler.execute("OPS-100", "approve");
       expect(result).toEqual({ ok: true });
-      expect(graph.getWorkItemById("AI-100")?.currentAtcStatus).toBe("completed");
+      expect(graph.getWorkItemById("OPS-100")?.currentAtcStatus).toBe("completed");
     });
 
     it("works without a thread", async () => {
@@ -92,10 +92,10 @@ describe("ActionHandler", () => {
       const adapter = createMockAdapter();
       const handler = new ActionHandler(graph, adapter);
 
-      const result = await handler.execute("AI-100", "approve");
+      const result = await handler.execute("OPS-100", "approve");
       expect(result).toEqual({ ok: true });
       expect(adapter.replyToThread).not.toHaveBeenCalled();
-      expect(graph.getWorkItemById("AI-100")?.currentAtcStatus).toBe("completed");
+      expect(graph.getWorkItemById("OPS-100")?.currentAtcStatus).toBe("completed");
     });
 
     it("sends default message when no custom message provided", async () => {
@@ -104,7 +104,7 @@ describe("ActionHandler", () => {
       const adapter = createMockAdapter();
       const handler = new ActionHandler(graph, adapter);
 
-      await handler.execute("AI-100", "approve");
+      await handler.execute("OPS-100", "approve");
       expect(adapter.replyToThread).toHaveBeenCalledWith("T001", "C001", "✅ Approved.");
     });
 
@@ -116,9 +116,9 @@ describe("ActionHandler", () => {
       });
       const handler = new ActionHandler(graph, adapter);
 
-      const result = await handler.execute("AI-100", "approve");
+      const result = await handler.execute("OPS-100", "approve");
       expect(result).toEqual({ ok: true });
-      expect(graph.getWorkItemById("AI-100")?.currentAtcStatus).toBe("completed");
+      expect(graph.getWorkItemById("OPS-100")?.currentAtcStatus).toBe("completed");
     });
   });
 
@@ -129,17 +129,17 @@ describe("ActionHandler", () => {
       const adapter = createMockAdapter();
       const handler = new ActionHandler(graph, adapter);
 
-      const result = await handler.execute("AI-100", "redirect", "Try agent Byte instead");
+      const result = await handler.execute("OPS-100", "redirect", "Try agent Relay instead");
       expect(result).toEqual({ ok: true });
 
       expect(adapter.replyToThread).toHaveBeenCalledWith(
         "T001",
         "C001",
-        "↩️ Redirecting. Try agent Byte instead",
+        "↩️ Redirecting. Try agent Relay instead",
       );
 
       // Status should remain unchanged
-      const updated = graph.getWorkItemById("AI-100");
+      const updated = graph.getWorkItemById("OPS-100");
       expect(updated?.currentAtcStatus).toBe("blocked_on_human");
     });
 
@@ -147,9 +147,9 @@ describe("ActionHandler", () => {
       seedWorkItem();
       const handler = new ActionHandler(graph);
 
-      const result = await handler.execute("AI-100", "redirect");
+      const result = await handler.execute("OPS-100", "redirect");
       expect(result).toEqual({ ok: true });
-      expect(graph.getWorkItemById("AI-100")?.currentAtcStatus).toBe("blocked_on_human");
+      expect(graph.getWorkItemById("OPS-100")?.currentAtcStatus).toBe("blocked_on_human");
     });
   });
 
@@ -160,7 +160,7 @@ describe("ActionHandler", () => {
       const adapter = createMockAdapter();
       const handler = new ActionHandler(graph, adapter);
 
-      const result = await handler.execute("AI-100", "close", "No longer needed");
+      const result = await handler.execute("OPS-100", "close", "No longer needed");
       expect(result).toEqual({ ok: true });
 
       expect(adapter.replyToThread).toHaveBeenCalledWith(
@@ -169,16 +169,16 @@ describe("ActionHandler", () => {
         "🔒 Closed. No longer needed",
       );
 
-      expect(graph.getWorkItemById("AI-100")?.currentAtcStatus).toBe("completed");
+      expect(graph.getWorkItemById("OPS-100")?.currentAtcStatus).toBe("completed");
     });
 
     it("works without platform adapter", async () => {
       seedWorkItem();
       const handler = new ActionHandler(graph);
 
-      const result = await handler.execute("AI-100", "close");
+      const result = await handler.execute("OPS-100", "close");
       expect(result).toEqual({ ok: true });
-      expect(graph.getWorkItemById("AI-100")?.currentAtcStatus).toBe("completed");
+      expect(graph.getWorkItemById("OPS-100")?.currentAtcStatus).toBe("completed");
     });
   });
 
@@ -188,12 +188,12 @@ describe("ActionHandler", () => {
       const handler = new ActionHandler(graph);
 
       const before = Date.now();
-      const result = await handler.execute("AI-100", "snooze");
+      const result = await handler.execute("OPS-100", "snooze");
       const after = Date.now();
 
       expect(result).toEqual({ ok: true });
 
-      const updated = graph.getWorkItemById("AI-100");
+      const updated = graph.getWorkItemById("OPS-100");
       expect(updated?.snoozedUntil).toBeTruthy();
 
       const snoozedTime = new Date(updated!.snoozedUntil!).getTime();
@@ -207,12 +207,12 @@ describe("ActionHandler", () => {
       const handler = new ActionHandler(graph);
 
       const before = Date.now();
-      const result = await handler.execute("AI-100", "snooze", undefined, 30);
+      const result = await handler.execute("OPS-100", "snooze", undefined, 30);
       const after = Date.now();
 
       expect(result).toEqual({ ok: true });
 
-      const updated = graph.getWorkItemById("AI-100");
+      const updated = graph.getWorkItemById("OPS-100");
       const snoozedTime = new Date(updated!.snoozedUntil!).getTime();
       expect(snoozedTime).toBeGreaterThanOrEqual(before + 29 * 60 * 1000);
       expect(snoozedTime).toBeLessThanOrEqual(after + 31 * 60 * 1000);
@@ -224,7 +224,7 @@ describe("ActionHandler", () => {
       const adapter = createMockAdapter();
       const handler = new ActionHandler(graph, adapter);
 
-      await handler.execute("AI-100", "snooze");
+      await handler.execute("OPS-100", "snooze");
       expect(adapter.replyToThread).not.toHaveBeenCalled();
     });
 
@@ -232,8 +232,8 @@ describe("ActionHandler", () => {
       seedWorkItem();
       const handler = new ActionHandler(graph);
 
-      await handler.execute("AI-100", "snooze");
-      expect(graph.getWorkItemById("AI-100")?.currentAtcStatus).toBe("blocked_on_human");
+      await handler.execute("OPS-100", "snooze");
+      expect(graph.getWorkItemById("OPS-100")?.currentAtcStatus).toBe("blocked_on_human");
     });
   });
 
@@ -244,9 +244,9 @@ describe("ActionHandler", () => {
       const adapter = createMockAdapter();
       const handler = new ActionHandler(graph, adapter);
 
-      await handler.execute("AI-100", "approve", "Looks good");
+      await handler.execute("OPS-100", "approve", "Looks good");
 
-      const events = graph.getEventsForWorkItem("AI-100");
+      const events = graph.getEventsForWorkItem("OPS-100");
       const decisionEvent = events.find((e) => e.entryType === "decision");
       expect(decisionEvent).toBeDefined();
       expect(decisionEvent!.status).toBe("completed");
@@ -260,9 +260,9 @@ describe("ActionHandler", () => {
       const adapter = createMockAdapter();
       const handler = new ActionHandler(graph, adapter);
 
-      await handler.execute("AI-100", "redirect", "Please fix the tests first");
+      await handler.execute("OPS-100", "redirect", "Please fix the tests first");
 
-      const events = graph.getEventsForWorkItem("AI-100");
+      const events = graph.getEventsForWorkItem("OPS-100");
       const decisionEvent = events.find((e) => e.entryType === "decision");
       expect(decisionEvent).toBeDefined();
       expect(decisionEvent!.rawText).toContain("Please fix the tests first");

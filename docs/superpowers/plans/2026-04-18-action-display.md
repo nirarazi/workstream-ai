@@ -44,14 +44,14 @@ describe("Event actionRequiredFrom and nextAction persistence", () => {
   });
 
   it("persists and retrieves actionRequiredFrom and nextAction", () => {
-    graph.upsertWorkItem({ id: "AI-1", source: "jira", title: "Test" });
-    graph.upsertThread({ id: "t1", channelId: "C1", platform: "slack", workItemId: "AI-1" });
-    graph.upsertAgent({ id: "a1", name: "Byte", platform: "slack", platformUserId: "U1" });
+    graph.upsertWorkItem({ id: "OPS-1", source: "jira", title: "Test" });
+    graph.upsertThread({ id: "t1", channelId: "C1", platform: "slack", workItemId: "OPS-1" });
+    graph.upsertAgent({ id: "a1", name: "Relay", platform: "slack", platformUserId: "U1" });
 
     const event = graph.insertEvent({
       threadId: "t1",
       messageId: "m1",
-      workItemId: "AI-1",
+      workItemId: "OPS-1",
       agentId: "a1",
       status: "blocked_on_human",
       confidence: 0.9,
@@ -68,14 +68,14 @@ describe("Event actionRequiredFrom and nextAction persistence", () => {
   });
 
   it("defaults actionRequiredFrom and nextAction to null when not provided", () => {
-    graph.upsertWorkItem({ id: "AI-2", source: "jira", title: "Test2" });
-    graph.upsertThread({ id: "t2", channelId: "C1", platform: "slack", workItemId: "AI-2" });
-    graph.upsertAgent({ id: "a1", name: "Byte", platform: "slack", platformUserId: "U1" });
+    graph.upsertWorkItem({ id: "OPS-2", source: "jira", title: "Test2" });
+    graph.upsertThread({ id: "t2", channelId: "C1", platform: "slack", workItemId: "OPS-2" });
+    graph.upsertAgent({ id: "a1", name: "Relay", platform: "slack", platformUserId: "U1" });
 
     const event = graph.insertEvent({
       threadId: "t2",
       messageId: "m2",
-      workItemId: "AI-2",
+      workItemId: "OPS-2",
       agentId: "a1",
       status: "in_progress",
       confidence: 0.8,
@@ -342,13 +342,13 @@ In `tests/server/stream-api.test.ts`, add a test that verifies the stream API re
 ```typescript
   it("includes nextAction in stream response", () => {
     graph.upsertWorkItem({
-      id: "AI-300", source: "jira", title: "Blocked task",
+      id: "OPS-300", source: "jira", title: "Blocked task",
       currentAtcStatus: "blocked_on_human", currentConfidence: 0.9,
     });
-    graph.upsertThread({ id: "t1", channelId: "C1", channelName: "orchestrator", platform: "slack", workItemId: "AI-300" });
-    graph.upsertAgent({ id: "a1", name: "Byte", platform: "slack", platformUserId: "U1" });
+    graph.upsertThread({ id: "t1", channelId: "C1", channelName: "fleet-ops", platform: "slack", workItemId: "OPS-300" });
+    graph.upsertAgent({ id: "a1", name: "Relay", platform: "slack", platformUserId: "U1" });
     graph.insertEvent({
-      threadId: "t1", messageId: "m1", workItemId: "AI-300", agentId: "a1",
+      threadId: "t1", messageId: "m1", workItemId: "OPS-300", agentId: "a1",
       status: "blocked_on_human", confidence: 0.9, reason: "Needs approval",
       rawText: "Please approve", timestamp: new Date().toISOString(),
       targetedAtOperator: true,
@@ -357,7 +357,7 @@ In `tests/server/stream-api.test.ts`, add a test that verifies the stream API re
     });
 
     // Make request to stream endpoint
-    const res = await app.request("/api/work-item/AI-300/stream");
+    const res = await app.request("/api/work-item/OPS-300/stream");
     expect(res.status).toBe(200);
     const data = await res.json();
     expect(data.nextAction).toBe("Approve PR #716");
@@ -482,13 +482,13 @@ In `tests/server/stream-api.test.ts`, add these tests in the `buildUnifiedStatus
   describe("buildUnifiedStatus actor-aware labels", () => {
     it("shows 'Waiting on you' when operator is in actionRequiredFrom", () => {
       const workItem: WorkItem = {
-        id: "AI-100", source: "jira", title: "Test",
+        id: "OPS-100", source: "jira", title: "Test",
         externalStatus: null, assignee: null, url: null,
         currentAtcStatus: "blocked_on_human", currentConfidence: 0.9,
         snoozedUntil: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
       };
       const blockEvent: Event = {
-        id: "e1", threadId: "t1", messageId: "m1", workItemId: "AI-100",
+        id: "e1", threadId: "t1", messageId: "m1", workItemId: "OPS-100",
         agentId: "a1", status: "blocked_on_human", confidence: 0.9,
         reason: "Needs approval", rawText: "Please approve",
         timestamp: new Date(Date.now() - 30 * 60000).toISOString(),
@@ -500,20 +500,20 @@ In `tests/server/stream-api.test.ts`, add these tests in the `buildUnifiedStatus
       const operatorIdentities: OperatorIdentityMap = new Map([
         ["slack", { userId: "U_OPERATOR", userName: "Alex" }],
       ]);
-      const agentMap = new Map([["a1", "Byte"]]);
+      const agentMap = new Map([["a1", "Relay"]]);
       const result = buildUnifiedStatus(workItem, blockEvent, operatorIdentities, agentMap);
       expect(result).toMatch(/Waiting on you · \d+m/);
     });
 
     it("shows actor name when someone else is in actionRequiredFrom", () => {
       const workItem: WorkItem = {
-        id: "AI-100", source: "jira", title: "Test",
+        id: "OPS-100", source: "jira", title: "Test",
         externalStatus: null, assignee: null, url: null,
         currentAtcStatus: "blocked_on_human", currentConfidence: 0.9,
         snoozedUntil: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
       };
       const blockEvent: Event = {
-        id: "e1", threadId: "t1", messageId: "m1", workItemId: "AI-100",
+        id: "e1", threadId: "t1", messageId: "m1", workItemId: "OPS-100",
         agentId: "a1", status: "blocked_on_human", confidence: 0.9,
         reason: "Needs Dana's review", rawText: "Waiting for Dana",
         timestamp: new Date(Date.now() - 130 * 60000).toISOString(),
@@ -532,13 +532,13 @@ In `tests/server/stream-api.test.ts`, add these tests in the `buildUnifiedStatus
 
     it("shows 'Needs your decision' when operator is action taker for needs_decision", () => {
       const workItem: WorkItem = {
-        id: "AI-100", source: "jira", title: "Test",
+        id: "OPS-100", source: "jira", title: "Test",
         externalStatus: null, assignee: null, url: null,
         currentAtcStatus: "needs_decision", currentConfidence: 0.9,
         snoozedUntil: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
       };
       const blockEvent: Event = {
-        id: "e1", threadId: "t1", messageId: "m1", workItemId: "AI-100",
+        id: "e1", threadId: "t1", messageId: "m1", workItemId: "OPS-100",
         agentId: "a1", status: "needs_decision", confidence: 0.9,
         reason: "Choose palette", rawText: "Pick a color",
         timestamp: new Date(Date.now() - 10 * 60000).toISOString(),
@@ -557,13 +557,13 @@ In `tests/server/stream-api.test.ts`, add these tests in the `buildUnifiedStatus
 
     it("shows actor name for needs_decision when someone else", () => {
       const workItem: WorkItem = {
-        id: "AI-100", source: "jira", title: "Test",
+        id: "OPS-100", source: "jira", title: "Test",
         externalStatus: null, assignee: null, url: null,
         currentAtcStatus: "needs_decision", currentConfidence: 0.9,
         snoozedUntil: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
       };
       const blockEvent: Event = {
-        id: "e1", threadId: "t1", messageId: "m1", workItemId: "AI-100",
+        id: "e1", threadId: "t1", messageId: "m1", workItemId: "OPS-100",
         agentId: "a1", status: "needs_decision", confidence: 0.9,
         reason: "Dana needs to decide", rawText: "Decision needed",
         timestamp: new Date(Date.now() - 90 * 60000).toISOString(),
@@ -582,13 +582,13 @@ In `tests/server/stream-api.test.ts`, add these tests in the `buildUnifiedStatus
 
     it("falls back to hardcoded labels when actionRequiredFrom is null", () => {
       const workItem: WorkItem = {
-        id: "AI-100", source: "jira", title: "Test",
+        id: "OPS-100", source: "jira", title: "Test",
         externalStatus: null, assignee: null, url: null,
         currentAtcStatus: "blocked_on_human", currentConfidence: 0.9,
         snoozedUntil: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
       };
       const blockEvent: Event = {
-        id: "e1", threadId: "t1", messageId: "m1", workItemId: "AI-100",
+        id: "e1", threadId: "t1", messageId: "m1", workItemId: "OPS-100",
         agentId: "a1", status: "blocked_on_human", confidence: 0.9,
         reason: "Needs approval", rawText: "Please approve",
         timestamp: new Date(Date.now() - 5 * 60000).toISOString(),
@@ -605,13 +605,13 @@ In `tests/server/stream-api.test.ts`, add these tests in the `buildUnifiedStatus
 
     it("uses raw user ID when name cannot be resolved", () => {
       const workItem: WorkItem = {
-        id: "AI-100", source: "jira", title: "Test",
+        id: "OPS-100", source: "jira", title: "Test",
         externalStatus: null, assignee: null, url: null,
         currentAtcStatus: "blocked_on_human", currentConfidence: 0.9,
         snoozedUntil: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
       };
       const blockEvent: Event = {
-        id: "e1", threadId: "t1", messageId: "m1", workItemId: "AI-100",
+        id: "e1", threadId: "t1", messageId: "m1", workItemId: "OPS-100",
         agentId: "a1", status: "blocked_on_human", confidence: 0.9,
         reason: "Needs review", rawText: "Please review",
         timestamp: new Date(Date.now() - 15 * 60000).toISOString(),
@@ -790,7 +790,7 @@ In `tests/core/pipeline.test.ts`, add a test that verifies actionRequiredFrom an
       channelId: "C1",
       channelName: "test",
       userId: "U1",
-      userName: "Byte",
+      userName: "Relay",
       text: "Waiting for Dana to review PR #716",
       timestamp: new Date().toISOString(),
       platform: "slack",

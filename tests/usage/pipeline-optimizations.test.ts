@@ -31,14 +31,14 @@ describe("Pipeline optimizations", () => {
   it("skips classification when work item is completed", async () => {
     const { db, graph, classifyFn, pipeline } = setup();
 
-    graph.upsertWorkItem({ id: "AI-100", source: "jira", currentAtcStatus: "completed" });
-    graph.upsertThread({ id: "t1", channelId: "C1", platform: "test", workItemId: "AI-100" });
+    graph.upsertWorkItem({ id: "OPS-100", source: "jira", currentAtcStatus: "completed" });
+    graph.upsertThread({ id: "t1", channelId: "C1", platform: "test", workItemId: "OPS-100" });
 
     const msg: Message = {
       id: "m-new",
-      text: "AI-100: Confirming deployment is stable",
+      text: "OPS-100: Confirming deployment is stable",
       userId: "u1",
-      userName: "Byte",
+      userName: "Relay",
       platform: "test",
       timestamp: new Date().toISOString(),
     };
@@ -52,15 +52,15 @@ describe("Pipeline optimizations", () => {
   it("skips classification for duplicate message content within same thread", async () => {
     const { db, graph, classifyFn, pipeline } = setup();
 
-    graph.upsertWorkItem({ id: "AI-200", source: "jira" });
-    graph.upsertThread({ id: "t2", channelId: "C1", platform: "test", workItemId: "AI-200" });
+    graph.upsertWorkItem({ id: "OPS-200", source: "jira" });
+    graph.upsertThread({ id: "t2", channelId: "C1", platform: "test", workItemId: "OPS-200" });
 
     const msg1: Message = {
-      id: "m1", text: "Still working on AI-200...", userId: "u1", userName: "Byte",
+      id: "m1", text: "Still working on OPS-200...", userId: "u1", userName: "Relay",
       platform: "test", timestamp: new Date().toISOString(),
     };
     const msg2: Message = {
-      id: "m2", text: "Still working on AI-200...", userId: "u1", userName: "Byte",
+      id: "m2", text: "Still working on OPS-200...", userId: "u1", userName: "Relay",
       platform: "test", timestamp: new Date().toISOString(),
     };
 
@@ -74,11 +74,11 @@ describe("Pipeline optimizations", () => {
   it("classifies normally when work item is not completed", async () => {
     const { db, graph, classifyFn, pipeline } = setup();
 
-    graph.upsertWorkItem({ id: "AI-300", source: "jira", currentAtcStatus: "in_progress" });
-    graph.upsertThread({ id: "t3", channelId: "C1", platform: "test", workItemId: "AI-300" });
+    graph.upsertWorkItem({ id: "OPS-300", source: "jira", currentAtcStatus: "in_progress" });
+    graph.upsertThread({ id: "t3", channelId: "C1", platform: "test", workItemId: "OPS-300" });
 
     const msg: Message = {
-      id: "m3", text: "AI-300: Need approval for this PR", userId: "u1", userName: "Byte",
+      id: "m3", text: "OPS-300: Need approval for this PR", userId: "u1", userName: "Relay",
       platform: "test", timestamp: new Date().toISOString(),
     };
 

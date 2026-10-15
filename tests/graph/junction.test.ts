@@ -46,8 +46,8 @@ describe("junction CRUD", () => {
     db = new Database(":memory:");
     graph = new ContextGraph(db);
     // Seed data
-    graph.upsertWorkItem({ id: "AI-100", source: "jira", title: "Item 100" });
-    graph.upsertWorkItem({ id: "AI-200", source: "jira", title: "Item 200" });
+    graph.upsertWorkItem({ id: "OPS-100", source: "jira", title: "Item 100" });
+    graph.upsertWorkItem({ id: "OPS-200", source: "jira", title: "Item 200" });
     graph.upsertThread({
       id: "T1", channelId: "C1", channelName: "general",
       platform: "slack", lastActivity: new Date().toISOString(),
@@ -57,24 +57,24 @@ describe("junction CRUD", () => {
   afterEach(() => { db.close(); });
 
   it("linkThreadWorkItem creates a junction row", () => {
-    graph.linkThreadWorkItem("T1", "AI-100", "primary");
+    graph.linkThreadWorkItem("T1", "OPS-100", "primary");
     const rows = graph.getWorkItemsForThread("T1");
     expect(rows).toHaveLength(1);
-    expect(rows[0].workItemId).toBe("AI-100");
+    expect(rows[0].workItemId).toBe("OPS-100");
     expect(rows[0].relation).toBe("primary");
   });
 
   it("linkThreadWorkItem is idempotent (upsert)", () => {
-    graph.linkThreadWorkItem("T1", "AI-100", "mentioned");
-    graph.linkThreadWorkItem("T1", "AI-100", "primary");
+    graph.linkThreadWorkItem("T1", "OPS-100", "mentioned");
+    graph.linkThreadWorkItem("T1", "OPS-100", "primary");
     const rows = graph.getWorkItemsForThread("T1");
     expect(rows).toHaveLength(1);
     expect(rows[0].relation).toBe("primary");
   });
 
   it("getThreadsForWorkItemViaJunction returns threads", () => {
-    graph.linkThreadWorkItem("T1", "AI-100", "primary");
-    const threads = graph.getThreadsForWorkItemViaJunction("AI-100");
+    graph.linkThreadWorkItem("T1", "OPS-100", "primary");
+    const threads = graph.getThreadsForWorkItemViaJunction("OPS-100");
     expect(threads).toHaveLength(1);
     expect(threads[0].id).toBe("T1");
   });
@@ -84,18 +84,18 @@ describe("junction CRUD", () => {
       id: "T2", channelId: "C1", channelName: "general",
       platform: "slack", lastActivity: new Date().toISOString(),
     });
-    graph.linkThreadWorkItem("T1", "AI-100", "mentioned");
-    graph.linkThreadWorkItem("T2", "AI-100", "primary");
-    const threads = graph.getThreadsForWorkItemViaJunction("AI-100");
+    graph.linkThreadWorkItem("T1", "OPS-100", "mentioned");
+    graph.linkThreadWorkItem("T2", "OPS-100", "primary");
+    const threads = graph.getThreadsForWorkItemViaJunction("OPS-100");
     expect(threads[0].id).toBe("T2");
   });
 
   it("getWorkItemsForThread returns all linked items", () => {
-    graph.linkThreadWorkItem("T1", "AI-100", "primary");
-    graph.linkThreadWorkItem("T1", "AI-200", "mentioned");
+    graph.linkThreadWorkItem("T1", "OPS-100", "primary");
+    graph.linkThreadWorkItem("T1", "OPS-200", "mentioned");
     const items = graph.getWorkItemsForThread("T1");
     expect(items).toHaveLength(2);
-    expect(items.map((i) => i.workItemId).sort()).toEqual(["AI-100", "AI-200"]);
+    expect(items.map((i) => i.workItemId).sort()).toEqual(["OPS-100", "OPS-200"]);
   });
 });
 
@@ -107,25 +107,25 @@ describe("migration backfill", () => {
     // Seed pre-existing data that simulates a database before the junction table existed
     testDb.db.prepare(
       "INSERT INTO work_items (id, source, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?)"
-    ).run("AI-100", "jira", "Item 100", "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z");
+    ).run("OPS-100", "jira", "Item 100", "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z");
     testDb.db.prepare(
       "INSERT INTO work_items (id, source, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?)"
-    ).run("AI-200", "jira", "Item 200", "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z");
+    ).run("OPS-200", "jira", "Item 200", "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z");
 
-    // Thread linked to AI-100
+    // Thread linked to OPS-100
     testDb.db.prepare(
       "INSERT INTO threads (id, channel_id, channel_name, platform_meta, platform, work_item_id, last_activity, message_count) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
-    ).run("T1", "C1", "general", "{}", "slack", "AI-100", "2026-01-01T00:00:00Z", 1);
+    ).run("T1", "C1", "general", "{}", "slack", "OPS-100", "2026-01-01T00:00:00Z", 1);
 
-    // Primary event for AI-100
+    // Primary event for OPS-100
     testDb.db.prepare(
       "INSERT INTO events (id, thread_id, message_id, work_item_id, status, confidence, reason, raw_text, timestamp, created_at, entry_type, targeted_at_operator) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
-    ).run("evt1", "T1", "msg1", "AI-100", "in_progress", 0.9, "reason", "text", "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z", "progress", 1);
+    ).run("evt1", "T1", "msg1", "OPS-100", "in_progress", 0.9, "reason", "text", "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z", "progress", 1);
 
-    // Breakdown event for AI-200 (message_id contains ':')
+    // Breakdown event for OPS-200 (message_id contains ':')
     testDb.db.prepare(
       "INSERT INTO events (id, thread_id, message_id, work_item_id, status, confidence, reason, raw_text, timestamp, created_at, entry_type, targeted_at_operator) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
-    ).run("evt2", "T1", "msg1:AI-200", "AI-200", "blocked_on_human", 0.8, "reason", "text", "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z", "block", 1);
+    ).run("evt2", "T1", "msg1:OPS-200", "OPS-200", "blocked_on_human", 0.8, "reason", "text", "2026-01-01T00:00:00Z", "2026-01-01T00:00:00Z", "block", 1);
 
     // Run the backfill migration SQL manually (same logic as what migrate() uses):
     // Step 1: Primary rows from threads
@@ -158,12 +158,12 @@ describe("migration backfill", () => {
 
     expect(junctionRows).toHaveLength(2);
 
-    const ai100Row = junctionRows.find((r) => r.work_item_id === "AI-100");
+    const ai100Row = junctionRows.find((r) => r.work_item_id === "OPS-100");
     expect(ai100Row).toBeDefined();
     expect(ai100Row!.relation).toBe("primary");
     expect(ai100Row!.thread_id).toBe("T1");
 
-    const ai200Row = junctionRows.find((r) => r.work_item_id === "AI-200");
+    const ai200Row = junctionRows.find((r) => r.work_item_id === "OPS-200");
     expect(ai200Row).toBeDefined();
     expect(ai200Row!.relation).toBe("mentioned");
     expect(ai200Row!.thread_id).toBe("T1");

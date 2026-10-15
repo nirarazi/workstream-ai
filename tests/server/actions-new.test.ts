@@ -51,7 +51,7 @@ describe("dismiss and noise actions", () => {
     db = new Database(":memory:");
     graph = new ContextGraph(db);
     graph.upsertWorkItem({
-      id: "AI-200",
+      id: "OPS-200",
       source: "jira",
       title: "Test item",
       currentAtcStatus: "blocked_on_human",
@@ -61,18 +61,18 @@ describe("dismiss and noise actions", () => {
       channelId: "C001",
       channelName: "general",
       platform: "slack",
-      workItemId: "AI-200",
+      workItemId: "OPS-200",
     });
     graph.upsertAgent({
       id: "agent-1",
-      name: "Byte",
+      name: "Relay",
       platform: "slack",
       platformUserId: "U001",
     });
     graph.insertEvent({
       threadId: "T001",
       messageId: "msg-1",
-      workItemId: "AI-200",
+      workItemId: "OPS-200",
       agentId: "agent-1",
       status: "blocked_on_human",
       confidence: 0.9,
@@ -95,14 +95,14 @@ describe("dismiss and noise actions", () => {
     const res = await app.request("/api/action", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ workItemId: "AI-200", action: "dismiss" }),
+      body: JSON.stringify({ workItemId: "OPS-200", action: "dismiss" }),
     });
 
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.ok).toBe(true);
 
-    const wi = graph.getWorkItemById("AI-200");
+    const wi = graph.getWorkItemById("OPS-200");
     expect(wi?.dismissedAt).not.toBeNull();
     expect(wi?.currentAtcStatus).toBe("blocked_on_human"); // status unchanged
   });
@@ -114,14 +114,14 @@ describe("dismiss and noise actions", () => {
     const res = await app.request("/api/action", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ workItemId: "AI-200", action: "noise" }),
+      body: JSON.stringify({ workItemId: "OPS-200", action: "noise" }),
     });
 
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.ok).toBe(true);
 
-    const wi = graph.getWorkItemById("AI-200");
+    const wi = graph.getWorkItemById("OPS-200");
     expect(wi?.currentAtcStatus).toBe("noise");
   });
 
@@ -133,7 +133,7 @@ describe("dismiss and noise actions", () => {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        workItemId: "AI-200",
+        workItemId: "OPS-200",
         action: "redirect",
         message: "Done, try again",
       }),
@@ -152,7 +152,7 @@ describe("dismiss and noise actions", () => {
     const res = await app.request("/api/action", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ workItemId: "AI-200", action: "redirect" }),
+      body: JSON.stringify({ workItemId: "OPS-200", action: "redirect" }),
     });
 
     expect(res.status).toBe(200);
@@ -161,17 +161,17 @@ describe("dismiss and noise actions", () => {
   });
 
   it("dismiss succeeds when thread is linked via junction table only (not threads.work_item_id)", async () => {
-    // Create a second work item (AI-200-JT) with no directly linked thread
+    // Create a second work item (OPS-200-JT) with no directly linked thread
     graph.upsertWorkItem({
-      id: "AI-200-JT",
+      id: "OPS-200-JT",
       source: "jira",
       title: "Junction-only item",
       currentAtcStatus: "blocked_on_human",
     });
 
-    // Create a thread T-JT linked to AI-100 via work_item_id (not to AI-200-JT)
+    // Create a thread T-JT linked to OPS-100 via work_item_id (not to OPS-200-JT)
     graph.upsertWorkItem({
-      id: "AI-100",
+      id: "OPS-100",
       source: "jira",
       title: "Primary item",
       currentAtcStatus: "in_progress",
@@ -181,21 +181,21 @@ describe("dismiss and noise actions", () => {
       channelId: "C002",
       channelName: "dev",
       platform: "slack",
-      workItemId: "AI-100",
+      workItemId: "OPS-100",
     });
 
-    // Link T-JT → AI-200-JT via junction table only (relation: 'mentioned')
-    graph.linkThreadWorkItem("T-JT", "AI-200-JT", "mentioned");
+    // Link T-JT → OPS-200-JT via junction table only (relation: 'mentioned')
+    graph.linkThreadWorkItem("T-JT", "OPS-200-JT", "mentioned");
 
     const state = makeState(graph, db);
     const app = createApp(state);
 
-    // Perform a dismiss action on AI-200-JT
+    // Perform a dismiss action on OPS-200-JT
     // The handler must find T-JT via the junction table, not via threads.work_item_id
     const res = await app.request("/api/action", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ workItemId: "AI-200-JT", action: "dismiss" }),
+      body: JSON.stringify({ workItemId: "OPS-200-JT", action: "dismiss" }),
     });
 
     expect(res.status).toBe(200);
@@ -203,7 +203,7 @@ describe("dismiss and noise actions", () => {
     expect(body.ok).toBe(true);
 
     // The work item should be dismissed
-    const wi = graph.getWorkItemById("AI-200-JT");
+    const wi = graph.getWorkItemById("OPS-200-JT");
     expect(wi?.dismissedAt).not.toBeNull();
   });
 });

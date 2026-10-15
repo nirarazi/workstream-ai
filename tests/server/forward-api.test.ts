@@ -9,8 +9,8 @@ describe("Forward API", () => {
   beforeEach(() => {
     mockGraph = {
       getThreadById: vi.fn().mockReturnValue({
-        id: "t-1", channelId: "C-1", channelName: "agent-orchestrator",
-        platform: "slack", workItemId: "AI-100",
+        id: "t-1", channelId: "C-1", channelName: "fleet-ops",
+        platform: "slack", workItemId: "OPS-100",
       }),
       getEventsForThread: vi.fn().mockReturnValue([
         { rawText: "Started working on auth", timestamp: "2026-04-01T10:00:00Z" },
@@ -27,8 +27,8 @@ describe("Forward API", () => {
       postMessage: vi.fn().mockResolvedValue({ threadId: "new-ts" }),
       sendDirectMessage: vi.fn().mockResolvedValue({ channelId: "D001", threadId: "dm-ts" }),
       getThreadMessages: vi.fn().mockResolvedValue([
-        { userName: "Byte", text: "Started working on auth" },
-        { userName: "Pixel", text: "PR ready for review" },
+        { userName: "Relay", text: "Started working on auth" },
+        { userName: "Prism", text: "PR ready for review" },
       ]),
     };
 
@@ -126,7 +126,7 @@ describe("Forward API", () => {
 
     const sentMessage = mockAdapter.postMessage.mock.calls[0][1] as string;
     expect(sentMessage).toContain("PR ready for review");
-    expect(sentMessage).toContain("Forwarded from #agent-orchestrator");
+    expect(sentMessage).toContain("Forwarded from #fleet-ops");
   });
 
   it("forwards full thread to a user DM", async () => {
@@ -144,8 +144,8 @@ describe("Forward API", () => {
     expect(res.status).toBe(200);
 
     const sentMessage = mockAdapter.sendDirectMessage.mock.calls[0][1] as string;
-    expect(sentMessage).toContain("Byte: Started working on auth");
-    expect(sentMessage).toContain("Pixel: PR ready for review");
+    expect(sentMessage).toContain("Relay: Started working on auth");
+    expect(sentMessage).toContain("Prism: PR ready for review");
   });
 
   it("includes summary when requested", async () => {

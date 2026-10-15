@@ -46,38 +46,38 @@ Add to `tests/graph/db.test.ts`:
 ```typescript
 describe("sidekick query methods", () => {
   beforeEach(() => {
-    graph.upsertAgent({ id: "a1", name: "Byte", platform: "slack", platformUserId: "U1" });
-    graph.upsertAgent({ id: "a2", name: "Pixel", platform: "slack", platformUserId: "U2" });
+    graph.upsertAgent({ id: "a1", name: "Relay", platform: "slack", platformUserId: "U1" });
+    graph.upsertAgent({ id: "a2", name: "Prism", platform: "slack", platformUserId: "U2" });
 
-    graph.upsertWorkItem({ id: "AI-100", source: "jira", title: "Fix login bug", currentAtcStatus: "in_progress" });
-    graph.upsertWorkItem({ id: "AI-200", source: "jira", title: "Add dark mode", currentAtcStatus: "blocked_on_human" });
-    graph.upsertWorkItem({ id: "AI-300", source: "jira", title: "Update API docs", currentAtcStatus: "completed" });
+    graph.upsertWorkItem({ id: "OPS-100", source: "jira", title: "Fix login bug", currentAtcStatus: "in_progress" });
+    graph.upsertWorkItem({ id: "OPS-200", source: "jira", title: "Add dark mode", currentAtcStatus: "blocked_on_human" });
+    graph.upsertWorkItem({ id: "OPS-300", source: "jira", title: "Update API docs", currentAtcStatus: "completed" });
 
-    graph.upsertThread({ id: "t1", channelId: "C1", platform: "slack", workItemId: "AI-100" });
-    graph.upsertThread({ id: "t2", channelId: "C1", platform: "slack", workItemId: "AI-200" });
-    graph.upsertThread({ id: "t3", channelId: "C1", platform: "slack", workItemId: "AI-300" });
+    graph.upsertThread({ id: "t1", channelId: "C1", platform: "slack", workItemId: "OPS-100" });
+    graph.upsertThread({ id: "t2", channelId: "C1", platform: "slack", workItemId: "OPS-200" });
+    graph.upsertThread({ id: "t3", channelId: "C1", platform: "slack", workItemId: "OPS-300" });
 
     graph.insertEvent({
-      threadId: "t1", messageId: "m1", workItemId: "AI-100", agentId: "a1",
+      threadId: "t1", messageId: "m1", workItemId: "OPS-100", agentId: "a1",
       status: "in_progress", confidence: 0.9, rawText: "Working on login fix",
       timestamp: "2026-04-01T08:00:00Z",
     });
     graph.insertEvent({
-      threadId: "t2", messageId: "m2", workItemId: "AI-200", agentId: "a2",
+      threadId: "t2", messageId: "m2", workItemId: "OPS-200", agentId: "a2",
       status: "blocked_on_human", confidence: 0.95, rawText: "Need approval for design",
       timestamp: "2026-04-01T09:00:00Z",
     });
     graph.insertEvent({
-      threadId: "t3", messageId: "m3", workItemId: "AI-300", agentId: "a1",
+      threadId: "t3", messageId: "m3", workItemId: "OPS-300", agentId: "a1",
       status: "completed", confidence: 0.9, rawText: "Docs updated",
       timestamp: "2026-04-01T10:00:00Z",
     });
   });
 
   it("searchWorkItems finds by ID", () => {
-    const results = graph.searchWorkItems("AI-100");
+    const results = graph.searchWorkItems("OPS-100");
     expect(results).toHaveLength(1);
-    expect(results[0].id).toBe("AI-100");
+    expect(results[0].id).toBe("OPS-100");
   });
 
   it("searchWorkItems finds by title substring", () => {
@@ -95,7 +95,7 @@ describe("sidekick query methods", () => {
     const results = graph.getWorkItemsByAgent("a1");
     expect(results.length).toBeGreaterThanOrEqual(1);
     const ids = results.map((r) => r.id);
-    expect(ids).toContain("AI-100");
+    expect(ids).toContain("OPS-100");
   });
 
   it("getEventsSince returns events after a date", () => {
@@ -106,9 +106,9 @@ describe("sidekick query methods", () => {
   });
 
   it("getAgentByName finds by case-insensitive name", () => {
-    const agent = graph.getAgentByName("byte");
+    const agent = graph.getAgentByName("relay");
     expect(agent).not.toBeNull();
-    expect(agent!.name).toBe("Byte");
+    expect(agent!.name).toBe("Relay");
   });
 
   it("getAgentByName returns null for unknown name", () => {
@@ -230,11 +230,11 @@ describe("sidekick tools", () => {
     db = new Database(":memory:");
     graph = new ContextGraph(db);
 
-    graph.upsertAgent({ id: "a1", name: "Byte", platform: "slack", platformUserId: "U1" });
-    graph.upsertWorkItem({ id: "AI-100", source: "jira", title: "Fix login", currentAtcStatus: "in_progress" });
-    graph.upsertThread({ id: "t1", channelId: "C1", platform: "slack", workItemId: "AI-100" });
+    graph.upsertAgent({ id: "a1", name: "Relay", platform: "slack", platformUserId: "U1" });
+    graph.upsertWorkItem({ id: "OPS-100", source: "jira", title: "Fix login", currentAtcStatus: "in_progress" });
+    graph.upsertThread({ id: "t1", channelId: "C1", platform: "slack", workItemId: "OPS-100" });
     graph.insertEvent({
-      threadId: "t1", messageId: "m1", workItemId: "AI-100", agentId: "a1",
+      threadId: "t1", messageId: "m1", workItemId: "OPS-100", agentId: "a1",
       status: "in_progress", confidence: 0.9, rawText: "Working on login",
       timestamp: "2026-04-01T08:00:00Z",
     });
@@ -255,18 +255,18 @@ describe("sidekick tools", () => {
   });
 
   it("executes query_work_items tool", () => {
-    const result = executeTool(graph, "query_work_items", { query: "AI-100" });
-    expect(result).toContain("AI-100");
+    const result = executeTool(graph, "query_work_items", { query: "OPS-100" });
+    expect(result).toContain("OPS-100");
   });
 
   it("executes query_agents tool", () => {
-    const result = executeTool(graph, "query_agents", { name: "Byte" });
-    expect(result).toContain("Byte");
+    const result = executeTool(graph, "query_agents", { name: "Relay" });
+    expect(result).toContain("Relay");
   });
 
   it("executes query_events tool", () => {
     const result = executeTool(graph, "query_events", { since_hours: 24 });
-    expect(result).toContain("AI-100");
+    expect(result).toContain("OPS-100");
   });
 
   it("executes get_fleet_stats tool", () => {
@@ -483,11 +483,11 @@ describe("Sidekick", () => {
     db = new Database(":memory:");
     graph = new ContextGraph(db);
 
-    graph.upsertAgent({ id: "a1", name: "Byte", platform: "slack", platformUserId: "U1" });
-    graph.upsertWorkItem({ id: "AI-100", source: "jira", title: "Fix login", currentAtcStatus: "in_progress" });
-    graph.upsertThread({ id: "t1", channelId: "C1", platform: "slack", workItemId: "AI-100" });
+    graph.upsertAgent({ id: "a1", name: "Relay", platform: "slack", platformUserId: "U1" });
+    graph.upsertWorkItem({ id: "OPS-100", source: "jira", title: "Fix login", currentAtcStatus: "in_progress" });
+    graph.upsertThread({ id: "t1", channelId: "C1", platform: "slack", workItemId: "OPS-100" });
     graph.insertEvent({
-      threadId: "t1", messageId: "m1", workItemId: "AI-100", agentId: "a1",
+      threadId: "t1", messageId: "m1", workItemId: "OPS-100", agentId: "a1",
       status: "in_progress", confidence: 0.9, rawText: "Working on login fix",
       timestamp: "2026-04-01T08:00:00Z",
     });
@@ -526,7 +526,7 @@ describe("Sidekick", () => {
           content: [
             {
               type: "text",
-              text: "You have 1 work item in progress (AI-100: Fix login).",
+              text: "You have 1 work item in progress (OPS-100: Fix login).",
             },
           ],
           stop_reason: "end_turn",
@@ -544,7 +544,7 @@ describe("Sidekick", () => {
 
     const result = await sidekick.ask("How many items are in progress?", []);
 
-    expect(result.answer).toContain("AI-100");
+    expect(result.answer).toContain("OPS-100");
     expect(result.sources.length).toBeGreaterThan(0);
 
     fetchSpy.mockRestore();
@@ -982,8 +982,8 @@ describe("POST /api/sidekick", () => {
 
   beforeEach(() => {
     state = makeState();
-    state.graph.upsertAgent({ id: "a1", name: "Byte", platform: "slack", platformUserId: "U1" });
-    state.graph.upsertWorkItem({ id: "AI-100", source: "jira", title: "Fix login", currentAtcStatus: "in_progress" });
+    state.graph.upsertAgent({ id: "a1", name: "Relay", platform: "slack", platformUserId: "U1" });
+    state.graph.upsertWorkItem({ id: "OPS-100", source: "jira", title: "Fix login", currentAtcStatus: "in_progress" });
   });
 
   afterEach(() => {
@@ -1248,7 +1248,7 @@ export default function Sidekick({ onClose }: SidekickProps): JSX.Element {
                 {[
                   "What happened overnight?",
                   "Which items are blocked?",
-                  "What is Byte working on?",
+                  "What is Relay working on?",
                 ].map((suggestion) => (
                   <button
                     key={suggestion}

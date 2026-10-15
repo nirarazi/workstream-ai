@@ -11,11 +11,11 @@ describe("Sidekick", () => {
     db = new Database(":memory:");
     graph = new ContextGraph(db);
 
-    graph.upsertAgent({ id: "a1", name: "Byte", platform: "slack", platformUserId: "U1" });
-    graph.upsertWorkItem({ id: "AI-100", source: "jira", title: "Fix login", currentAtcStatus: "in_progress" });
-    graph.upsertThread({ id: "t1", channelId: "C1", platform: "slack", workItemId: "AI-100" });
+    graph.upsertAgent({ id: "a1", name: "Relay", platform: "slack", platformUserId: "U1" });
+    graph.upsertWorkItem({ id: "OPS-100", source: "jira", title: "Fix login", currentAtcStatus: "in_progress" });
+    graph.upsertThread({ id: "t1", channelId: "C1", platform: "slack", workItemId: "OPS-100" });
     graph.insertEvent({
-      threadId: "t1", messageId: "m1", workItemId: "AI-100", agentId: "a1",
+      threadId: "t1", messageId: "m1", workItemId: "OPS-100", agentId: "a1",
       status: "in_progress", confidence: 0.9, rawText: "Working on login fix",
       timestamp: "2026-04-01T08:00:00Z",
     });
@@ -54,7 +54,7 @@ describe("Sidekick", () => {
           content: [
             {
               type: "text",
-              text: "You have 1 work item in progress (AI-100: Fix login).",
+              text: "You have 1 work item in progress (OPS-100: Fix login).",
             },
           ],
           stop_reason: "end_turn",
@@ -72,7 +72,7 @@ describe("Sidekick", () => {
 
     const result = await sidekick.ask("How many items are in progress?", []);
 
-    expect(result.answer).toContain("AI-100");
+    expect(result.answer).toContain("OPS-100");
     expect(result.sources.length).toBeGreaterThan(0);
 
     fetchSpy.mockRestore();

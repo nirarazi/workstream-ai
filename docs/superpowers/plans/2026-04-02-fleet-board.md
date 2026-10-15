@@ -122,7 +122,7 @@ const defaultConfig = {
 describe("detectAnomalies", () => {
   it("returns empty array for healthy in-progress item", () => {
     const item: FleetItemInput = {
-      workItemId: "AI-1",
+      workItemId: "OPS-1",
       currentAtcStatus: "in_progress",
       latestEventTimestamp: hoursAgo(1),
       agentLastSeen: hoursAgo(0.5),
@@ -136,7 +136,7 @@ describe("detectAnomalies", () => {
 
   it("detects stale item (no events for >threshold hours)", () => {
     const item: FleetItemInput = {
-      workItemId: "AI-1",
+      workItemId: "OPS-1",
       currentAtcStatus: "in_progress",
       latestEventTimestamp: hoursAgo(5),
       agentLastSeen: hoursAgo(5),
@@ -152,7 +152,7 @@ describe("detectAnomalies", () => {
 
   it("does NOT flag stale for completed items", () => {
     const item: FleetItemInput = {
-      workItemId: "AI-1",
+      workItemId: "OPS-1",
       currentAtcStatus: "completed",
       latestEventTimestamp: hoursAgo(10),
       agentLastSeen: hoursAgo(10),
@@ -166,7 +166,7 @@ describe("detectAnomalies", () => {
 
   it("detects silent agent", () => {
     const item: FleetItemInput = {
-      workItemId: "AI-1",
+      workItemId: "OPS-1",
       currentAtcStatus: "in_progress",
       latestEventTimestamp: hoursAgo(1),
       agentLastSeen: hoursAgo(3),
@@ -182,7 +182,7 @@ describe("detectAnomalies", () => {
 
   it("detects status regression", () => {
     const item: FleetItemInput = {
-      workItemId: "AI-1",
+      workItemId: "OPS-1",
       currentAtcStatus: "blocked_on_human",
       latestEventTimestamp: hoursAgo(0.5),
       agentLastSeen: hoursAgo(0.5),
@@ -198,7 +198,7 @@ describe("detectAnomalies", () => {
 
   it("detects duplicate work items by title", () => {
     const item: FleetItemInput = {
-      workItemId: "AI-1",
+      workItemId: "OPS-1",
       currentAtcStatus: "in_progress",
       latestEventTimestamp: hoursAgo(1),
       agentLastSeen: hoursAgo(0.5),
@@ -208,7 +208,7 @@ describe("detectAnomalies", () => {
 
     const otherItems: FleetItemInput[] = [
       {
-        workItemId: "AI-2",
+        workItemId: "OPS-2",
         currentAtcStatus: "in_progress",
         latestEventTimestamp: hoursAgo(2),
         agentLastSeen: hoursAgo(1),
@@ -225,7 +225,7 @@ describe("detectAnomalies", () => {
 
   it("does not flag duplicate for different titles", () => {
     const item: FleetItemInput = {
-      workItemId: "AI-1",
+      workItemId: "OPS-1",
       currentAtcStatus: "in_progress",
       latestEventTimestamp: hoursAgo(1),
       agentLastSeen: hoursAgo(0.5),
@@ -235,7 +235,7 @@ describe("detectAnomalies", () => {
 
     const otherItems: FleetItemInput[] = [
       {
-        workItemId: "AI-2",
+        workItemId: "OPS-2",
         currentAtcStatus: "in_progress",
         latestEventTimestamp: hoursAgo(2),
         agentLastSeen: hoursAgo(1),
@@ -380,35 +380,35 @@ Add to `tests/graph/db.test.ts`:
 ```typescript
 describe("getFleetItems", () => {
   it("returns all non-completed work items with latest event and agent", () => {
-    graph.upsertAgent({ id: "a1", name: "Byte", platform: "slack", platformUserId: "U1" });
-    graph.upsertWorkItem({ id: "AI-1", source: "jira", title: "Active task", currentAtcStatus: "in_progress" });
-    graph.upsertWorkItem({ id: "AI-2", source: "jira", title: "Done task", currentAtcStatus: "completed" });
-    graph.upsertWorkItem({ id: "AI-3", source: "jira", title: "Blocked task", currentAtcStatus: "blocked_on_human" });
+    graph.upsertAgent({ id: "a1", name: "Relay", platform: "slack", platformUserId: "U1" });
+    graph.upsertWorkItem({ id: "OPS-1", source: "jira", title: "Active task", currentAtcStatus: "in_progress" });
+    graph.upsertWorkItem({ id: "OPS-2", source: "jira", title: "Done task", currentAtcStatus: "completed" });
+    graph.upsertWorkItem({ id: "OPS-3", source: "jira", title: "Blocked task", currentAtcStatus: "blocked_on_human" });
 
-    graph.upsertThread({ id: "t1", channelId: "C1", platform: "slack", workItemId: "AI-1" });
-    graph.upsertThread({ id: "t2", channelId: "C1", platform: "slack", workItemId: "AI-2" });
-    graph.upsertThread({ id: "t3", channelId: "C1", platform: "slack", workItemId: "AI-3" });
+    graph.upsertThread({ id: "t1", channelId: "C1", platform: "slack", workItemId: "OPS-1" });
+    graph.upsertThread({ id: "t2", channelId: "C1", platform: "slack", workItemId: "OPS-2" });
+    graph.upsertThread({ id: "t3", channelId: "C1", platform: "slack", workItemId: "OPS-3" });
 
-    graph.insertEvent({ threadId: "t1", messageId: "m1", workItemId: "AI-1", agentId: "a1", status: "in_progress", confidence: 0.9, timestamp: "2026-04-01T08:00:00Z" });
-    graph.insertEvent({ threadId: "t2", messageId: "m2", workItemId: "AI-2", agentId: "a1", status: "completed", confidence: 0.95, timestamp: "2026-04-01T09:00:00Z" });
-    graph.insertEvent({ threadId: "t3", messageId: "m3", workItemId: "AI-3", agentId: "a1", status: "blocked_on_human", confidence: 0.9, timestamp: "2026-04-01T10:00:00Z" });
+    graph.insertEvent({ threadId: "t1", messageId: "m1", workItemId: "OPS-1", agentId: "a1", status: "in_progress", confidence: 0.9, timestamp: "2026-04-01T08:00:00Z" });
+    graph.insertEvent({ threadId: "t2", messageId: "m2", workItemId: "OPS-2", agentId: "a1", status: "completed", confidence: 0.95, timestamp: "2026-04-01T09:00:00Z" });
+    graph.insertEvent({ threadId: "t3", messageId: "m3", workItemId: "OPS-3", agentId: "a1", status: "blocked_on_human", confidence: 0.9, timestamp: "2026-04-01T10:00:00Z" });
 
     const items = graph.getFleetItems();
 
     // Should exclude completed
     expect(items).toHaveLength(2);
     const ids = items.map((i) => i.workItem.id);
-    expect(ids).toContain("AI-1");
-    expect(ids).toContain("AI-3");
-    expect(ids).not.toContain("AI-2");
+    expect(ids).toContain("OPS-1");
+    expect(ids).toContain("OPS-3");
+    expect(ids).not.toContain("OPS-2");
   });
 
   it("returns items with no events (newly created work items)", () => {
-    graph.upsertWorkItem({ id: "AI-1", source: "jira", title: "New task", currentAtcStatus: "in_progress" });
+    graph.upsertWorkItem({ id: "OPS-1", source: "jira", title: "New task", currentAtcStatus: "in_progress" });
 
     const items = graph.getFleetItems();
     expect(items).toHaveLength(1);
-    expect(items[0].workItem.id).toBe("AI-1");
+    expect(items[0].workItem.id).toBe("OPS-1");
   });
 });
 ```
@@ -542,19 +542,19 @@ describe("GET /api/fleet", () => {
 
   beforeEach(() => {
     state = makeState();
-    state.graph.upsertAgent({ id: "a1", name: "Byte", platform: "slack", platformUserId: "U1" });
-    state.graph.upsertWorkItem({ id: "AI-1", source: "jira", title: "Active", currentAtcStatus: "in_progress" });
-    state.graph.upsertWorkItem({ id: "AI-2", source: "jira", title: "Done", currentAtcStatus: "completed" });
+    state.graph.upsertAgent({ id: "a1", name: "Relay", platform: "slack", platformUserId: "U1" });
+    state.graph.upsertWorkItem({ id: "OPS-1", source: "jira", title: "Active", currentAtcStatus: "in_progress" });
+    state.graph.upsertWorkItem({ id: "OPS-2", source: "jira", title: "Done", currentAtcStatus: "completed" });
 
-    state.graph.upsertThread({ id: "t1", channelId: "C1", platform: "slack", workItemId: "AI-1" });
-    state.graph.upsertThread({ id: "t2", channelId: "C1", platform: "slack", workItemId: "AI-2" });
+    state.graph.upsertThread({ id: "t1", channelId: "C1", platform: "slack", workItemId: "OPS-1" });
+    state.graph.upsertThread({ id: "t2", channelId: "C1", platform: "slack", workItemId: "OPS-2" });
 
     state.graph.insertEvent({
-      threadId: "t1", messageId: "m1", workItemId: "AI-1", agentId: "a1",
+      threadId: "t1", messageId: "m1", workItemId: "OPS-1", agentId: "a1",
       status: "in_progress", confidence: 0.9, timestamp: "2026-04-01T08:00:00Z",
     });
     state.graph.insertEvent({
-      threadId: "t2", messageId: "m2", workItemId: "AI-2", agentId: "a1",
+      threadId: "t2", messageId: "m2", workItemId: "OPS-2", agentId: "a1",
       status: "completed", confidence: 0.95, timestamp: "2026-04-01T09:00:00Z",
     });
   });
@@ -570,7 +570,7 @@ describe("GET /api/fleet", () => {
 
     const body = await res.json();
     expect(body.items).toHaveLength(1);
-    expect(body.items[0].workItem.id).toBe("AI-1");
+    expect(body.items[0].workItem.id).toBe("OPS-1");
     expect(body.items[0].anomalies).toBeInstanceOf(Array);
   });
 });

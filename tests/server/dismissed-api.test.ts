@@ -36,7 +36,7 @@ describe("dismissed items and expiry", () => {
   beforeEach(() => {
     db = new Database(":memory:");
     graph = new ContextGraph(db);
-    graph.upsertAgent({ id: "agent-1", name: "Byte", platform: "slack", platformUserId: "U001" });
+    graph.upsertAgent({ id: "agent-1", name: "Relay", platform: "slack", platformUserId: "U001" });
   });
 
   afterEach(() => {

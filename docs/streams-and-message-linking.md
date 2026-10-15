@@ -2,7 +2,7 @@
 
 ## The Core Challenge
 
-workstream.ai reads raw messages from messaging platforms and must decide: **which work item does this message belong to?** Get it right, and the inbox shows coherent streams of work. Get it wrong, and the operator sees 52 separate "New lead" items instead of one stream, or misses a critical block because it was linked to the wrong item.
+workstream.ai reads raw messages from messaging platforms and must decide: **which work item does this message belong to?** Get it right, and the inbox shows coherent streams of work. Get it wrong, and the operator sees 30 separate "Build failed" items instead of one stream, or misses a critical block because it was linked to the wrong item.
 
 Today, "work item" and "stream" are the same concept. A work item _is_ a stream — it accumulates messages, events, and status over time. The question is how reliably we can route each incoming message to the right stream.
 
@@ -14,18 +14,18 @@ Messages reach a work item through three paths, tried in order:
 
 ### Path 1: Regex Extraction (High Confidence)
 
-The `DefaultExtractor` scans message text for patterns matching configured ticket prefixes (e.g., `AI-382`, `IT-205`). Only IDs whose prefix appears in `config.taskAdapter.ticketPrefixes` are accepted.
+The `DefaultExtractor` scans message text for patterns matching configured ticket prefixes (e.g., `OPS-382`, `ENG-205`). Only IDs whose prefix appears in `config.taskAdapter.ticketPrefixes` are accepted.
 
 **Strengths:** Deterministic, zero false positives when prefixes are configured, fast.
-**Weaknesses:** Only works when the message contains a literal ticket ID. Many messages don't mention one — agents say "working on the deployment" not "working on AI-382."
+**Weaknesses:** Only works when the message contains a literal ticket ID. Many messages don't mention one — agents say "working on the deployment" not "working on OPS-382."
 
 ### Path 2: LLM Classification (Medium Confidence)
 
 The classifier receives the message plus a list of currently open work items (`getOpenWorkItemSummaries()`). The prompt instructs it to return matching IDs in `workItemIds` — either ticket IDs it spotted in context, or existing open work item IDs that match the topic.
 
-LLM-suggested IDs are validated against known ticket prefixes before being accepted. Invalid IDs (e.g., `Q-456` when only `AI-`, `IT-`, `MS-` are configured) are discarded.
+LLM-suggested IDs are validated against known ticket prefixes before being accepted. Invalid IDs (e.g., `Q-456` when only `OPS-`, `ENG-`, `MKT-` are configured) are discarded.
 
-**Strengths:** Semantic understanding — can link "the deployment is blocked" to `AI-382` if it appears in the open items list. Handles follow-up messages that don't repeat the ticket ID.
+**Strengths:** Semantic understanding — can link "the deployment is blocked" to `OPS-382` if it appears in the open items list. Handles follow-up messages that don't repeat the ticket ID.
 **Weaknesses:** Non-deterministic. Limited by context window (100 open items max). Can hallucinate IDs. Expensive per message (one LLM call each).
 
 ### Path 3: Synthetic Work Item (Fallback)
@@ -33,7 +33,7 @@ LLM-suggested IDs are validated against known ticket prefixes before being accep
 If no work item ID is found (neither extracted nor inferred) and the message isn't noise, a synthetic work item is created with ID `thread:<thread-id>`. This groups all messages in the same Slack thread under one work item.
 
 **Strengths:** Ensures no actionable message is orphaned. Thread-level grouping is natural for conversations.
-**Weaknesses:** Each thread becomes its own work item. 52 lead alert threads = 52 work items. No cross-thread grouping.
+**Weaknesses:** Each thread becomes its own work item. 30 build alert threads = 30 work items. No cross-thread grouping.
 
 ### Thread Inheritance
 
@@ -43,23 +43,23 @@ Once a thread is linked to a work item, subsequent messages in that thread inher
 
 ## Where It Breaks Down
 
-### Problem 1: Notification Spam (the 52 Leads)
+### Problem 1: Notification Spam (the 30 Build Alerts)
 
 Notification bots (CRM alerts, monitoring, CI/CD) post templated messages to Slack. Each message starts a new thread. Each thread becomes a separate synthetic work item. The inbox fills with near-identical items.
 
-The root cause: **the system has no concept of "message type" or "stream category."** It treats a CRM lead alert the same as an agent asking for approval. The classifier sees "Pending" and says `blocked_on_human` because, read literally, someone does need to act on the lead.
+The root cause: **the system has no concept of "message type" or "stream category."** It treats a CI build alert the same as an agent asking for approval. The classifier sees "Failed" and says `blocked_on_human` because, read literally, someone does need to act on the build.
 
 ### Problem 2: Cross-Thread Continuity
 
-An agent posts about `AI-382` in thread A on Monday. On Wednesday, the same agent posts a follow-up in thread B without mentioning the ticket ID. The LLM _might_ link it via the open items list, but only if the title is similar enough and the item is still in the top 100.
+An agent posts about `OPS-382` in thread A on Monday. On Wednesday, the same agent posts a follow-up in thread B without mentioning the ticket ID. The LLM _might_ link it via the open items list, but only if the title is similar enough and the item is still in the top 100.
 
 ### Problem 3: No Feedback Loop
 
-When the operator dismisses a work item, that signal is lost. The system doesn't learn that "lead alerts from InsureTax Sync are noise to this operator." Every new lead alert is classified from scratch.
+When the operator dismisses a work item, that signal is lost. The system doesn't learn that "build alerts from CI Bot are noise to this operator." Every new build alert is classified from scratch.
 
 ### Problem 4: Sender Identity is Underused
 
-The system knows `is_bot=true` and the sender name, but treats all bots as "agents." A Slack bot posting CRM alerts is fundamentally different from an AI agent reporting work status, but the classifier sees both as `[Sender: X (agent)]`.
+The system knows `is_bot=true` and the sender name, but treats all bots as "agents." A Slack bot posting CI alerts is fundamentally different from an AI agent reporting work status, but the classifier sees both as `[Sender: X (agent)]`.
 
 ---
 
@@ -67,10 +67,10 @@ The system knows `is_bot=true` and the sender name, but treats all bots as "agen
 
 Instead of thinking about work items as isolated tickets, think of them as **streams** — ongoing flows of related activity that the operator has a relationship with.
 
-Some streams are high-signal (an agent blocked on a PR review). Some are low-signal (CRM lead notifications). The operator's relationship to each stream determines how it surfaces:
+Some streams are high-signal (an agent blocked on a PR review). Some are low-signal (CI build notifications). The operator's relationship to each stream determines how it surfaces:
 
 - **A stream I own:** Every event surfaces in my inbox. I act on these.
-- **A stream I watch:** I see a digest or exceptions. "12 new leads today" not 12 inbox items.
+- **A stream I watch:** I see a digest or exceptions. "12 builds failed today" not 12 inbox items.
 - **A stream I've muted:** Exists in the graph, doesn't surface. I can search for it.
 
 Today, work item = stream, and every stream is implicitly "owned." The product improvement path is giving the operator tools to change that relationship — starting with the ability to say "this type of thing is not actionable for me."
@@ -111,7 +111,7 @@ Score(work_item, message) =
 
 **Signal definitions:**
 
-- **`agent_match`** (0 or 1): Has this agent posted events against this work item before? Query: `SELECT DISTINCT work_item_id FROM events WHERE agent_id = ?`. This is the strongest signal — if Byte was working on AI-382 yesterday, a new message from Byte is likely about AI-382.
+- **`agent_match`** (0 or 1): Has this agent posted events against this work item before? Query: `SELECT DISTINCT work_item_id FROM events WHERE agent_id = ?`. This is the strongest signal — if Relay was working on OPS-382 yesterday, a new message from Relay is likely about OPS-382.
 
 - **`channel_match`** (0 or 1): Does this work item have threads in the same channel? Query: `SELECT DISTINCT work_item_id FROM threads WHERE channel_id = ?`. Weaker than agent match, but useful — work items tend to live in specific channels.
 
@@ -147,9 +147,9 @@ The classifier prompt changes from:
 
 ```
 ## Open Work Items
-- AI-382: Deploy payment service to staging
-- AI-383: Refactor auth middleware
-- IT-205: Payment webhook handler
+- OPS-382: Deploy payment service to staging
+- OPS-383: Refactor auth middleware
+- ENG-205: Payment webhook handler
 ... (97 more)
 ```
 
@@ -157,9 +157,9 @@ To:
 
 ```
 ## Candidate Work Items (ranked by relevance)
-1. AI-382: "Deploy payment service to staging" — same agent (Byte), last active 2h ago, channel match
-2. IT-205: "Payment webhook handler" — keyword overlap ("payment"), same channel
-3. thread:abc.123: "Missing API key for Anthropic" — same agent (Byte)
+1. OPS-382: "Deploy payment service to staging" — same agent (Relay), last active 2h ago, channel match
+2. ENG-205: "Payment webhook handler" — keyword overlap ("payment"), same channel
+3. thread:abc.123: "Missing API key for Anthropic" — same agent (Relay)
 
 If the message is about one of these items, return its ID. If none match, return an empty workItemIds array.
 ```
@@ -226,7 +226,7 @@ Replace `getOpenWorkItemSummaries()` (100 items, no ranking) with `findCandidate
 
 ### 2. Operator Feedback on Dismiss (Near-term)
 
-When the operator dismisses a work item, offer: **"Silence similar items from this sender?"** This creates a rule: `{sender: "InsureTax Sync", channel: "C09..."} -> auto-resolve`. No ML, no pattern matching — just a sender-level mute. Covers the 52-leads case directly.
+When the operator dismisses a work item, offer: **"Silence similar items from this sender?"** This creates a rule: `{sender: "CI Bot", channel: "C09..."} -> auto-resolve`. No ML, no pattern matching — just a sender-level mute. Covers the 30-build-alerts case directly.
 
 ### 3. Better Sender Classification (Near-term)
 
@@ -244,7 +244,7 @@ Add a `stream_preference` to work items: own / watch / mute. The inbox query fil
 
 ## Design Principles
 
-1. **Start permissive, learn to filter.** Show too much, let the operator train it down. Missing a critical block is worse than showing a noisy lead alert.
+1. **Start permissive, learn to filter.** Show too much, let the operator train it down. Missing a critical block is worse than showing a noisy build alert.
 
 2. **One human label > 1000 LLM classifications.** When the operator acts on something (dismiss, reply, silence), that signal is gold. Use it.
 

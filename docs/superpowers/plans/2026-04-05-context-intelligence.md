@@ -22,13 +22,13 @@ Add to `tests/core/pipeline.test.ts` inside the `processOnce` describe block:
 
 ```typescript
 it("inherits work item ID from existing thread when message has no ticket", async () => {
-  // Thread already linked to AI-382 in the graph
+  // Thread already linked to OPS-382 in the graph
   vi.mocked(graph.getThreadById).mockReturnValue({
     id: "t-1",
     channelId: "C-1",
-    channelName: "agent-orchestrator",
+    channelName: "fleet-ops",
     platform: "slack",
-    workItemId: "AI-382",
+    workItemId: "OPS-382",
     lastActivity: "2026-03-30T09:00:00.000Z",
     messageCount: 1,
     messages: [],
@@ -47,7 +47,7 @@ it("inherits work item ID from existing thread when message has no ticket", asyn
 
   // Set up existing work item so status update path works
   const existingWi: WorkItem = {
-    id: "AI-382",
+    id: "OPS-382",
     source: "extracted",
     title: "Auth refactor",
     externalStatus: null,
@@ -66,14 +66,14 @@ it("inherits work item ID from existing thread when message has no ticket", asyn
   // Event should be linked to the inherited work item
   expect(graph.insertEvent).toHaveBeenCalledWith(
     expect.objectContaining({
-      workItemId: "AI-382",
+      workItemId: "OPS-382",
     }),
   );
 
-  // Thread upsert should preserve AI-382 as the work item
+  // Thread upsert should preserve OPS-382 as the work item
   expect(graph.upsertThread).toHaveBeenCalledWith(
     expect.objectContaining({
-      workItemId: "AI-382",
+      workItemId: "OPS-382",
     }),
   );
 });
@@ -82,7 +82,7 @@ it("inherits work item ID from existing thread when message has no ticket", asyn
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `npx vitest run tests/core/pipeline.test.ts -t "inherits work item"`
-Expected: FAIL — event's `workItemId` will be a synthetic `thread:t-1` instead of `AI-382`
+Expected: FAIL — event's `workItemId` will be a synthetic `thread:t-1` instead of `OPS-382`
 
 - [ ] **Step 3: Write the failing test — reply adds both inherited and new IDs**
 
@@ -90,40 +90,40 @@ Add to `tests/core/pipeline.test.ts` inside the `processOnce` describe block:
 
 ```typescript
 it("merges inherited work item with newly extracted IDs", async () => {
-  // Thread already linked to AI-382
+  // Thread already linked to OPS-382
   vi.mocked(graph.getThreadById).mockReturnValue({
     id: "t-1",
     channelId: "C-1",
-    channelName: "agent-orchestrator",
+    channelName: "fleet-ops",
     platform: "slack",
-    workItemId: "AI-382",
+    workItemId: "OPS-382",
     lastActivity: "2026-03-30T09:00:00.000Z",
     messageCount: 1,
     messages: [],
   });
 
   // Message mentions a DIFFERENT ticket
-  const msg = makeMessage({ text: "Also related to IT-200" });
+  const msg = makeMessage({ text: "Also related to ENG-200" });
   const thread = makeThread({}, [msg]);
   vi.mocked(adapter.readThreads).mockResolvedValue([thread]);
 
-  vi.mocked(linker.linkMessage).mockReturnValue(["IT-200"]);
+  vi.mocked(linker.linkMessage).mockReturnValue(["ENG-200"]);
   vi.mocked(classifier.classify).mockResolvedValue(
     makeClassification({ status: "in_progress", workItemIds: [] }),
   );
 
   const existingAI382: WorkItem = {
-    id: "AI-382", source: "extracted", title: "Auth refactor",
+    id: "OPS-382", source: "extracted", title: "Auth refactor",
     externalStatus: null, assignee: null, url: null,
     currentAtcStatus: "in_progress", currentConfidence: 0.8,
     snoozedUntil: null, createdAt: "2026-03-29T10:00:00.000Z",
     updatedAt: "2026-03-29T10:00:00.000Z",
   };
-  const existingIT200: WorkItem = { ...existingAI382, id: "IT-200", title: "Related work" };
+  const existingIT200: WorkItem = { ...existingAI382, id: "ENG-200", title: "Related work" };
 
   vi.mocked(graph.getWorkItemById).mockImplementation((id: string) => {
-    if (id === "AI-382") return existingAI382;
-    if (id === "IT-200") return existingIT200;
+    if (id === "OPS-382") return existingAI382;
+    if (id === "ENG-200") return existingIT200;
     return null;
   });
 
@@ -131,8 +131,8 @@ it("merges inherited work item with newly extracted IDs", async () => {
 
   // Both work items should get status updates
   const upsertCalls = vi.mocked(graph.upsertWorkItem).mock.calls;
-  const aiUpdate = upsertCalls.find((c) => c[0].id === "AI-382" && c[0].currentAtcStatus);
-  const itUpdate = upsertCalls.find((c) => c[0].id === "IT-200" && c[0].currentAtcStatus);
+  const aiUpdate = upsertCalls.find((c) => c[0].id === "OPS-382" && c[0].currentAtcStatus);
+  const itUpdate = upsertCalls.find((c) => c[0].id === "ENG-200" && c[0].currentAtcStatus);
   expect(aiUpdate).toBeDefined();
   expect(itUpdate).toBeDefined();
 });
@@ -141,7 +141,7 @@ it("merges inherited work item with newly extracted IDs", async () => {
 - [ ] **Step 4: Run test to verify it fails**
 
 Run: `npx vitest run tests/core/pipeline.test.ts -t "merges inherited"`
-Expected: FAIL — AI-382 won't be in the set
+Expected: FAIL — OPS-382 won't be in the set
 
 - [ ] **Step 5: Implement thread inheritance in pipeline**
 
@@ -361,7 +361,7 @@ describe("Thread Linking", () => {
     graph = new ContextGraph(db);
 
     // Seed a work item and two threads
-    graph.upsertWorkItem({ id: "AI-100", source: "extracted", title: "Test work item" });
+    graph.upsertWorkItem({ id: "OPS-100", source: "extracted", title: "Test work item" });
     graph.upsertThread({
       id: "t-1", channelId: "C-1", channelName: "general",
       platform: "slack", lastActivity: "2026-04-01T10:00:00.000Z",
@@ -378,34 +378,34 @@ describe("Thread Linking", () => {
 
   describe("linkThread", () => {
     it("sets work_item_id and manually_linked on the thread", () => {
-      graph.linkThread("t-1", "AI-100");
+      graph.linkThread("t-1", "OPS-100");
 
       const thread = graph.getThreadById("t-1");
       expect(thread).not.toBeNull();
-      expect(thread!.workItemId).toBe("AI-100");
+      expect(thread!.workItemId).toBe("OPS-100");
       expect(thread!.manuallyLinked).toBe(true);
     });
 
     it("overwrites an existing auto-linked work item", () => {
       // Auto-link t-1 to a different work item
-      graph.upsertWorkItem({ id: "AI-200", source: "extracted", title: "Other" });
+      graph.upsertWorkItem({ id: "OPS-200", source: "extracted", title: "Other" });
       graph.upsertThread({
         id: "t-1", channelId: "C-1", channelName: "general",
-        platform: "slack", workItemId: "AI-200",
+        platform: "slack", workItemId: "OPS-200",
       });
 
-      // Manually link to AI-100
-      graph.linkThread("t-1", "AI-100");
+      // Manually link to OPS-100
+      graph.linkThread("t-1", "OPS-100");
 
       const thread = graph.getThreadById("t-1");
-      expect(thread!.workItemId).toBe("AI-100");
+      expect(thread!.workItemId).toBe("OPS-100");
       expect(thread!.manuallyLinked).toBe(true);
     });
   });
 
   describe("unlinkThread", () => {
     it("clears work_item_id and resets manually_linked", () => {
-      graph.linkThread("t-1", "AI-100");
+      graph.linkThread("t-1", "OPS-100");
       graph.unlinkThread("t-1");
 
       const thread = graph.getThreadById("t-1");
@@ -421,7 +421,7 @@ describe("Thread Linking", () => {
     });
 
     it("excludes manually linked threads", () => {
-      graph.linkThread("t-1", "AI-100");
+      graph.linkThread("t-1", "OPS-100");
       const unlinked = graph.getUnlinkedThreads(20);
       expect(unlinked).toHaveLength(1);
       expect(unlinked[0].id).toBe("t-2");
@@ -541,13 +541,13 @@ Add to `tests/core/pipeline.test.ts` inside the `processOnce` describe block:
 
 ```typescript
 it("does not overwrite work_item_id on manually linked threads", async () => {
-  // Thread is manually linked to AI-100
+  // Thread is manually linked to OPS-100
   vi.mocked(graph.getThreadById).mockReturnValue({
     id: "t-1",
     channelId: "C-1",
-    channelName: "agent-orchestrator",
+    channelName: "fleet-ops",
     platform: "slack",
-    workItemId: "AI-100",
+    workItemId: "OPS-100",
     lastActivity: "2026-03-30T09:00:00.000Z",
     messageCount: 1,
     messages: [],
@@ -555,36 +555,36 @@ it("does not overwrite work_item_id on manually linked threads", async () => {
   });
 
   // Message mentions a DIFFERENT ticket
-  const msg = makeMessage({ text: "Working on IT-200 now" });
+  const msg = makeMessage({ text: "Working on ENG-200 now" });
   const thread = makeThread({}, [msg]);
   vi.mocked(adapter.readThreads).mockResolvedValue([thread]);
 
-  vi.mocked(linker.linkMessage).mockReturnValue(["IT-200"]);
+  vi.mocked(linker.linkMessage).mockReturnValue(["ENG-200"]);
   vi.mocked(classifier.classify).mockResolvedValue(
     makeClassification({ status: "in_progress", workItemIds: [] }),
   );
 
   const existingAI100: WorkItem = {
-    id: "AI-100", source: "extracted", title: "Manual work",
+    id: "OPS-100", source: "extracted", title: "Manual work",
     externalStatus: null, assignee: null, url: null,
     currentAtcStatus: null, currentConfidence: null,
     snoozedUntil: null, createdAt: "2026-03-29T10:00:00.000Z",
     updatedAt: "2026-03-29T10:00:00.000Z",
   };
-  const existingIT200: WorkItem = { ...existingAI100, id: "IT-200", title: "Other" };
+  const existingIT200: WorkItem = { ...existingAI100, id: "ENG-200", title: "Other" };
 
   vi.mocked(graph.getWorkItemById).mockImplementation((id: string) => {
-    if (id === "AI-100") return existingAI100;
-    if (id === "IT-200") return existingIT200;
+    if (id === "OPS-100") return existingAI100;
+    if (id === "ENG-200") return existingIT200;
     return null;
   });
 
   await pipeline.processOnce();
 
-  // Thread upsert should keep AI-100 (the manually linked ID), NOT IT-200
+  // Thread upsert should keep OPS-100 (the manually linked ID), NOT ENG-200
   expect(graph.upsertThread).toHaveBeenCalledWith(
     expect.objectContaining({
-      workItemId: "AI-100",
+      workItemId: "OPS-100",
     }),
   );
 });
@@ -593,7 +593,7 @@ it("does not overwrite work_item_id on manually linked threads", async () => {
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `npx vitest run tests/core/pipeline.test.ts -t "manually linked"`
-Expected: FAIL — pipeline will set workItemId to IT-200 or AI-100 based on set ordering, not intentionally preserving the manual link
+Expected: FAIL — pipeline will set workItemId to ENG-200 or OPS-100 based on set ordering, not intentionally preserving the manual link
 
 - [ ] **Step 3: Implement manually_linked protection in pipeline**
 
@@ -669,7 +669,7 @@ describe("Thread Linking API", () => {
 
   beforeEach(() => {
     mockGraph = {
-      getWorkItemById: vi.fn().mockReturnValue({ id: "AI-100", source: "extracted", title: "Test" }),
+      getWorkItemById: vi.fn().mockReturnValue({ id: "OPS-100", source: "extracted", title: "Test" }),
       getThreadById: vi.fn().mockReturnValue({
         id: "t-1", channelId: "C-1", channelName: "general",
         platform: "slack", workItemId: null, lastActivity: "2026-04-01T10:00:00.000Z",
@@ -686,7 +686,7 @@ describe("Thread Linking API", () => {
       ]),
       upsertThread: vi.fn().mockReturnValue({
         id: "t-new", channelId: "C-1", channelName: "general",
-        platform: "slack", workItemId: "AI-100", lastActivity: "2026-04-05T10:00:00.000Z",
+        platform: "slack", workItemId: "OPS-100", lastActivity: "2026-04-05T10:00:00.000Z",
         messageCount: 1, messages: [], manuallyLinked: true,
       }),
     };
@@ -696,8 +696,8 @@ describe("Thread Linking API", () => {
       displayName: "Slack",
       getThreadMessages: vi.fn().mockResolvedValue([
         { id: "msg-1", threadId: "1711900000.000100", channelId: "C001",
-          channelName: "general", userId: "U1", userName: "Byte",
-          text: "Working on AI-100", timestamp: "2026-04-01T10:00:00.000Z", platform: "slack" },
+          channelName: "general", userId: "U1", userName: "Relay",
+          text: "Working on OPS-100", timestamp: "2026-04-01T10:00:00.000Z", platform: "slack" },
       ]),
     };
 
@@ -775,14 +775,14 @@ describe("Thread Linking API", () => {
   });
 
   it("POST /api/work-item/:id/link-thread links a thread", async () => {
-    const res = await app.request("/api/work-item/AI-100/link-thread", {
+    const res = await app.request("/api/work-item/OPS-100/link-thread", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ threadId: "t-1" }),
     });
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ ok: true });
-    expect(mockGraph.linkThread).toHaveBeenCalledWith("t-1", "AI-100");
+    expect(mockGraph.linkThread).toHaveBeenCalledWith("t-1", "OPS-100");
   });
 
   it("POST /api/work-item/:id/link-thread returns 404 for unknown work item", async () => {
@@ -796,7 +796,7 @@ describe("Thread Linking API", () => {
   });
 
   it("POST /api/work-item/:id/unlink-thread unlinks a thread", async () => {
-    const res = await app.request("/api/work-item/AI-100/unlink-thread", {
+    const res = await app.request("/api/work-item/OPS-100/unlink-thread", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ threadId: "t-1" }),
@@ -819,7 +819,7 @@ describe("Thread Linking API", () => {
 
   it("POST /api/work-item/:id/link-url parses Slack URL and links", async () => {
     mockGraph.getThreadById.mockReturnValue(null); // thread not in graph yet
-    const res = await app.request("/api/work-item/AI-100/link-url", {
+    const res = await app.request("/api/work-item/OPS-100/link-url", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ url: "https://team.slack.com/archives/C001/p1711900000000100" }),
@@ -827,11 +827,11 @@ describe("Thread Linking API", () => {
     expect(res.status).toBe(200);
     const data = await res.json() as { ok: boolean; threadId: string };
     expect(data.threadId).toBe("1711900000.000100");
-    expect(mockGraph.linkThread).toHaveBeenCalledWith("1711900000.000100", "AI-100");
+    expect(mockGraph.linkThread).toHaveBeenCalledWith("1711900000.000100", "OPS-100");
   });
 
   it("POST /api/work-item/:id/link-url rejects invalid URLs", async () => {
-    const res = await app.request("/api/work-item/AI-100/link-url", {
+    const res = await app.request("/api/work-item/OPS-100/link-url", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ url: "https://google.com" }),
@@ -1508,8 +1508,8 @@ describe("Forward API", () => {
   beforeEach(() => {
     mockGraph = {
       getThreadById: vi.fn().mockReturnValue({
-        id: "t-1", channelId: "C-1", channelName: "agent-orchestrator",
-        platform: "slack", workItemId: "AI-100",
+        id: "t-1", channelId: "C-1", channelName: "fleet-ops",
+        platform: "slack", workItemId: "OPS-100",
       }),
       getEventsForThread: vi.fn().mockReturnValue([
         { rawText: "Started working on auth", timestamp: "2026-04-01T10:00:00Z" },
@@ -1526,8 +1526,8 @@ describe("Forward API", () => {
       postMessage: vi.fn().mockResolvedValue({ threadId: "new-ts" }),
       sendDirectMessage: vi.fn().mockResolvedValue({ channelId: "D001", threadId: "dm-ts" }),
       getThreadMessages: vi.fn().mockResolvedValue([
-        { userName: "Byte", text: "Started working on auth" },
-        { userName: "Pixel", text: "PR ready for review" },
+        { userName: "Relay", text: "Started working on auth" },
+        { userName: "Prism", text: "PR ready for review" },
       ]),
     };
 
@@ -1625,7 +1625,7 @@ describe("Forward API", () => {
 
     const sentMessage = mockAdapter.postMessage.mock.calls[0][1] as string;
     expect(sentMessage).toContain("PR ready for review");
-    expect(sentMessage).toContain("Forwarded from #agent-orchestrator");
+    expect(sentMessage).toContain("Forwarded from #fleet-ops");
   });
 
   it("forwards full thread to a user DM", async () => {
@@ -1643,8 +1643,8 @@ describe("Forward API", () => {
     expect(res.status).toBe(200);
 
     const sentMessage = mockAdapter.sendDirectMessage.mock.calls[0][1] as string;
-    expect(sentMessage).toContain("Byte: Started working on auth");
-    expect(sentMessage).toContain("Pixel: PR ready for review");
+    expect(sentMessage).toContain("Relay: Started working on auth");
+    expect(sentMessage).toContain("Prism: PR ready for review");
   });
 
   it("includes summary when requested", async () => {

@@ -24,7 +24,7 @@ describe("merged_into column", () => {
 
   it("work items have a mergedInto field defaulting to null", () => {
     const wi = graph.upsertWorkItem({
-      id: "AI-1",
+      id: "OPS-1",
       source: "jira",
       title: "Test item",
     });
@@ -33,9 +33,9 @@ describe("merged_into column", () => {
   });
 
   it("getWorkItemById returns mergedInto as null by default", () => {
-    graph.upsertWorkItem({ id: "AI-2", source: "jira", title: "Another item" });
+    graph.upsertWorkItem({ id: "OPS-2", source: "jira", title: "Another item" });
 
-    const fetched = graph.getWorkItemById("AI-2");
+    const fetched = graph.getWorkItemById("OPS-2");
     expect(fetched).not.toBeNull();
     expect(fetched!.mergedInto).toBeNull();
   });
@@ -55,70 +55,70 @@ describe("mergeWorkItems and unmergeWorkItem", () => {
   });
 
   it("mergeWorkItems re-links threads and events from source to target", () => {
-    graph.upsertWorkItem({ id: "AI-1", source: "jira", title: "Source item" });
-    graph.upsertWorkItem({ id: "AI-2", source: "jira", title: "Target item" });
+    graph.upsertWorkItem({ id: "OPS-1", source: "jira", title: "Source item" });
+    graph.upsertWorkItem({ id: "OPS-2", source: "jira", title: "Target item" });
 
     graph.upsertThread({
       id: "thread-src",
       channelId: "C-general",
       channelName: "general",
       platform: "slack",
-      workItemId: "AI-1",
+      workItemId: "OPS-1",
       messageCount: 1,
     });
 
     graph.insertEvent({
       threadId: "thread-src",
       messageId: "msg-src-1",
-      workItemId: "AI-1",
+      workItemId: "OPS-1",
       status: "in_progress",
       confidence: 0.9,
       rawText: "Working on source item",
       timestamp: new Date().toISOString(),
     });
 
-    graph.mergeWorkItems("AI-1", "AI-2");
+    graph.mergeWorkItems("OPS-1", "OPS-2");
 
     // Thread should now be linked to target
     const thread = graph.getThreadById("thread-src");
     expect(thread).not.toBeNull();
-    expect(thread!.workItemId).toBe("AI-2");
+    expect(thread!.workItemId).toBe("OPS-2");
 
     // Source should have merged_into set
-    const source = graph.getWorkItemById("AI-1");
+    const source = graph.getWorkItemById("OPS-1");
     expect(source).not.toBeNull();
-    expect(source!.mergedInto).toBe("AI-2");
+    expect(source!.mergedInto).toBe("OPS-2");
 
     // Events should now be linked to target
-    const events = graph.getEventsForWorkItem("AI-2");
+    const events = graph.getEventsForWorkItem("OPS-2");
     expect(events.length).toBeGreaterThan(0);
     expect(events.some(e => e.rawText === "Working on source item")).toBe(true);
   });
 
   it("mergeWorkItems returns merge record for undo", () => {
-    graph.upsertWorkItem({ id: "AI-10", source: "jira", title: "Source to merge" });
-    graph.upsertWorkItem({ id: "AI-11", source: "jira", title: "Merge target" });
+    graph.upsertWorkItem({ id: "OPS-10", source: "jira", title: "Source to merge" });
+    graph.upsertWorkItem({ id: "OPS-11", source: "jira", title: "Merge target" });
 
     graph.upsertThread({
       id: "thread-merge-1",
       channelId: "C-general",
       channelName: "general",
       platform: "slack",
-      workItemId: "AI-10",
+      workItemId: "OPS-10",
       messageCount: 1,
     });
 
-    const record = graph.mergeWorkItems("AI-10", "AI-11");
+    const record = graph.mergeWorkItems("OPS-10", "OPS-11");
 
-    expect(record.sourceId).toBe("AI-10");
-    expect(record.targetId).toBe("AI-11");
+    expect(record.sourceId).toBe("OPS-10");
+    expect(record.targetId).toBe("OPS-11");
     expect(record.sourceTitle).toBe("Source to merge");
     expect(record.movedThreadIds).toEqual(["thread-merge-1"]);
   });
 
   it("unmergeWorkItem reverses a merge", () => {
     graph.upsertWorkItem({ id: "thread:t-abc", source: "synthetic", title: "Synthetic item" });
-    graph.upsertWorkItem({ id: "AI-20", source: "jira", title: "Real item" });
+    graph.upsertWorkItem({ id: "OPS-20", source: "jira", title: "Real item" });
 
     graph.upsertThread({
       id: "t-abc",
@@ -140,11 +140,11 @@ describe("mergeWorkItems and unmergeWorkItem", () => {
     });
 
     // Merge the synthetic item into the real one
-    graph.mergeWorkItems("thread:t-abc", "AI-20");
+    graph.mergeWorkItems("thread:t-abc", "OPS-20");
 
     // Verify merged state
     const merged = graph.getWorkItemById("thread:t-abc");
-    expect(merged!.mergedInto).toBe("AI-20");
+    expect(merged!.mergedInto).toBe("OPS-20");
 
     // Now unmerge
     graph.unmergeWorkItem("thread:t-abc");
@@ -159,18 +159,18 @@ describe("mergeWorkItems and unmergeWorkItem", () => {
   });
 
   it("mergeWorkItems throws for non-existent source", () => {
-    graph.upsertWorkItem({ id: "AI-30", source: "jira", title: "Real target" });
+    graph.upsertWorkItem({ id: "OPS-30", source: "jira", title: "Real target" });
 
-    expect(() => graph.mergeWorkItems("AI-nonexistent", "AI-30")).toThrow(
-      "Source work item not found: AI-nonexistent"
+    expect(() => graph.mergeWorkItems("OPS-nonexistent", "OPS-30")).toThrow(
+      "Source work item not found: OPS-nonexistent"
     );
   });
 
   it("unmergeWorkItem throws for non-merged item", () => {
-    graph.upsertWorkItem({ id: "AI-40", source: "jira", title: "Not merged" });
+    graph.upsertWorkItem({ id: "OPS-40", source: "jira", title: "Not merged" });
 
-    expect(() => graph.unmergeWorkItem("AI-40")).toThrow(
-      "Work item AI-40 is not merged"
+    expect(() => graph.unmergeWorkItem("OPS-40")).toThrow(
+      "Work item OPS-40 is not merged"
     );
   });
 });
@@ -237,34 +237,34 @@ describe("getRecentChannelContext", () => {
   });
 
   it("measures the window from the message's own time during a catch-up", () => {
-    graph.upsertWorkItem({ id: "AI-20", source: "jira", title: "Earlier item" });
-    graph.upsertWorkItem({ id: "AI-21", source: "jira", title: "Later item" });
-    const agent = graph.upsertAgent({ id: "agent-1", name: "Byte", platform: "slack", platformUserId: "U001" });
-    for (const [id, wi] of [["thread-old", "AI-20"], ["thread-after", "AI-21"]]) {
+    graph.upsertWorkItem({ id: "OPS-20", source: "jira", title: "Earlier item" });
+    graph.upsertWorkItem({ id: "OPS-21", source: "jira", title: "Later item" });
+    const agent = graph.upsertAgent({ id: "agent-1", name: "Relay", platform: "slack", platformUserId: "U001" });
+    for (const [id, wi] of [["thread-old", "OPS-20"], ["thread-after", "OPS-21"]]) {
       graph.upsertThread({ id, channelId: "C-general", channelName: "general", platform: "slack", workItemId: wi, messageCount: 1 });
     }
     // Two days ago: the message being classified, 10 minutes after the earlier one
-    graph.insertEvent({ threadId: "thread-old", messageId: "m-old", workItemId: "AI-20", agentId: agent.id,
+    graph.insertEvent({ threadId: "thread-old", messageId: "m-old", workItemId: "OPS-20", agentId: agent.id,
       status: "in_progress", confidence: 0.9, rawText: "Earlier message", timestamp: minutesAgo(2 * 24 * 60 + 10) });
     // Posted after the message being classified: not context for it
-    graph.insertEvent({ threadId: "thread-after", messageId: "m-after", workItemId: "AI-21", agentId: agent.id,
+    graph.insertEvent({ threadId: "thread-after", messageId: "m-after", workItemId: "OPS-21", agentId: agent.id,
       status: "in_progress", confidence: 0.9, rawText: "Later message", timestamp: minutesAgo(2 * 24 * 60 - 5) });
 
     const result = graph.getRecentChannelContext({
       channelId: "C-general", windowMinutes: 30, excludeThreadId: "thread-current", before: minutesAgo(2 * 24 * 60),
     });
 
-    expect(result.map((r) => r.workItemId)).toEqual(["AI-20"]);
+    expect(result.map((r) => r.workItemId)).toEqual(["OPS-20"]);
   });
 
   it("returns recent non-threaded messages from the same channel", () => {
     // Set up two standalone threads in the same channel with different work items
-    graph.upsertWorkItem({ id: "AI-10", source: "jira", title: "First work item" });
-    graph.upsertWorkItem({ id: "AI-11", source: "jira", title: "Second work item" });
+    graph.upsertWorkItem({ id: "OPS-10", source: "jira", title: "First work item" });
+    graph.upsertWorkItem({ id: "OPS-11", source: "jira", title: "Second work item" });
 
     const agent = graph.upsertAgent({
       id: "agent-1",
-      name: "Byte",
+      name: "Relay",
       platform: "slack",
       platformUserId: "U001",
     });
@@ -275,7 +275,7 @@ describe("getRecentChannelContext", () => {
       channelId: "C-general",
       channelName: "general",
       platform: "slack",
-      workItemId: "AI-10",
+      workItemId: "OPS-10",
       messageCount: 1,
     });
 
@@ -285,7 +285,7 @@ describe("getRecentChannelContext", () => {
       channelId: "C-general",
       channelName: "general",
       platform: "slack",
-      workItemId: "AI-11",
+      workItemId: "OPS-11",
       messageCount: 1,
     });
 
@@ -293,7 +293,7 @@ describe("getRecentChannelContext", () => {
     graph.insertEvent({
       threadId: "thread-A",
       messageId: "msg-A1",
-      workItemId: "AI-10",
+      workItemId: "OPS-10",
       agentId: agent.id,
       status: "in_progress",
       confidence: 0.9,
@@ -304,7 +304,7 @@ describe("getRecentChannelContext", () => {
     graph.insertEvent({
       threadId: "thread-B",
       messageId: "msg-B1",
-      workItemId: "AI-11",
+      workItemId: "OPS-11",
       agentId: agent.id,
       status: "in_progress",
       confidence: 0.8,
@@ -321,22 +321,22 @@ describe("getRecentChannelContext", () => {
     });
 
     expect(result).toHaveLength(1);
-    expect(result[0].workItemId).toBe("AI-10");
+    expect(result[0].workItemId).toBe("OPS-10");
     expect(result[0].workItemTitle).toBe("First work item");
-    expect(result[0].senderName).toBe("Byte");
+    expect(result[0].senderName).toBe("Relay");
     expect(result[0].text).toBe("Working on the first item");
     expect(result[0].timestamp).toBeDefined();
   });
 
   it("excludes messages older than the window", () => {
-    graph.upsertWorkItem({ id: "AI-20", source: "jira", title: "Old work item" });
+    graph.upsertWorkItem({ id: "OPS-20", source: "jira", title: "Old work item" });
 
     graph.upsertThread({
       id: "thread-old",
       channelId: "C-general",
       channelName: "general",
       platform: "slack",
-      workItemId: "AI-20",
+      workItemId: "OPS-20",
       messageCount: 1,
     });
 
@@ -344,7 +344,7 @@ describe("getRecentChannelContext", () => {
     graph.insertEvent({
       threadId: "thread-old",
       messageId: "msg-old-1",
-      workItemId: "AI-20",
+      workItemId: "OPS-20",
       status: "in_progress",
       confidence: 0.9,
       rawText: "This is old news",
@@ -363,7 +363,7 @@ describe("getRecentChannelContext", () => {
   it("limits results to the limit parameter", () => {
     // Set up 10 standalone threads in the same channel
     for (let i = 1; i <= 10; i++) {
-      const wiId = `AI-3${i}`;
+      const wiId = `OPS-3${i}`;
       const threadId = `thread-limit-${i}`;
       const msgId = `msg-limit-${i}`;
 
@@ -397,7 +397,7 @@ describe("getRecentChannelContext", () => {
   });
 
   it("excludes messages from multi-message threads", () => {
-    graph.upsertWorkItem({ id: "AI-40", source: "jira", title: "Multi-message thread item" });
+    graph.upsertWorkItem({ id: "OPS-40", source: "jira", title: "Multi-message thread item" });
 
     // Thread with messageCount: 5 (multi-message, should be excluded)
     graph.upsertThread({
@@ -405,14 +405,14 @@ describe("getRecentChannelContext", () => {
       channelId: "C-general",
       channelName: "general",
       platform: "slack",
-      workItemId: "AI-40",
+      workItemId: "OPS-40",
       messageCount: 5,
     });
 
     graph.insertEvent({
       threadId: "thread-multi",
       messageId: "msg-multi-1",
-      workItemId: "AI-40",
+      workItemId: "OPS-40",
       status: "in_progress",
       confidence: 0.9,
       rawText: "This is in a busy thread",

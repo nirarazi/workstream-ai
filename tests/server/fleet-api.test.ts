@@ -47,19 +47,19 @@ describe("GET /api/fleet", () => {
 
   beforeEach(() => {
     state = makeState();
-    state.graph.upsertAgent({ id: "a1", name: "Byte", platform: "slack", platformUserId: "U1" });
-    state.graph.upsertWorkItem({ id: "AI-1", source: "jira", title: "Active", currentAtcStatus: "in_progress" });
-    state.graph.upsertWorkItem({ id: "AI-2", source: "jira", title: "Done", currentAtcStatus: "completed" });
+    state.graph.upsertAgent({ id: "a1", name: "Relay", platform: "slack", platformUserId: "U1" });
+    state.graph.upsertWorkItem({ id: "OPS-1", source: "jira", title: "Active", currentAtcStatus: "in_progress" });
+    state.graph.upsertWorkItem({ id: "OPS-2", source: "jira", title: "Done", currentAtcStatus: "completed" });
 
-    state.graph.upsertThread({ id: "t1", channelId: "C1", platform: "slack", workItemId: "AI-1" });
-    state.graph.upsertThread({ id: "t2", channelId: "C1", platform: "slack", workItemId: "AI-2" });
+    state.graph.upsertThread({ id: "t1", channelId: "C1", platform: "slack", workItemId: "OPS-1" });
+    state.graph.upsertThread({ id: "t2", channelId: "C1", platform: "slack", workItemId: "OPS-2" });
 
     state.graph.insertEvent({
-      threadId: "t1", messageId: "m1", workItemId: "AI-1", agentId: "a1",
+      threadId: "t1", messageId: "m1", workItemId: "OPS-1", agentId: "a1",
       status: "in_progress", confidence: 0.9, timestamp: "2026-04-01T08:00:00Z",
     });
     state.graph.insertEvent({
-      threadId: "t2", messageId: "m2", workItemId: "AI-2", agentId: "a1",
+      threadId: "t2", messageId: "m2", workItemId: "OPS-2", agentId: "a1",
       status: "completed", confidence: 0.95, timestamp: "2026-04-01T09:00:00Z",
     });
   });
@@ -75,7 +75,7 @@ describe("GET /api/fleet", () => {
 
     const body = await res.json();
     expect(body.items).toHaveLength(1);
-    expect(body.items[0].workItem.id).toBe("AI-1");
+    expect(body.items[0].workItem.id).toBe("OPS-1");
     expect(body.items[0].anomalies).toBeInstanceOf(Array);
   });
 });

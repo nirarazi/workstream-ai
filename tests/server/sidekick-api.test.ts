@@ -47,8 +47,8 @@ describe("POST /api/sidekick", () => {
 
   beforeEach(() => {
     state = makeState();
-    state.graph.upsertAgent({ id: "a1", name: "Byte", platform: "slack", platformUserId: "U1" });
-    state.graph.upsertWorkItem({ id: "AI-100", source: "jira", title: "Fix login", currentAtcStatus: "in_progress" });
+    state.graph.upsertAgent({ id: "a1", name: "Relay", platform: "slack", platformUserId: "U1" });
+    state.graph.upsertWorkItem({ id: "OPS-100", source: "jira", title: "Fix login", currentAtcStatus: "in_progress" });
   });
 
   afterEach(() => {

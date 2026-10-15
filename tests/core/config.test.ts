@@ -31,7 +31,7 @@ classifier:
 taskAdapter:
   enabled: false
   ticketPrefixes:
-    - "AI-"
+    - "OPS-"
 extractors:
   ticketPatterns:
     - "\\\\b([A-Z]{2,6}-\\\\d+)\\\\b"
@@ -189,7 +189,7 @@ messaging:
 operator:
   name: "Test Operator"
   role: "CTO / Fleet operator"
-  context: "Runs the InsureTax agent fleet"
+  context: "Runs the Example Co agent fleet"
 `);
     const cfg = loadConfig(tempRoot);
     expect(cfg.operator.role).toBe("CTO / Fleet operator");

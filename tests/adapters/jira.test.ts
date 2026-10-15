@@ -22,12 +22,12 @@ function jsonResponse(body: unknown, status = 200, headers: Record<string, strin
 
 function makeJiraIssue(overrides: Record<string, unknown> = {}) {
   return {
-    key: "AI-382",
-    self: "https://test.atlassian.net/rest/api/3/issue/AI-382",
+    key: "OPS-382",
+    self: "https://test.atlassian.net/rest/api/3/issue/OPS-382",
     fields: {
       summary: "Implement auth flow",
       status: { name: "In Progress" },
-      assignee: { displayName: "Byte" },
+      assignee: { displayName: "Relay" },
       labels: ["backend", "auth"],
       description: {
         type: "doc",
@@ -125,19 +125,19 @@ describe("JiraAdapter", () => {
     it("should fetch and map a Jira issue to WorkItemDetail", async () => {
       mockFetch.mockResolvedValueOnce(jsonResponse(makeJiraIssue()));
 
-      const item = await adapter.getWorkItem("AI-382");
+      const item = await adapter.getWorkItem("OPS-382");
 
       expect(item).not.toBeNull();
-      expect(item!.id).toBe("AI-382");
+      expect(item!.id).toBe("OPS-382");
       expect(item!.title).toBe("Implement auth flow");
       expect(item!.status).toBe("In Progress");
-      expect(item!.assignee).toBe("Byte");
-      expect(item!.url).toBe("https://test.atlassian.net/browse/AI-382");
+      expect(item!.assignee).toBe("Relay");
+      expect(item!.url).toBe("https://test.atlassian.net/browse/OPS-382");
       expect(item!.labels).toEqual(["backend", "auth"]);
       expect(item!.description).toBe("Build the OAuth authentication flow for the API.");
 
       const [url] = mockFetch.mock.calls[0];
-      expect(url).toContain("/rest/api/3/issue/AI-382");
+      expect(url).toContain("/rest/api/3/issue/OPS-382");
       expect(url).toContain("fields=summary,status,assignee,labels,description");
     });
 
@@ -154,7 +154,7 @@ describe("JiraAdapter", () => {
         jsonResponse(makeJiraIssue({ fields: { ...makeJiraIssue().fields, assignee: null } })),
       );
 
-      const item = await adapter.getWorkItem("AI-382");
+      const item = await adapter.getWorkItem("OPS-382");
       expect(item!.assignee).toBeNull();
     });
 
@@ -163,7 +163,7 @@ describe("JiraAdapter", () => {
         jsonResponse(makeJiraIssue({ fields: { ...makeJiraIssue().fields, description: null } })),
       );
 
-      const item = await adapter.getWorkItem("AI-382");
+      const item = await adapter.getWorkItem("OPS-382");
       expect(item!.description).toBeNull();
     });
 
@@ -184,19 +184,19 @@ describe("JiraAdapter", () => {
         ),
       );
 
-      const item = await adapter.getWorkItem("AI-382");
+      const item = await adapter.getWorkItem("OPS-382");
       expect(item!.description).toHaveLength(200);
     });
 
     it("should throw if not connected", async () => {
       const fresh = new JiraAdapter();
-      await expect(fresh.getWorkItem("AI-1")).rejects.toThrow("not connected");
+      await expect(fresh.getWorkItem("OPS-1")).rejects.toThrow("not connected");
     });
 
     it("should throw JiraAuthError on 401", async () => {
       mockFetch.mockResolvedValueOnce(jsonResponse({}, 401));
 
-      await expect(adapter.getWorkItem("AI-382")).rejects.toThrow(JiraAuthError);
+      await expect(adapter.getWorkItem("OPS-382")).rejects.toThrow(JiraAuthError);
     });
 
     it("should throw JiraRateLimitError on 429", async () => {
@@ -204,16 +204,16 @@ describe("JiraAdapter", () => {
         jsonResponse({}, 429, { "Retry-After": "30" }),
       );
 
-      await expect(adapter.getWorkItem("AI-382")).rejects.toThrow(JiraRateLimitError);
+      await expect(adapter.getWorkItem("OPS-382")).rejects.toThrow(JiraRateLimitError);
     });
 
     it("should URL-encode issue IDs", async () => {
-      mockFetch.mockResolvedValueOnce(jsonResponse(makeJiraIssue({ key: "AI-1" })));
+      mockFetch.mockResolvedValueOnce(jsonResponse(makeJiraIssue({ key: "OPS-1" })));
 
-      await adapter.getWorkItem("AI-1");
+      await adapter.getWorkItem("OPS-1");
 
       const [url] = mockFetch.mock.calls[0];
-      expect(url).toContain("/rest/api/3/issue/AI-1");
+      expect(url).toContain("/rest/api/3/issue/OPS-1");
     });
   });
 
@@ -229,11 +229,11 @@ describe("JiraAdapter", () => {
     it("should update title via PUT", async () => {
       mockFetch.mockResolvedValueOnce(jsonResponse(null, 204));
 
-      await adapter.updateWorkItem("AI-382", { title: "New title" });
+      await adapter.updateWorkItem("OPS-382", { title: "New title" });
 
       expect(mockFetch).toHaveBeenCalledOnce();
       const [url, options] = mockFetch.mock.calls[0];
-      expect(url).toContain("/rest/api/3/issue/AI-382");
+      expect(url).toContain("/rest/api/3/issue/OPS-382");
       expect(options.method).toBe("PUT");
       const body = JSON.parse(options.body);
       expect(body.fields.summary).toBe("New title");
@@ -242,7 +242,7 @@ describe("JiraAdapter", () => {
     it("should update labels via PUT", async () => {
       mockFetch.mockResolvedValueOnce(jsonResponse(null, 204));
 
-      await adapter.updateWorkItem("AI-382", { labels: ["urgent", "frontend"] });
+      await adapter.updateWorkItem("OPS-382", { labels: ["urgent", "frontend"] });
 
       const body = JSON.parse(mockFetch.mock.calls[0][1].body);
       expect(body.fields.labels).toEqual(["urgent", "frontend"]);
@@ -262,17 +262,17 @@ describe("JiraAdapter", () => {
       // POST transition
       mockFetch.mockResolvedValueOnce(jsonResponse(null, 204));
 
-      await adapter.updateWorkItem("AI-382", { status: "Done" });
+      await adapter.updateWorkItem("OPS-382", { status: "Done" });
 
       expect(mockFetch).toHaveBeenCalledTimes(2);
 
       // Verify GET transitions
       const [transUrl] = mockFetch.mock.calls[0];
-      expect(transUrl).toContain("/rest/api/3/issue/AI-382/transitions");
+      expect(transUrl).toContain("/rest/api/3/issue/OPS-382/transitions");
 
       // Verify POST transition
       const [postUrl, postOptions] = mockFetch.mock.calls[1];
-      expect(postUrl).toContain("/rest/api/3/issue/AI-382/transitions");
+      expect(postUrl).toContain("/rest/api/3/issue/OPS-382/transitions");
       expect(postOptions.method).toBe("POST");
       const body = JSON.parse(postOptions.body);
       expect(body.transition.id).toBe("31");
@@ -284,7 +284,7 @@ describe("JiraAdapter", () => {
       );
       mockFetch.mockResolvedValueOnce(jsonResponse(null, 204));
 
-      await adapter.updateWorkItem("AI-382", { status: "done" });
+      await adapter.updateWorkItem("OPS-382", { status: "done" });
 
       const body = JSON.parse(mockFetch.mock.calls[1][1].body);
       expect(body.transition.id).toBe("31");
@@ -296,7 +296,7 @@ describe("JiraAdapter", () => {
       );
 
       await expect(
-        adapter.updateWorkItem("AI-382", { status: "Cancelled" }),
+        adapter.updateWorkItem("OPS-382", { status: "Cancelled" }),
       ).rejects.toThrow("No transition");
     });
 
@@ -310,14 +310,14 @@ describe("JiraAdapter", () => {
       // POST transition
       mockFetch.mockResolvedValueOnce(jsonResponse(null, 204));
 
-      await adapter.updateWorkItem("AI-382", { title: "Updated", status: "Done" });
+      await adapter.updateWorkItem("OPS-382", { title: "Updated", status: "Done" });
 
       expect(mockFetch).toHaveBeenCalledTimes(3);
     });
 
     it("should throw if not connected", async () => {
       const fresh = new JiraAdapter();
-      await expect(fresh.updateWorkItem("AI-1", { title: "x" })).rejects.toThrow("not connected");
+      await expect(fresh.updateWorkItem("OPS-1", { title: "x" })).rejects.toThrow("not connected");
     });
   });
 
@@ -333,7 +333,7 @@ describe("JiraAdapter", () => {
     it("should search with JQL and return mapped results", async () => {
       mockFetch.mockResolvedValueOnce(
         jsonResponse({
-          issues: [makeJiraIssue(), makeJiraIssue({ key: "AI-383", fields: { ...makeJiraIssue().fields, summary: "Another task" } })],
+          issues: [makeJiraIssue(), makeJiraIssue({ key: "OPS-383", fields: { ...makeJiraIssue().fields, summary: "Another task" } })],
           total: 2,
         }),
       );
@@ -341,8 +341,8 @@ describe("JiraAdapter", () => {
       const results = await adapter.searchWorkItems("auth");
 
       expect(results).toHaveLength(2);
-      expect(results[0].id).toBe("AI-382");
-      expect(results[1].id).toBe("AI-383");
+      expect(results[0].id).toBe("OPS-382");
+      expect(results[1].id).toBe("OPS-383");
 
       const [url] = mockFetch.mock.calls[0];
       expect(url).toContain("jql=");
@@ -394,7 +394,7 @@ describe("JiraAdapter", () => {
       );
 
       try {
-        await adapter.getWorkItem("AI-1");
+        await adapter.getWorkItem("OPS-1");
         expect.fail("Should have thrown");
       } catch (e) {
         expect(e).toBeInstanceOf(JiraRateLimitError);
@@ -406,7 +406,7 @@ describe("JiraAdapter", () => {
       mockFetch.mockResolvedValueOnce(jsonResponse({}, 429));
 
       try {
-        await adapter.getWorkItem("AI-1");
+        await adapter.getWorkItem("OPS-1");
         expect.fail("Should have thrown");
       } catch (e) {
         expect(e).toBeInstanceOf(JiraRateLimitError);
@@ -444,7 +444,7 @@ describe("JiraAdapter", () => {
 
       mockFetch.mockResolvedValueOnce(jsonResponse(mockResponse));
 
-      const comments = await adapter.getComments("AI-382");
+      const comments = await adapter.getComments("OPS-382");
 
       expect(comments).toHaveLength(2);
       expect(comments[0].author).toBe("Alice");
@@ -462,7 +462,7 @@ describe("JiraAdapter", () => {
 
     it("should throw if not connected", async () => {
       const fresh = new JiraAdapter();
-      await expect(fresh.getComments("AI-1")).rejects.toThrow("not connected");
+      await expect(fresh.getComments("OPS-1")).rejects.toThrow("not connected");
     });
   });
 
@@ -542,7 +542,7 @@ describe("JiraAdapter", () => {
         jsonResponse(makeJiraIssue({ fields: { ...makeJiraIssue().fields, description: adf } })),
       );
 
-      const item = await adapter.getWorkItem("AI-382");
+      const item = await adapter.getWorkItem("OPS-382");
       expect(item!.description).toBe("Hello world");
     });
 
@@ -551,7 +551,7 @@ describe("JiraAdapter", () => {
         jsonResponse(makeJiraIssue({ fields: { ...makeJiraIssue().fields, labels: [] } })),
       );
 
-      const item = await adapter.getWorkItem("AI-382");
+      const item = await adapter.getWorkItem("OPS-382");
       expect(item!.labels).toEqual([]);
     });
   });

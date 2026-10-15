@@ -32,11 +32,11 @@ const LLM_RESULT: Classification = {
   entryType: "progress",
   confidence: 0.8,
   reason: "agent reports progress",
-  workItemIds: ["AI-101"],
+  workItemIds: ["OPS-101"],
   title: "Dispatch queue",
   targetedAtOperator: false,
   actionRequiredFrom: null,
-  nextAction: "Unblock AI-101",
+  nextAction: "Unblock OPS-101",
 };
 
 describe("interrupt threshold", () => {
@@ -62,7 +62,7 @@ describe("applyDecision", () => {
     });
     expect(out).toMatchObject({
       status: "blocked_on_human", entryType: "block", targetedAtOperator: true,
-      title: "Dispatch queue", workItemIds: ["AI-101"], nextAction: "Unblock AI-101", actionRequiredFrom: [],
+      title: "Dispatch queue", workItemIds: ["OPS-101"], nextAction: "Unblock OPS-101", actionRequiredFrom: [],
     });
     expect(out.reason).toContain("status set by decision model");
   });

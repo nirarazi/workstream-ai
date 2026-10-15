@@ -32,43 +32,43 @@ describe("WorkItemLinker", () => {
     // Create a thread first
     graph.upsertThread({ id: "t1", channelId: "C1", platform: "slack" });
 
-    const ids = linker.linkMessage("Working on AI-382 and IT-100", "t1");
+    const ids = linker.linkMessage("Working on OPS-382 and ENG-100", "t1");
 
-    expect(ids).toContain("AI-382");
-    expect(ids).toContain("IT-100");
+    expect(ids).toContain("OPS-382");
+    expect(ids).toContain("ENG-100");
 
     // Work items should exist in the graph
-    const wi1 = graph.getWorkItemById("AI-382");
+    const wi1 = graph.getWorkItemById("OPS-382");
     expect(wi1).not.toBeNull();
     expect(wi1!.source).toBe("extracted");
 
-    const wi2 = graph.getWorkItemById("IT-100");
+    const wi2 = graph.getWorkItemById("ENG-100");
     expect(wi2).not.toBeNull();
   });
 
   it("links thread to the first work item", () => {
     graph.upsertThread({ id: "t1", channelId: "C1", platform: "slack" });
 
-    linker.linkMessage("Working on AI-382 and IT-100", "t1");
+    linker.linkMessage("Working on OPS-382 and ENG-100", "t1");
 
     const thread = graph.getThreadById("t1");
-    expect(thread!.workItemId).toBe("AI-382");
+    expect(thread!.workItemId).toBe("OPS-382");
   });
 
   it("does not overwrite existing thread work item link", () => {
-    graph.upsertWorkItem({ id: "AI-1", source: "manual" });
+    graph.upsertWorkItem({ id: "OPS-1", source: "manual" });
     graph.upsertThread({
       id: "t1",
       channelId: "C1",
       platform: "slack",
-      workItemId: "AI-1",
+      workItemId: "OPS-1",
     });
 
-    linker.linkMessage("Now mentioning AI-999", "t1");
+    linker.linkMessage("Now mentioning OPS-999", "t1");
 
     const thread = graph.getThreadById("t1");
     // Should keep original link
-    expect(thread!.workItemId).toBe("AI-1");
+    expect(thread!.workItemId).toBe("OPS-1");
   });
 
   it("returns empty array for text with no work item IDs", () => {
@@ -88,43 +88,43 @@ describe("WorkItemLinker", () => {
   it("extracts only ticket IDs, ignores PR references", () => {
     graph.upsertThread({ id: "t1", channelId: "C1", platform: "slack" });
 
-    const ids = linker.linkMessage("AI-382: PR #716 ready for review", "t1");
-    expect(ids).toContain("AI-382");
+    const ids = linker.linkMessage("OPS-382: PR #716 ready for review", "t1");
+    expect(ids).toContain("OPS-382");
     expect(ids).not.toContain("PR-716");
     expect(ids).toHaveLength(1);
 
-    // Thread should be linked to AI-382
+    // Thread should be linked to OPS-382
     const thread = graph.getThreadById("t1");
-    expect(thread!.workItemId).toBe("AI-382");
+    expect(thread!.workItemId).toBe("OPS-382");
   });
 
   it("does not create duplicate work items on repeated calls", () => {
     graph.upsertThread({ id: "t1", channelId: "C1", platform: "slack" });
 
-    linker.linkMessage("Working on AI-382", "t1");
-    linker.linkMessage("Still on AI-382", "t1");
+    linker.linkMessage("Working on OPS-382", "t1");
+    linker.linkMessage("Still on OPS-382", "t1");
 
     // Should still have exactly one work item
-    const wi = graph.getWorkItemById("AI-382");
+    const wi = graph.getWorkItemById("OPS-382");
     expect(wi).not.toBeNull();
   });
 
   it("works with multiple extractors", () => {
     const extractor1 = new DefaultExtractor({
-      ticketPatterns: ["\\b(AI-\\d+)\\b"],
+      ticketPatterns: ["\\b(OPS-\\d+)\\b"],
       prPatterns: [],
     });
     const extractor2 = new DefaultExtractor({
-      ticketPatterns: ["\\b(IT-\\d+)\\b"],
+      ticketPatterns: ["\\b(ENG-\\d+)\\b"],
       prPatterns: [],
     });
 
     const multiLinker = new WorkItemLinker(graph, [extractor1, extractor2]);
     graph.upsertThread({ id: "t1", channelId: "C1", platform: "slack" });
 
-    const ids = multiLinker.linkMessage("AI-1 and IT-2", "t1");
-    expect(ids).toContain("AI-1");
-    expect(ids).toContain("IT-2");
+    const ids = multiLinker.linkMessage("OPS-1 and ENG-2", "t1");
+    expect(ids).toContain("OPS-1");
+    expect(ids).toContain("ENG-2");
   });
 });
 
@@ -147,25 +147,25 @@ describe("junction row creation", () => {
   afterEach(() => { db.close(); });
 
   it("creates junction rows for all extracted IDs", () => {
-    linker.linkMessage("Working on AI-100 and AI-200 now", "T1");
+    linker.linkMessage("Working on OPS-100 and OPS-200 now", "T1");
     const junctions = graph.getWorkItemsForThread("T1");
     expect(junctions).toHaveLength(2);
     const primary = junctions.find((j) => j.relation === "primary");
     expect(primary).toBeDefined();
-    expect(primary!.workItemId).toBe("AI-100");
+    expect(primary!.workItemId).toBe("OPS-100");
     const mentioned = junctions.find((j) => j.relation === "mentioned");
     expect(mentioned).toBeDefined();
-    expect(mentioned!.workItemId).toBe("AI-200");
+    expect(mentioned!.workItemId).toBe("OPS-200");
   });
 
   it("still sets threads.work_item_id for backwards compatibility", () => {
-    linker.linkMessage("Working on AI-100", "T1");
+    linker.linkMessage("Working on OPS-100", "T1");
     const thread = graph.getThreadById("T1");
-    expect(thread!.workItemId).toBe("AI-100");
+    expect(thread!.workItemId).toBe("OPS-100");
   });
 
   it("creates junction row even for single work item", () => {
-    linker.linkMessage("Fix AI-300 urgently", "T1");
+    linker.linkMessage("Fix OPS-300 urgently", "T1");
     const junctions = graph.getWorkItemsForThread("T1");
     expect(junctions).toHaveLength(1);
     expect(junctions[0].relation).toBe("primary");

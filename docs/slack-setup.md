@@ -6,7 +6,7 @@ This guide covers how to connect workstream.ai to your Slack workspace, with spe
 
 - A Slack workspace where your agents operate
 - Admin or Owner permissions to install Slack apps
-- Your agent fleet's gateway (e.g., OpenClaw) configured and running
+- Your agent fleet's gateway configured and running
 
 ## 1. Create the workstream.ai Slack App
 
@@ -58,7 +58,7 @@ When you type a reply in workstream.ai:
 - Humans in the thread see it normally and can respond
 - **Agents may not see it** unless they are explicitly configured to process messages from apps
 
-When you @-mention an agent in your reply (e.g., `@Levy approve this`):
+When you @-mention an agent in your reply (e.g., `@Atlas approve this`):
 - The agent receives a mention notification
 - Most agent frameworks process mentions regardless of `bot_id`
 - This is the reliable way to direct a reply to a specific agent
@@ -67,9 +67,9 @@ When you @-mention an agent in your reply (e.g., `@Levy approve this`):
 
 For your agent fleet to respond to messages sent via workstream.ai, you need to configure your agent gateway to **not ignore messages from the workstream.ai app when the agent is mentioned**.
 
-### OpenClaw
+### Gateway-managed fleets
 
-In your fleet configuration, enable the setting for agents to respond to bot/app messages in threads when they are mentioned. This ensures that when you @-mention an agent in a workstream.ai reply, the agent processes the message as if you had typed it directly in Slack.
+In your agent gateway's configuration, enable the setting for agents to respond to bot/app messages in threads when they are mentioned. This ensures that when you @-mention an agent in a workstream.ai reply, the agent processes the message as if you had typed it directly in Slack.
 
 ### General Guidance for Other Frameworks
 
@@ -100,7 +100,7 @@ The workstream.ai Slack app's identity can be found in the response from `auth.t
 After configuring workstream.ai and your agent gateway:
 
 1. Open workstream.ai and find an active work item with an agent thread
-2. Type a reply that @-mentions the agent (e.g., `@Levy what's the status?`)
+2. Type a reply that @-mentions the agent (e.g., `@Atlas what's the status?`)
 3. Verify in Slack that:
    - The message appears with your name and avatar
    - The agent responds to your message

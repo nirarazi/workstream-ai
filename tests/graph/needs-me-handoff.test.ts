@@ -14,7 +14,7 @@ describe("Needs me follows the latest confident blocking message", () => {
     graph = new ContextGraph(db);
     graph.upsertAgent({ id: "agent-1", name: "Atlas", platform: "slack", platformUserId: "U001" });
     graph.upsertWorkItem({ id: "OPS-101", source: "jira", title: "Payment links", currentAtcStatus: "blocked_on_human" });
-    graph.upsertThread({ id: "T1", channelId: "C001", channelName: "strategy", platform: "slack", workItemId: "OPS-101" });
+    graph.upsertThread({ id: "T1", channelId: "C001", channelName: "planning", platform: "slack", workItemId: "OPS-101" });
   });
 
   afterEach(() => {

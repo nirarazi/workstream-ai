@@ -55,9 +55,9 @@ export class DecisionGate {
  * Overlays the decision model's status and inbox answer on the LLM's classification. Free-text fields
  * that only make sense for actionable items are dropped when the decision says the item isn't actionable.
  *
- * Notification bots (CRM, CI, quote alerts) are high-volume templated traffic. For them the gate may
+ * Notification bots (CRM, CI, order alerts) are high-volume templated traffic. For them the gate may
  * confirm or veto a block the LLM found, but never create one: on live traffic it turned ~1 in 8
- * templated quote alerts into "blocked" at a 0.3 threshold.
+ * templated order alerts into "blocked" at a 0.3 threshold.
  */
 export function applyDecision(
   llm: Classification,

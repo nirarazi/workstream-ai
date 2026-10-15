@@ -32,8 +32,8 @@ CREATE INDEX idx_twi_work_item ON thread_work_items(work_item_id);
 ```
 
 Relation types:
-- **`primary`**: The thread is directly about this work item (e.g., the AI-279 LinkedIn draft thread)
-- **`mentioned`**: The thread mentions this work item in passing (e.g., a sprint plan listing AI-279 among 12 items)
+- **`primary`**: The thread is directly about this work item (e.g., the OPS-279 LinkedIn draft thread)
+- **`mentioned`**: The thread mentions this work item in passing (e.g., a sprint plan listing OPS-279 among 12 items)
 
 `threads.work_item_id` remains as a denormalized shortcut (always the `primary` work item), kept in sync by the pipeline. This avoids a mass query rewrite — it can be deprecated later.
 
@@ -109,7 +109,7 @@ Run once during `db.migrate()`:
 - `FocusedMessage` component in `Timeline.tsx`
 - `findThreadForWorkItem` helper in `server.ts`
 - Breakdown event creation block in `pipeline.ts` (the `insertEvent` inside the breakdown loop)
-- Validated breakdown filtering added for the AI-401 fix (no longer needed)
+- Validated breakdown filtering added for the OPS-401 fix (no longer needed)
 - `TICKET_ID_RE` regex and line-splitting logic in `Timeline.tsx`
 
 ### Testing
