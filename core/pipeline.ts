@@ -372,11 +372,11 @@ export class Pipeline {
   }
 
   private isValidWorkItemId(id: string): boolean {
-    // Also allow synthetic IDs (thread:xxx) and pull requests ("PR #123")
-    if (id.startsWith("thread:") || /^PR\s*#?\d+$/i.test(id)) return true;
+    // Also allow synthetic IDs (thread:xxx)
+    if (id.startsWith("thread:")) return true;
     const prefixes = this.getValidPrefixes();
-    // No prefixes configured: accept anything shaped like a ticket key, but not technical terms like UTF-8
-    if (prefixes.length === 0) return looksLikeTicketKey(id);
+    // No prefixes configured: accept a ticket key (but not a technical term like UTF-8) or a pull request
+    if (prefixes.length === 0) return looksLikeTicketKey(id) || /^PR\s*#?\d+$/i.test(id);
     return prefixes.some(prefix => id.toUpperCase().startsWith(prefix));
   }
 
