@@ -59,6 +59,11 @@ export class Pipeline {
     this.operatorIdentities = operatorIdentities ?? null;
   }
 
+  /** Settings read at each poll (inbox) take effect from the next one, without a restart. */
+  setConfig(config: Config): void {
+    this.config = config;
+  }
+
   async start(): Promise<void> {
     if (this.running) {
       log.warn("Pipeline already running");
