@@ -267,6 +267,43 @@ describe("POST /api/setup preserves what the form doesn't manage", () => {
     expect(yaml).not.toContain("reasoningEffort");
   });
 
+  it("keeps hand-set ticket prefixes when Jira settings are saved", async () => {
+    await import("../../core/adapters/tasks/jira/index.js");
+    const files = new Map<string, string>();
+    vi.doMock("node:fs", async (importOriginal) => {
+      const real = await importOriginal<typeof import("node:fs")>();
+      return {
+        ...real,
+        existsSync: (p: string) => files.has(String(p)),
+        readFileSync: (p: string, enc?: BufferEncoding) => files.get(String(p)) ?? real.readFileSync(p, enc),
+        writeFileSync: (p: string, data: string) => { files.set(String(p), data); },
+        mkdirSync: () => undefined,
+        chmodSync: () => undefined,
+      };
+    });
+    const { resolve } = await import("node:path");
+    const { findProjectRoot } = await import("../../core/config.js");
+    const localPath = resolve(findProjectRoot(), "config", "local.yaml");
+    files.set(localPath, "taskAdapter:\n  enabled: true\n  baseUrl: https://old.example.atlassian.net\n  ticketPrefixes:\n    - OPS-\n");
+    // Saving reconnects Jira; keep that offline
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("offline"));
+    const saved = { ...process.env };
+
+    const state = makeState();
+    await createApp(state).request("/api/setup", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ task: { adapter: "jira", fields: { email: "dana@example.com", token: "test-token", baseUrl: "https://new.example.atlassian.net" } } }),
+    });
+    state.db.close();
+    fetchSpy.mockRestore();
+    process.env = saved;
+
+    const yaml = files.get(localPath)!;
+    expect(yaml).toContain("baseUrl: https://new.example.atlassian.net");
+    expect(yaml).toContain("- OPS-");
+  });
+
   it("rejects an auto-dismiss period that isn't 1 to 3650 whole days", async () => {
     const writes: string[] = [];
     vi.doMock("node:fs", async (importOriginal) => {
