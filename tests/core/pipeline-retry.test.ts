@@ -372,6 +372,7 @@ describe("Pipeline: a message classified late", () => {
 
     expect(graph.hasEvent("T1-m1", "T1")).toBe(true); // m1 was classified in the end
     expect(graph.getWorkItemById("thread:T1")!.currentAtcStatus).toBe("blocked_on_human"); // but m2's state stands
+    expect(graph.getThreadById("T1")!.lastActivity).toBe("2026-10-15T07:59:00.000Z"); // and the thread's activity time
     vi.useRealTimers();
     db.close();
   });

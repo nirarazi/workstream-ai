@@ -890,7 +890,10 @@ export class Pipeline {
       platformMeta: thread.platformMeta,
       platform: thread.platform,
       workItemId: isManuallyLinked ? existingThread!.workItemId : primaryWorkItemId,
-      lastActivity: message.timestamp,
+      // Never backwards: a message classified late (held for a retry) is older than what's already recorded
+      lastActivity: existingThread?.lastActivity && existingThread.lastActivity > message.timestamp
+        ? existingThread.lastActivity
+        : message.timestamp,
       messageCount: thread.messages.length,
     });
 
