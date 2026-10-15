@@ -39,15 +39,28 @@ const REQUEST_REJECTED = new Set([400, 413, 422]);
 /** A refusal that's about this message (too long, flagged by moderation) rather than the account or settings */
 const MESSAGE_REFUSAL = /context.?length|maximum context|too long|too many tokens|token limit|moderat|flagged/i;
 
-/** Map a provider refusal to what it means for retrying this message */
+/**
+ * Map a provider refusal to what it means for retrying this message. Only a 401 is surely about the credentials;
+ * a 403 can also be a gateway or firewall blocking this message's content, so it's handled per message (backoff,
+ * newer messages first) rather than pausing everything.
+ */
 function classifyRefusal(err: ApiError): Error {
-  if (err.status === 401 || (err.status === 403 && !MESSAGE_REFUSAL.test(err.message))) {
-    return new ProviderAuthError(`Model provider refused the credentials (HTTP ${err.status})`);
+  if (err.status === 401) {
+    return new ProviderAuthError("Model provider refused the API key (HTTP 401)");
   }
-  if (err.status === 413 || (err.status === 403 && MESSAGE_REFUSAL.test(err.message))) {
-    return new InvalidReplyError(`Model refused this message (HTTP ${err.status})`, false, true);
+  if (err.status === 413) {
+    return new InvalidReplyError("Model refused this message (HTTP 413)", false, true);
   }
   return new InvalidReplyError(`Model refused the request (HTTP ${err.status})`, false, MESSAGE_REFUSAL.test(err.message));
+}
+
+/**
+ * A provider error for logs and the status shown in the UI. An API error's body can echo the request, including
+ * the message being classified, so only its status is kept.
+ */
+export function describeProviderError(error: unknown): string {
+  if (error instanceof ApiError) return `${error.status !== undefined ? `HTTP ${error.status}` : "API error"} from the model provider`;
+  return error instanceof Error ? `${error.name}: ${error.message.slice(0, 200)}` : String(error).slice(0, 200);
 }
 
 function isRetryable(error: unknown): boolean {
@@ -200,7 +213,7 @@ export class OpenAICompatibleProvider implements ModelProvider {
             : undefined;
           const delayMs = serverDelay ?? getBackoffMs(attempt);
           const nextRetryAt = new Date(Date.now() + delayMs).toISOString();
-          const errorMsg = error instanceof Error ? error.message.slice(0, 200) : String(error);
+          const errorMsg = describeProviderError(error);
 
           this._backoff = {
             active: true,
@@ -228,9 +241,9 @@ export class OpenAICompatibleProvider implements ModelProvider {
           active: false,
           retryCount: 0,
           nextRetryAt: null,
-          lastError: error instanceof Error ? error.message.slice(0, 200) : String(error),
+          lastError: describeProviderError(error),
         };
-        log.error("LLM call failed", error);
+        log.error("LLM call failed", describeProviderError(error));
         throw error;
       }
     }
