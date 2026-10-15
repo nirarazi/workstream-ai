@@ -8,6 +8,14 @@ import { OpenAICompatibleProvider } from "../classifier/providers/openai-compati
 import type { Database } from "../graph/db.js";
 import type { DailyUsage, BudgetStatus, UsageConfig } from "./types.js";
 
+
+/** The daily LLM budget is spent; classification waits until it resets at midnight UTC */
+export class BudgetExhaustedError extends Error {
+  constructor() {
+    super("Daily LLM budget exhausted. Resets at midnight UTC.");
+  }
+}
+
 const log = createLogger("usage-tracker");
 
 function estimateTokens(text: string): number {
@@ -83,14 +91,7 @@ export class UsageTracker implements ModelProvider {
   ): Promise<ClassificationResult> {
     this.assertNotRetired();
     if (this.isBudgetExhausted()) {
-      log.warn("Daily LLM budget exhausted — returning fallback classification");
-      return {
-        status: "noise",
-        confidence: 0.1,
-        reason: "Daily LLM budget exhausted. Resets at midnight UTC.",
-        workItemIds: [],
-        title: "",
-      };
+      throw new BudgetExhaustedError();
     }
 
     const result = await this.provider.classify(message, systemPrompt, fewShotExamples);

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import type { UsageRecord, DailyUsage, BudgetStatus, UsageConfig } from "../../core/usage/types.js";
 import { Database } from "../../core/graph/db.js";
-import { UsageTracker } from "../../core/usage/tracker.js";
+import { UsageTracker, BudgetExhaustedError } from "../../core/usage/tracker.js";
 import type { ModelProvider, ClassificationResult } from "../../core/classifier/providers/interface.js";
 import { Classifier } from "../../core/classifier/index.js";
 
@@ -194,11 +194,8 @@ describe("UsageTracker", () => {
     // First call succeeds and exhausts the budget
     await tracker.classify("Hello", "sys", [], "classifier");
 
-    // Second call should return budget-exhausted fallback
-    const result = await tracker.classify("World", "sys", [], "classifier");
-    expect(result.status).toBe("noise");
-    expect(result.confidence).toBe(0.1);
-    expect(result.reason).toContain("budget");
+    // Second call is refused, so the message isn't stored as noise and waits for the budget to reset
+    await expect(tracker.classify("World", "sys", [], "classifier")).rejects.toThrow(BudgetExhaustedError);
 
     // Provider should NOT have been called for the second classify
     expect(provider.classify).toHaveBeenCalledTimes(1);

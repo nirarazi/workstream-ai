@@ -10,6 +10,7 @@ import { applyDecision, createDecisionGate, type DecisionGate } from "../decisio
 import { OpenAICompatibleProvider, type BackoffState } from "./providers/openai-compatible.js";
 import type { ModelProvider } from "./providers/interface.js";
 import type { RateLimiter } from "../rate-limiter.js";
+import { BudgetExhaustedError } from "../usage/tracker.js";
 
 const log = createLogger("classifier");
 
@@ -205,6 +206,8 @@ export class Classifier {
     const [llmResult, decisionResult] = await Promise.allSettled([llm, decision]);
     // classifyWithLLM never rejects (it falls back to noise internally)
     const base = (llmResult as PromiseFulfilledResult<Classification>).value;
+    // Without the LLM's answer there's no title or links; the whole message is tried again later
+    if (base.failed) return base;
     if (decisionResult.status === "rejected") {
       log.warn("Decision gate failed — using the LLM classification", decisionResult.reason);
       return base;
@@ -314,7 +317,7 @@ Return false if:
         return {
           status: "noise", entryType: "noise", confidence: 0.1,
           reason: "Provider returned empty result", workItemIds: [], title: "",
-          targetedAtOperator: true, actionRequiredFrom: null, nextAction: null,
+          targetedAtOperator: true, actionRequiredFrom: null, nextAction: null, failed: "error",
         };
       }
 
@@ -350,17 +353,19 @@ Return false if:
         }),
       };
     } catch (error) {
-      log.warn("Classification failed, returning default noise classification", error);
+      const budget = error instanceof BudgetExhaustedError;
+      if (!budget) log.warn("Classification failed, returning default noise classification", error);
       return {
         status: "noise",
         entryType: "noise",
         confidence: 0.1,
-        reason: "Classification failed — defaulting to noise",
+        reason: budget ? error.message : "Classification failed — defaulting to noise",
         workItemIds: [],
         title: "",
         targetedAtOperator: true,
         actionRequiredFrom: null,
         nextAction: null,
+        failed: budget ? "budget" : "error",
       };
     }
   }
