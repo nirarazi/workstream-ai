@@ -20,9 +20,9 @@ The user is an **agent fleet operator**: the person who configures, deploys and 
 - **Post as the operator, not as a bot.** Replies go out under the operator's own identity, because agents are already set up to respond to the operator. This is non-negotiable.
 - **Context is the product.** What the app learns about a fleet (which agent owns which work item, what a ticket prefix means, what "done" looks like for a given agent) accumulates over time and makes it more useful.
 - **No vendor lock-in.** No specific model provider, cloud, messaging service or task tracker is required. Every external dependency sits behind an interface, and operators bring their own.
-- **Local-first and self-hostable.** Everything runs on the operator's machine: no account, no telemetry, no phoning home. With a local model and a self-hosted messaging platform, it works fully offline. The data belongs to the operator.
+- **Local-first and self-hostable.** Everything runs on the operator's machine: no account, no telemetry, no phoning home. It is designed to work fully offline with a local model and a self-hosted messaging platform. Slack is the only messaging adapter so far. The data belongs to the operator.
 
-Not goals: a project manager, a monitoring dashboard, a chat client, or a replacement for the messaging platform.
+Not goals: a project manager, a monitoring dashboard, a chat client for talking to agents, or a replacement for the messaging platform.
 
 ---
 
@@ -35,16 +35,16 @@ messaging platform ──► pipeline ──► classifier ──► context gra
 agents via MCP ────────────────────────────────────►
 ```
 
-- **Engine** (`core/server.ts`): a local HTTP server (Hono) on `127.0.0.1:9847`. It owns all state and logic. Its API refuses requests addressed to other hostnames, and writes from origins other than the app's own.
+- **Engine** (`core/server.ts`): a local HTTP server (Hono) on `127.0.0.1:9847`. It owns all state and logic. The API has no authentication: any local process can call it, so keep `server.host` on loopback. It refuses requests addressed to other hostnames, and writes from browser origins other than the app's own.
 - **Pipeline** (`core/pipeline.ts`): polls the messaging adapter, classifies new messages, links them to work items and writes the results to the context graph. It can also auto-dismiss items that have gone quiet.
-- **Classifier** (`core/classifier/`): sends each message with its thread context to any OpenAI-compatible model (including local ones via Ollama). It returns a status, a title, the next action, linked work items, and whether the message needs the operator.
+- **Classifier** (`core/classifier/`): sends each message with its thread context to any OpenAI-compatible model (including local ones via Ollama). The default is Anthropic's OpenAI-compatible endpoint with `claude-sonnet-4-6`, set by `WORKSTREAM_LLM_BASE_URL`, `WORKSTREAM_LLM_MODEL` and `WORKSTREAM_LLM_API_KEY` or in Settings. It returns a status, a title, the next action, linked work items, and whether the message needs the operator.
   - **Statuses:** `completed`, `in_progress`, `blocked_on_human`, `needs_decision`, `noise`.
-  - **Operator's remit:** an optional written description of what the operator owns, used to judge "is this for me?" across several humans.
+  - **Operator's remit:** an optional written description of what the operator owns (`operator.context` in `config/local.yaml`), used to judge "is this for me?" when several humans share a fleet.
   - **Decisions mode:** with `classifier.mode: decisions`, a decision model (`core/decisions/`) decides the status and inbox membership with calibrated probabilities. The LLM still writes titles and links.
 - **Context graph** (`core/graph/`): a SQLite database (WAL mode) holding work items, threads, events (every classification, as an audit trail), agents and enrichments from task adapters. It's a plain file the operator can open with any SQLite tool.
 - **Work item linking** (`core/graph/linker.ts`, `core/graph/extractors/`): pattern extraction of ticket IDs and PR numbers, plus continuation detection for messages outside threads (`core/continuation/`).
 - **Task adapters** (`core/adapters/tasks/`): enrich work items with data from a tracker (Jira is the reference implementation) and create tickets.
-- **MCP server** (`core/mcp/`, stdio): lets agents push status directly instead of being read from chat. Tools:
+- **MCP server** (`core/mcp/`, stdio, started with `npm run mcp`): lets agents push status directly instead of being read from chat. Tools:
   - `workstream_report_status`
   - `workstream_request_approval`
   - `workstream_complete`
@@ -59,7 +59,7 @@ agents via MCP ─────────────────────�
 
 ## Extension Points
 
-workstream.ai is meant to be extended without forking. Adapters register themselves by name in `core/adapters/registry.ts` when their module is imported.
+workstream.ai is meant to be extended without forking. Messaging and task adapters register themselves by name in `core/adapters/registry.ts` when their module is imported. The engine imports them at startup in `core/server.ts`, so a new adapter also needs an import line there. The other extension points are wired in `core/server.ts` or chosen by config (decision providers in `core/decisions/gate.ts`).
 
 | Extension | Interface | Location | Reference implementation |
 |---|---|---|---|
@@ -68,7 +68,7 @@ workstream.ai is meant to be extended without forking. Adapters register themsel
 | Model provider | `ModelProvider` | `core/classifier/providers/` | OpenAI-compatible |
 | Decision provider | `DecisionProvider` | `core/decisions/providers/` | LLM, OpenAI Decisions, TypeSafe |
 | Work item extractor | `Extractor` | `core/graph/extractors/` | Regex ticket/PR extraction |
-| Continuation strategy | `ContinuationStrategy` | `core/continuation/` | Inline channel context |
+| Continuation strategy | `ContinuationStrategy` | `core/continuation/` | Interface only so far; the shipped behavior is built into the classifier |
 
 Adapters each live in their own directory, and arrive by pull request with passing tests. The Slack adapter sets the standard for a complete messaging adapter. Interfaces are a contract: breaking changes need a deprecation cycle.
 
@@ -95,7 +95,7 @@ src-tauri/             Tauri desktop shell (Rust)
 config/default.yaml    Default configuration (documented inline)
 config/prompts/        Classifier prompt and few-shot examples
 docs/                  Roadmap, Slack setup, theming, design notes
-tests/                 Vitest tests, mirroring core/ and src/
+tests/                 Vitest tests, grouped by area
 ```
 
 ---
@@ -106,17 +106,27 @@ Requirements: a current Node.js LTS and npm. For the desktop app, also the Rust 
 
 ```bash
 npm install
+
+# In a browser: two terminals
 npm run engine        # engine on 127.0.0.1:9847, restarts on change
-npm run dev           # UI on http://localhost:5173 (proxies /api to the engine)
-npm run tauri dev     # desktop app
-npm test              # full test suite (Vitest)
+npm run dev           # UI on http://localhost:5173, proxying /api to the engine
+
+# Or as the desktop app: starts the UI and the engine itself (don't run the two above as well)
+npm run tauri dev
+
+npm test              # full test suite (Vitest); npm run test:watch to rerun on change
+npm run start:web     # build the UI and serve it from the engine
+npm run mcp           # MCP server on stdio
+npm run classify      # classify a message read from stdin (calls the configured model)
 ```
+
+The engine and the MCP server open `workstream.db` in the directory they're started from. Start them from the repo root, or point the MCP server at the engine's database with `WORKSTREAM_DB_PATH`.
 
 Configuration:
 - **`config/default.yaml`:** the defaults, with comments.
 - **`config/local.yaml`:** the operator's overrides. Gitignored, and written by the Settings screen.
 - **`.env`:** secrets such as tokens and API keys. Gitignored, written by Settings, readable by the owner only.
-- **The database:** `workstream.db` in the project root. Gitignored.
+- **The database:** `workstream.db` (see above). Gitignored.
 
 See [docs/slack-setup.md](docs/slack-setup.md) to connect Slack.
 
@@ -132,6 +142,7 @@ Classifier evaluation: `npm run eval:sample`, `eval:label` and `eval:run` build 
   - ticket keys: `OPS-101`;
   - Slack IDs: `U0OPERATOR1`.
 - **Tests stay offline.** Mock adapters and model providers. Never call a live Slack workspace, Jira instance or paid LLM endpoint from a test.
+- **Coding agents: don't drive a live engine.** An engine started with the operator's real credentials reads their workspace, and its action endpoints post as the operator, where real agents act on it. Exercise write and action paths with tests and mocks, or against a test workspace.
 - **Match the surrounding code:** its naming, comment density and idioms. Keep the core platform-agnostic, so nothing outside an adapter knows which platform it's talking to.
 - **Theming:** see [docs/theming.md](docs/theming.md) for the color system and status colors.
 - **Roadmap:** [docs/roadmap.md](docs/roadmap.md) has current priorities, eval results and open design questions.
