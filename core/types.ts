@@ -109,6 +109,8 @@ export interface WorkItem {
   dismissedAt: string | null;
   dismissReason: DismissReason | null;
   mergedInto: string | null;
+  /** When the message that last set the status was posted; an older message classified later doesn't override it */
+  statusAt: string | null;
   createdAt: string;
   updatedAt: string;
 }

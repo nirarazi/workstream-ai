@@ -76,6 +76,7 @@ function toWorkItem(row: WorkItemRow): WorkItem {
     dismissedAt: row.dismissed_at,
     dismissReason: (row.dismiss_reason as DismissReason | null) ?? null,
     mergedInto: row.merged_into ?? null,
+    statusAt: row.status_at ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -356,14 +357,16 @@ export class ContextGraph {
     url?: string | null;
     currentAtcStatus?: StatusCategory | null;
     currentConfidence?: number | null;
+    /** Set with a status that came from a message: that message's timestamp */
+    statusAt?: string | null;
     snoozedUntil?: string | null;
     pinned?: boolean;
   }): WorkItem {
     const now = new Date().toISOString();
 
     const stmt = this.db.db.prepare(`
-      INSERT INTO work_items (id, source, title, external_status, assignee, url, current_atc_status, current_confidence, snoozed_until, pinned, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO work_items (id, source, title, external_status, assignee, url, current_atc_status, current_confidence, status_at, snoozed_until, pinned, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         source = COALESCE(excluded.source, work_items.source),
         title = CASE WHEN excluded.title = '' THEN work_items.title ELSE excluded.title END,
@@ -372,6 +375,7 @@ export class ContextGraph {
         url = COALESCE(excluded.url, work_items.url),
         current_atc_status = COALESCE(excluded.current_atc_status, work_items.current_atc_status),
         current_confidence = COALESCE(excluded.current_confidence, work_items.current_confidence),
+        status_at = COALESCE(excluded.status_at, work_items.status_at),
         snoozed_until = excluded.snoozed_until,
         pinned = COALESCE(excluded.pinned, work_items.pinned),
         updated_at = excluded.updated_at
@@ -385,6 +389,7 @@ export class ContextGraph {
       item.url ?? null,
       item.currentAtcStatus ?? null,
       item.currentConfidence ?? null,
+      item.statusAt ?? null,
       item.snoozedUntil ?? null,
       item.pinned != null ? (item.pinned ? 1 : 0) : 0,
       now,
@@ -700,17 +705,6 @@ export class ContextGraph {
 
     log.debug("Inserted event", id);
     return this.getEventById(id)!;
-  }
-
-  /** Whether a message newer than `timestamp` has been recorded for this work item (or this thread) */
-  hasNewerEvent(workItemId: string, threadId: string, timestamp: string): boolean {
-    const row = this.db.db.prepare(`
-      SELECT 1 FROM events
-      WHERE (work_item_id = ? OR thread_id = ? OR thread_id IN (SELECT thread_id FROM thread_work_items WHERE work_item_id = ?))
-        AND timestamp > ?
-      LIMIT 1
-    `).get(workItemId, threadId, workItemId, timestamp);
-    return !!row;
   }
 
   hasEvent(messageId: string, threadId: string): boolean {
@@ -1604,6 +1598,7 @@ function mapActionableRow(row: Record<string, unknown>): ActionableItem {
     pinned: Boolean(row.pinned),
     dismissedAt: (row.dismissed_at as string | null) ?? null,
     dismissReason: (row.dismiss_reason as DismissReason | null) ?? null,
+    statusAt: (row.status_at as string | null) ?? null,
     createdAt: row.created_at as string,
     updatedAt: row.updated_at as string,
   };

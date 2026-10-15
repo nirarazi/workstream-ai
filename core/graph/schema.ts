@@ -29,6 +29,8 @@ export interface WorkItemRow {
   dismissed_at: string | null;
   dismiss_reason: string | null;
   merged_into: string | null;
+  /** Timestamp of the message that last set current_atc_status (null if never set by a message) */
+  status_at: string | null;
   created_at: string;
   updated_at: string;
 }

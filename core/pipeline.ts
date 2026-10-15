@@ -117,6 +117,15 @@ export class Pipeline {
     return Date.now() < this.pausedUntil ? this.pausedFor : null;
   }
 
+  /**
+   * Whether the item's status was last set by a message posted after this one. Only messages set status_at, so an
+   * operator action (approve, close, reply) or a mere mention elsewhere never stops an earlier-posted message, for
+   * example a block the operator hadn't seen yet, from updating the status.
+   */
+  private isOlderThanStatus(item: { statusAt: string | null } | null, message: Message): boolean {
+    return Boolean(item?.statusAt && message.timestamp < item.statusAt);
+  }
+
   /** Whether this message has failed more than once, so later messages in its thread go ahead without it */
   private failedRepeatedly(message: Message, thread: Thread): boolean {
     return (this.failedMessages.get(`${thread.id}:${message.id}`)?.attempts ?? 0) >= 2;
@@ -856,13 +865,14 @@ export class Pipeline {
     if (allWorkItemIds.size === 0 && classification.status !== "noise") {
       const syntheticId = `thread:${thread.id}`;
       // A message classified late (held for a retry) mustn't overwrite the state a newer message already set
-      if (!this.graph.getWorkItemById(syntheticId) || !this.graph.hasNewerEvent(syntheticId, thread.id, message.timestamp)) {
+      if (!this.isOlderThanStatus(this.graph.getWorkItemById(syntheticId), message)) {
         this.graph.upsertWorkItem({
           id: syntheticId,
           source: "inferred",
           title: classification.title || "Untitled conversation",
           currentAtcStatus: classification.status,
           currentConfidence: classification.confidence,
+          statusAt: message.timestamp,
         });
       }
       allWorkItemIds.add(syntheticId);
@@ -946,7 +956,7 @@ export class Pipeline {
         // A message classified late (held for a retry) doesn't overwrite the status a newer message already set
         const shouldUpdate =
           (!existing.currentConfidence || itemConfidence >= existing.currentConfidence) &&
-          !this.graph.hasNewerEvent(workItemId, thread.id, message.timestamp);
+          !this.isOlderThanStatus(existing, message);
 
         if (shouldUpdate) {
           this.graph.upsertWorkItem({
@@ -954,6 +964,7 @@ export class Pipeline {
             source: existing.source,
             currentAtcStatus: itemStatus,
             currentConfidence: itemConfidence,
+            statusAt: message.timestamp,
             // Set LLM title if work item has no title yet (e.g. extracted IDs with no Jira enrichment)
             ...(itemTitle && !existing.title ? { title: itemTitle } : {}),
           });

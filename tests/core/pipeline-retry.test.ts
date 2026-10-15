@@ -377,3 +377,56 @@ describe("Pipeline: a message classified late", () => {
     db.close();
   });
 });
+
+describe("Pipeline: what counts as newer state", () => {
+  function make(threads: () => Thread[], classify: (text: string) => Classification, patterns: string[] = []) {
+    const db = new Database(":memory:");
+    const graph = new ContextGraph(db);
+    const pipeline = new Pipeline({ name: "fake", readThreads: vi.fn(async () => threads()), getThreadMessages: vi.fn(async () => []) } as any,
+      { classify: vi.fn(async (text: string) => classify(text)) } as any, graph,
+      new WorkItemLinker(graph, [new DefaultExtractor({ ticketPatterns: patterns, prPatterns: [] })]), undefined, CONFIG);
+    return { db, graph, pipeline };
+  }
+  const BLOCKED: Classification = { ...ANSWER, status: "blocked_on_human", entryType: "block", reason: "needs approval", targetedAtOperator: true };
+
+  it("lets a block posted before the operator acted update the item, even when it's classified after", async () => {
+    let msgs = [message("T1-m1", "T1", "C1", "2026-10-15T08:00:00.000Z")];
+    const t = () => [{ ...thread("T1", "2026-10-15T08:00:00.000Z"), messages: msgs }];
+    const { db, graph, pipeline } = make(t, () => BLOCKED);
+    await pipeline.processOnce(); // m1 blocks
+    // The agent posts m2 at 08:00:05; at 08:00:10 the operator redirects (item in progress, an operator event)
+    msgs = [...msgs, message("T1-m2", "T1", "C1", "2026-10-15T08:00:05.000Z")];
+    graph.upsertWorkItem({ id: "thread:T1", source: "inferred", currentAtcStatus: "in_progress" });
+    graph.insertEvent({
+      threadId: "T1", messageId: "operator-action-1", workItemId: "thread:T1", agentId: null, status: "in_progress",
+      confidence: 1, reason: "Operator unblocked", rawText: "", timestamp: "2026-10-15T08:00:10.000Z", targetedAtOperator: false,
+    });
+
+    await pipeline.processOnce(); // m2 is classified after the operator acted
+
+    expect(graph.getWorkItemById("thread:T1")!.currentAtcStatus).toBe("blocked_on_human");
+    db.close();
+  });
+
+  it("isn't stopped by a newer mention of the item in another thread", async () => {
+    // Thread A started earlier (a summary) and gets a newer reply that only mentions OPS-1; thread B blocks on OPS-1
+    const a = { ...thread("A", "2026-10-15T05:00:00.000Z"), messages: [
+      message("A-m0", "A", "C1", "2026-10-15T05:00:00.000Z"), // classified in an earlier poll
+      message("A-m1", "A", "C1", "2026-10-15T08:00:20.000Z"),
+    ] };
+    a.messages[1].text = "Status: OPS-2 and OPS-1 in flight";
+    const b = { ...thread("B", "2026-10-15T08:00:10.000Z"), messages: [message("B-m1", "B", "C1", "2026-10-15T08:00:10.000Z")] };
+    b.messages[0].text = "OPS-1 blocked, needs your approval";
+    const { db, graph, pipeline } = make(() => [a, b], (text) => (text.includes("blocked") ? BLOCKED : ANSWER), ["\\b([A-Z]{2,6}-\\d+)\\b"]);
+    graph.upsertThread({ id: "A", channelId: "C1", channelName: "fleet-ops", platform: "slack" });
+    graph.insertEvent({
+      threadId: "A", messageId: "A-m0", workItemId: null, agentId: null, status: "noise", confidence: 0.9, reason: "",
+      rawText: "", timestamp: "2026-10-15T05:00:00.000Z", targetedAtOperator: false,
+    });
+
+    await pipeline.processOnce(); // A (started earlier) goes first, then B
+
+    expect(graph.getWorkItemById("OPS-1")!.currentAtcStatus).toBe("blocked_on_human");
+    db.close();
+  });
+});
