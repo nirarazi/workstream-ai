@@ -7,6 +7,19 @@
 
 import type { Extractor } from "./interface.js";
 
+// Technical terms shaped like ticket keys. With no ticket prefixes configured, these would otherwise
+// become work items and group unrelated threads under, say, "UTF-8".
+const NOT_TICKET_KEYS = new Set([
+  "UTF", "SHA", "MD", "ISO", "RFC", "CVE", "CWE", "GPT", "AES", "RSA", "ECDSA", "TLS", "SSL", "HTTP", "IPV",
+  "COVID", "WCAG", "PCI", "SOC", "ES", "ECMA", "IEEE", "ANSI", "ASCII", "BASE", "UUID", "OAUTH", "TOP",
+]);
+
+/** Whether `id` looks like a ticket key (KEY-123) and isn't a technical term such as UTF-8 or SHA-256 */
+export function looksLikeTicketKey(id: string): boolean {
+  const m = /^([A-Z][A-Z0-9]*)-\d+$/.exec(id.toUpperCase());
+  return m !== null && !NOT_TICKET_KEYS.has(m[1]);
+}
+
 export interface DefaultExtractorConfig {
   ticketPatterns: string[];
   prPatterns: string[];
@@ -32,9 +45,9 @@ export class DefaultExtractor implements Extractor {
       let match: RegExpExecArray | null;
       while ((match = regex.exec(text)) !== null) {
         const captured = match[1] ?? match[0];
-        // Only accept IDs whose prefix is in the known ticket prefixes list.
-        // If no prefixes are configured, accept all matches (backwards compat).
-        if (this.ticketPrefixes.length === 0 || this.matchesKnownPrefix(captured)) {
+        // Only accept IDs whose prefix is in the known ticket prefixes list. With none configured, accept
+        // anything shaped like a ticket key except common technical terms.
+        if (this.ticketPrefixes.length === 0 ? looksLikeTicketKey(captured) : this.matchesKnownPrefix(captured)) {
           ids.add(captured);
         }
       }

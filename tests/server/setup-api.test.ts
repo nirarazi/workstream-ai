@@ -284,24 +284,29 @@ describe("POST /api/setup preserves what the form doesn't manage", () => {
     const { resolve } = await import("node:path");
     const { findProjectRoot } = await import("../../core/config.js");
     const localPath = resolve(findProjectRoot(), "config", "local.yaml");
-    files.set(localPath, "taskAdapter:\n  enabled: true\n  baseUrl: https://old.example.atlassian.net\n  ticketPrefixes:\n    - OPS-\n");
-    // Saving reconnects Jira; keep that offline
+    files.set(localPath, "taskAdapter:\n  enabled: true\n  baseUrl: https://old.example.atlassian.net\n  token: pasted-by-hand\n  ticketPrefixes:\n    - OPS-\n");
+    // Saving reconnects Jira; keep that offline. The save writes these into process.env.
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("offline"));
-    const saved = { ...process.env };
+    for (const k of ["EMAIL", "API_TOKEN", "BASE_URL", "TOKEN"]) vi.stubEnv(`WORKSTREAM_JIRA_${k}`, undefined);
 
     const state = makeState();
-    await createApp(state).request("/api/setup", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ task: { adapter: "jira", fields: { email: "dana@example.com", token: "test-token", baseUrl: "https://new.example.atlassian.net" } } }),
-    });
-    state.db.close();
-    fetchSpy.mockRestore();
-    process.env = saved;
+    try {
+      // The response is a 500 (Jira is unreachable); what matters is what was written before the reconnect
+      await createApp(state).request("/api/setup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ task: { adapter: "jira", fields: { email: "dana@example.com", token: "test-token", baseUrl: "https://new.example.atlassian.net" } } }),
+      });
+    } finally {
+      state.db.close();
+      fetchSpy.mockRestore();
+      vi.unstubAllEnvs();
+    }
 
     const yaml = files.get(localPath)!;
     expect(yaml).toContain("baseUrl: https://new.example.atlassian.net");
     expect(yaml).toContain("- OPS-");
+    expect(yaml).not.toContain("pasted-by-hand"); // the token belongs in .env
   });
 
   it("rejects an auto-dismiss period that isn't 1 to 3650 whole days", async () => {
