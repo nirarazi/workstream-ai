@@ -67,6 +67,14 @@ function hostName(host: string): string {
   return host.startsWith("[") ? host.slice(0, host.indexOf("]") + 1) : host.split(":")[0];
 }
 
+/** Whether a settings save changed anything beyond the inbox settings, which the pipeline reads at each poll. */
+export function settingsNeedRestart(previous: Config, next: Config, envChanged: boolean): boolean {
+  if (envChanged) return true;
+  const { inbox: _a, ...before } = previous;
+  const { inbox: _b, ...after } = next;
+  return JSON.stringify(before) !== JSON.stringify(after);
+}
+
 export function createApp(state: EngineState): Hono {
   const app = new Hono();
   const origins = appOrigins(state.config.server.port);
@@ -1032,6 +1040,8 @@ export function createApp(state: EngineState): Hono {
         ? (parseYaml(readFileSync(localPath, "utf-8")) as Record<string, unknown>) ?? {}
         : {};
       const envLines: string[] = [];
+      // A credential that isn't kept in an env var can't be compared below, so a save with one always reconnects
+      let untrackedCredential = false;
 
       // --- LLM ---
       if (body.llm) {
@@ -1079,6 +1089,8 @@ export function createApp(state: EngineState): Hono {
         for (const fieldDef of setupInfo.fields) {
           if (fieldDef.envVar && fields[fieldDef.key]) {
             envLines.push(`${fieldDef.envVar}=${fields[fieldDef.key]}`);
+          } else if (fields[fieldDef.key]) {
+            untrackedCredential = true;
           }
         }
       }
@@ -1095,6 +1107,8 @@ export function createApp(state: EngineState): Hono {
         for (const fieldDef of setupInfo.fields) {
           if (fieldDef.envVar && fields[fieldDef.key]) {
             envLines.push(`${fieldDef.envVar}=${fields[fieldDef.key]}`);
+          } else if (fields[fieldDef.key]) {
+            untrackedCredential = true;
           }
         }
 
@@ -1145,6 +1159,9 @@ export function createApp(state: EngineState): Hono {
         return c.json({ error: "Setup values can't contain line breaks" }, 400);
       }
 
+      // The form re-sends every saved credential; only a different value means reconnecting
+      const envChanged = envLines.some((l) => process.env[l.slice(0, l.indexOf("="))] !== l.slice(l.indexOf("=") + 1));
+
       // Write config/local.yaml
       writeFileSync(resolve(configDir, "local.yaml"), toYaml(localConfig), "utf-8");
       log.info("Wrote config/local.yaml", { model: (localConfig as any)?.classifier?.provider?.model, projectRoot });
@@ -1174,9 +1191,34 @@ export function createApp(state: EngineState): Hono {
       }
 
       // Reload config
+      const previousConfig = state.config;
       resetConfig();
       state.config = loadConfig(projectRoot);
       log.info("Config reloaded", { model: state.config.classifier.provider.model, baseUrl: state.config.classifier.provider.baseUrl });
+
+      // Apply auto-dismiss now rather than at the end of the next poll, which can be minutes away
+      const expireAfterDays = state.config.inbox?.expireAfterDays;
+      if (expireAfterDays) {
+        try {
+          const expired = state.graph.expireInactiveItems(expireAfterDays);
+          if (expired > 0) log.info(`Auto-dismissed ${expired} item(s) with no activity for ${expireAfterDays} day(s)`);
+        } catch (err) {
+          // The settings are already saved; the next poll retries this
+          log.error("Failed to expire inactive items", err);
+        }
+      }
+
+      // Only inbox settings changed: hand the running pipeline the new config instead of reconnecting
+      // everything and catching up again. Save is also how the operator retries a failed connection or a
+      // stalled pipeline, so anything the form describes that isn't live still gets the full restart.
+      const allLive = Boolean(state.pipeline?.isPolling())
+        && (!body.messaging || state.messagingAdapter !== null)
+        && (!body.task || state.taskAdapter !== null);
+      if (state.pipeline && allLive && !untrackedCredential && !settingsNeedRestart(previousConfig, state.config, envChanged)) {
+        state.pipeline.setConfig(state.config);
+        log.info("Inbox settings applied without restarting the pipeline");
+        return c.json({ ok: true });
+      }
 
       if (state.usageTracker) {
         state.usageTracker.updateConfig(state.config.llmBudget);
