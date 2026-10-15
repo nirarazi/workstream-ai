@@ -110,7 +110,13 @@ export function createApp(state: EngineState): Hono {
 
   // --- GET /api/inbox ---
   app.get("/api/inbox", (c) => {
-    const items = state.graph.getActionableItems();
+    // Models name the operator by platform ID, username, full or first name
+    const names = [
+      ...[...(state.operatorIdentities?.values() ?? [])].flatMap((id) => [id.userId, id.userName]),
+      state.config.operator?.name,
+    ].filter((n): n is string => Boolean(n?.trim()));
+    const operatorNames = [...new Set([...names, ...names.map((n) => n.trim().split(/[\s.]+/)[0])])];
+    const items = state.graph.getActionableItems(state.config.inbox?.handoffMinConfidence, operatorNames);
     return c.json({ items });
   });
 
@@ -1092,7 +1098,7 @@ export function createApp(state: EngineState): Hono {
         if (days !== null && !(Number.isInteger(days) && days >= 1 && days <= 3650)) {
           return c.json({ error: "inbox.expireAfterDays must be a whole number of days from 1 to 3650, or null" }, 400);
         }
-        localConfig.inbox = { expireAfterDays: days };
+        localConfig.inbox = { ...(localConfig.inbox ?? {}), expireAfterDays: days };
       }
 
       // A line break in a value would write extra lines into .env
