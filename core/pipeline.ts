@@ -18,16 +18,26 @@ class PipelineStopped extends Error {}
 
 /** Thrown when the model gave no answer for a message; nothing is stored and the message is tried again. */
 class ClassificationFailed extends Error {
-  constructor(readonly kind: "error" | "budget") {
+  constructor(readonly kind: "invalid" | "unreachable" | "budget") {
     super(`Classification failed (${kind})`);
   }
 }
 
-/** A message whose classification keeps failing is stored as noise after this many counted tries, so it can't
- * hold its channel back forever. A try counts only when other messages were classified in the same poll. */
+/**
+ * A message whose classification keeps failing is stored as noise after this many counted tries, so it can't hold
+ * its channel back forever. An unusable reply always counts; "couldn't reach the model" counts only when other
+ * messages got real answers in the same poll, so an outage doesn't use up tries.
+ */
 const MAX_CLASSIFY_ATTEMPTS = 3;
-/** However the tries go, a thread isn't held back for longer than this. */
+/** However the tries go, a message isn't held back for longer than this. */
 const MAX_HOLD_MS = 6 * 60 * 60 * 1000;
+/** Retries back off (next poll, then 30s, 1m, 2m … up to 30m), which bounds the calls a held message costs. */
+const RETRY_BASE_MS = 30_000;
+const RETRY_MAX_MS = 30 * 60 * 1000;
+
+function retryDelay(attempts: number): number {
+  return attempts <= 1 ? 0 : Math.min(RETRY_BASE_MS * 2 ** (attempts - 2), RETRY_MAX_MS);
+}
 
 function nextUtcMidnight(now = new Date()): number {
   return Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1);
@@ -63,10 +73,10 @@ export class Pipeline {
   private validPrefixes: string[] | null = null;
   /** Advanced by start() and stop(); a poll that sees it change has been superseded and stops. */
   private runId = 0;
-  /** Messages (`threadId:messageId`) whose classification failed: counted tries, cleared once one is stored. */
-  private failedMessages = new Map<string, { tries: number }>();
-  /** When each held thread was first held back. */
-  private threadHeldSince = new Map<string, number>();
+  /** Messages (`threadId:messageId`) whose classification failed, cleared once one is stored. */
+  private failedMessages = new Map<string, { tries: number; attempts: number; since: number; nextTryAt: number }>();
+  /** Real model answers this poll: evidence the model is up when deciding whether a failed try counts. */
+  private answeredThisPoll = 0;
   /** After the daily budget runs out, polling (and its Slack reads) pauses until the budget resets. */
   private budgetPausedUntil = 0;
 
@@ -152,8 +162,12 @@ export class Pipeline {
     // just rotated the credentials or moved the model endpoint this poll was started with
     const run = this.runId;
     const stopped = () => run !== this.runId;
-    if (Date.now() < this.budgetPausedUntil) return { processed, classified, errors };
+    if (Date.now() < this.budgetPausedUntil) {
+      this.expireInactiveItems();
+      return { processed, classified, errors };
+    }
     const failedThisPoll: string[] = [];
+    this.answeredThisPoll = 0;
 
     // Build per-channel cursors from the database
     const { globalSince, perChannelSince } = this.getPerChannelSince();
@@ -232,7 +246,7 @@ export class Pipeline {
             classified++;
             continue;
           }
-          errors++;
+          if (outcome !== "waiting") errors++;
           held = true;
           if (outcome === "budget") budgetSpent = true;
           break; // later messages in the thread wait, so they're classified in order
@@ -255,7 +269,6 @@ export class Pipeline {
         }
         continue;
       }
-      this.threadHeldSince.delete(thread.id);
 
       // Track the latest timestamp for poll cursor updates
       // (a deferred channel advances only to this thread's start; later replies come back via re-polls)
@@ -332,7 +345,7 @@ export class Pipeline {
                 continue;
               }
               // No cursor here: an active thread is fetched again on the next poll
-              errors++;
+              if (outcome !== "waiting") errors++;
               if (outcome === "budget") budgetSpent = true;
               break;
             } catch (err) {
@@ -358,7 +371,7 @@ export class Pipeline {
 
     // A failed try counts only if other messages were classified this poll: the model is up, so the message is
     // the problem. During an outage nothing counts, and messages wait for the model to come back.
-    if (classified > 0) {
+    if (this.answeredThisPoll > 0) {
       for (const key of failedThisPoll) {
         const rec = this.failedMessages.get(key);
         if (rec) rec.tries++;
@@ -370,18 +383,21 @@ export class Pipeline {
       this.graph.computeBotTypes();
     }
 
-    // Optional: auto-dismiss Needs-me items nobody has written about for inbox.expireAfterDays
-    const expireAfterDays = this.config?.inbox?.expireAfterDays;
-    if (expireAfterDays) {
-      try {
-        const expired = this.graph.expireInactiveItems(expireAfterDays);
-        if (expired > 0) log.info(`Auto-dismissed ${expired} item(s) with no activity for ${expireAfterDays} day(s)`);
-      } catch (err) {
-        log.error("Failed to expire inactive items", err);
-      }
-    }
+    this.expireInactiveItems();
 
     return { processed, classified, errors };
+  }
+
+  /** Optional: auto-dismiss Needs-me items nobody has written about for inbox.expireAfterDays */
+  private expireInactiveItems(): void {
+    const expireAfterDays = this.config?.inbox?.expireAfterDays;
+    if (!expireAfterDays) return;
+    try {
+      const expired = this.graph.expireInactiveItems(expireAfterDays);
+      if (expired > 0) log.info(`Auto-dismissed ${expired} item(s) with no activity for ${expireAfterDays} day(s)`);
+    } catch (err) {
+      log.error("Failed to expire inactive items", err);
+    }
   }
 
   async processMessage(message: Message, threadId: string, channelId: string): Promise<Classification> {
@@ -461,8 +477,8 @@ export class Pipeline {
 
   /**
    * Classify and store one polled message. "held": the model gave no answer, so nothing was stored and the
-   * message is tried again on the next poll; after MAX_CLASSIFY_ATTEMPTS counted tries, or once its thread has
-   * been held for MAX_HOLD_MS, it's stored as noise instead.
+   * message is tried again later; after MAX_CLASSIFY_ATTEMPTS counted tries, or once it has been held for
+   * MAX_HOLD_MS, it's stored as noise instead. "waiting": still backing off from a failure, so not tried.
    * "budget": the daily budget is spent, and the poll should stop here.
    */
   private async classifyPending(
@@ -470,12 +486,12 @@ export class Pipeline {
     thread: Thread,
     stopped: () => boolean,
     failedThisPoll: string[],
-  ): Promise<"done" | "held" | "budget"> {
+  ): Promise<"done" | "held" | "waiting" | "budget"> {
     const key = `${thread.id}:${message.id}`;
+    const now = Date.now();
     const rec = this.failedMessages.get(key);
-    const heldSince = this.threadHeldSince.get(thread.id);
-    const giveUp = (rec !== undefined && rec.tries >= MAX_CLASSIFY_ATTEMPTS)
-      || (heldSince !== undefined && Date.now() - heldSince > MAX_HOLD_MS);
+    if (rec && now < rec.nextTryAt) return "waiting"; // backing off: no model call this poll
+    const giveUp = rec !== undefined && (rec.tries >= MAX_CLASSIFY_ATTEMPTS || now - rec.since > MAX_HOLD_MS);
     try {
       await this.processMessageInternal(message, thread, stopped, giveUp);
       this.failedMessages.delete(key);
@@ -489,11 +505,13 @@ export class Pipeline {
       }
       // Entries for messages that vanished before a retry
       if (this.failedMessages.size > 10_000) this.failedMessages.clear();
-      if (this.threadHeldSince.size > 10_000) this.threadHeldSince.clear();
-      if (!rec) this.failedMessages.set(key, { tries: 0 });
-      if (heldSince === undefined) this.threadHeldSince.set(thread.id, Date.now());
-      failedThisPoll.push(key);
-      log.warn(`Classification failed for ${message.id}; trying again next poll`);
+      const r = rec ?? { tries: 0, attempts: 0, since: now, nextTryAt: 0 };
+      r.attempts++;
+      r.nextTryAt = now + retryDelay(r.attempts);
+      if (err.kind === "invalid") r.tries++;
+      else failedThisPoll.push(key); // counted at the end of the poll if the model answered anything else
+      this.failedMessages.set(key, r);
+      log.warn(`Classification failed for ${message.id} (${err.kind}); trying again later`);
       return "held";
     }
   }
@@ -725,7 +743,8 @@ export class Pipeline {
     if (stopped()) throw new PipelineStopped();
     // No answer from the model: store nothing so the message is tried again, unless this was the last try
     // (a spent budget is never stored: it resets)
-    if (classification.failed && !(storeFailure && classification.failed === "error")) {
+    if (!classification.failed) this.answeredThisPoll++;
+    if (classification.failed && !(storeFailure && classification.failed !== "budget")) {
       throw new ClassificationFailed(classification.failed);
     }
 

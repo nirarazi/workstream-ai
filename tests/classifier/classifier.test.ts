@@ -608,6 +608,35 @@ describe("Operator profile and sender context", () => {
 // --- OpenAICompatibleProvider response parsing tests ---
 
 describe("OpenAICompatibleProvider", () => {
+  const reply = (content: unknown, status = 200) =>
+    new Response(JSON.stringify(status === 200 ? { choices: [{ message: { content } }] } : { error: "x" }), { status });
+
+  it.each([
+    ["prose instead of JSON", reply("Sure! It looks done to me.")],
+    ["a JSON null", reply("null")],
+    ["no content at all (a refusal)", reply(null)],
+  ])("reports %s as an unusable, billed reply", async (_label, response) => {
+    const { InvalidReplyError } = await import("../../core/classifier/providers/interface.js");
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(response as Response);
+    const provider = new OpenAICompatibleProvider({ name: "test", baseUrl: "http://localhost:11434/v1", model: "m" });
+    const err = await provider.classify("OPS-100 is done", "sys", []).catch((e) => e);
+    expect(err).toBeInstanceOf(InvalidReplyError);
+    expect(err.billed).toBe(true);
+    vi.restoreAllMocks();
+  });
+
+  it("reports a rejected request as unusable but not billed, and an auth error as neither", async () => {
+    const { InvalidReplyError } = await import("../../core/classifier/providers/interface.js");
+    const provider = new OpenAICompatibleProvider({ name: "test", baseUrl: "http://localhost:11434/v1", model: "m" });
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(reply(null, 413) as Response);
+    const rejected = await provider.classify("x".repeat(10), "sys", []).catch((e) => e);
+    expect(rejected).toBeInstanceOf(InvalidReplyError);
+    expect(rejected.billed).toBe(false);
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(reply(null, 401) as Response);
+    expect(await provider.classify("x", "sys", []).catch((e) => e)).not.toBeInstanceOf(InvalidReplyError);
+    vi.restoreAllMocks();
+  });
+
   it("sends nothing once disposed", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch");
     const provider = new OpenAICompatibleProvider({ name: "test", baseUrl: "http://localhost:11434/v1", model: "llama3" });
@@ -1070,10 +1099,16 @@ describe("OpenAICompatibleProvider", () => {
 });
 
 describe("Classifier: marking a missing answer", () => {
-  it("marks a provider error as failed, so the pipeline retries instead of storing the placeholder", async () => {
+  it("marks an unreachable model as failed, so the pipeline retries instead of storing the placeholder", async () => {
     const classifier = new Classifier(failingProvider(new Error("API timeout")), SYSTEM_PROMPT, FEW_SHOT);
     const result = await classifier.classify("OPS-100 is done");
-    expect(result.failed).toBe("error");
+    expect(result.failed).toBe("unreachable");
+  });
+
+  it("marks an unusable reply separately, since retrying the same message is unlikely to help", async () => {
+    const { InvalidReplyError } = await import("../../core/classifier/providers/interface.js");
+    const classifier = new Classifier(failingProvider(new InvalidReplyError("not JSON", true)), SYSTEM_PROMPT, FEW_SHOT);
+    expect((await classifier.classify("OPS-100 is done")).failed).toBe("invalid");
   });
 
   it("marks a spent budget separately, since that waits for the reset rather than a retry", async () => {

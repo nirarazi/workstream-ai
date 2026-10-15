@@ -2,7 +2,7 @@
 
 import { randomUUID } from "node:crypto";
 import { createLogger } from "../logger.js";
-import type { ModelProvider, ClassificationResult } from "../classifier/providers/interface.js";
+import { InvalidReplyError, type ModelProvider, type ClassificationResult } from "../classifier/providers/interface.js";
 import type { BackoffState } from "../classifier/providers/openai-compatible.js";
 import { OpenAICompatibleProvider } from "../classifier/providers/openai-compatible.js";
 import type { Database } from "../graph/db.js";
@@ -103,8 +103,8 @@ export class UsageTracker implements ModelProvider {
     try {
       result = await this.provider.classify(message, systemPrompt, fewShotExamples);
     } catch (err) {
-      // A reply that came back but wasn't valid JSON was still billed, so it counts toward the budget
-      if (err instanceof SyntaxError) this.recordUsage(caller, inputTokens, MIN_OUTPUT_TOKEN_OVERHEAD, "estimated");
+      // A reply that came back but couldn't be used was still billed, so it counts toward the budget
+      if (err instanceof InvalidReplyError && err.billed) this.recordUsage(caller, inputTokens, MIN_OUTPUT_TOKEN_OVERHEAD, "estimated");
       throw err;
     }
 

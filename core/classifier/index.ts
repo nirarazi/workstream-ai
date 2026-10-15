@@ -8,7 +8,7 @@ import { findProjectRoot, type Config } from "../config.js";
 import type { Classification, EntryType, OperatorIdentityMap, StatusCategory, ThreadContext } from "../types.js";
 import { applyDecision, createDecisionGate, type DecisionGate } from "../decisions/gate.js";
 import { OpenAICompatibleProvider, type BackoffState } from "./providers/openai-compatible.js";
-import type { ModelProvider } from "./providers/interface.js";
+import { InvalidReplyError, type ModelProvider } from "./providers/interface.js";
 import type { RateLimiter } from "../rate-limiter.js";
 import { BudgetExhaustedError } from "../usage/tracker.js";
 
@@ -317,7 +317,7 @@ Return false if:
         return {
           status: "noise", entryType: "noise", confidence: 0.1,
           reason: "Provider returned empty result", workItemIds: [], title: "",
-          targetedAtOperator: true, actionRequiredFrom: null, nextAction: null, failed: "error",
+          targetedAtOperator: true, actionRequiredFrom: null, nextAction: null, failed: "invalid",
         };
       }
 
@@ -365,7 +365,7 @@ Return false if:
         targetedAtOperator: true,
         actionRequiredFrom: null,
         nextAction: null,
-        failed: budget ? "budget" : "error",
+        failed: budget ? "budget" : error instanceof InvalidReplyError ? "invalid" : "unreachable",
       };
     }
   }

@@ -25,6 +25,16 @@ export interface ClassificationResult {
   breakdown?: BreakdownItem[];
 }
 
+/**
+ * The model can't classify this message: its reply came back but wasn't a usable classification (`billed`), or
+ * the provider rejected the request itself as invalid. Unlike an outage, trying the same message again won't help.
+ */
+export class InvalidReplyError extends Error {
+  constructor(message: string, readonly billed: boolean) {
+    super(message);
+  }
+}
+
 export interface ModelProvider {
   name: string;
   classify(

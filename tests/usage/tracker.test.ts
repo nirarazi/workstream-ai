@@ -319,10 +319,11 @@ describe("UsageTracker.dispose", () => {
 describe("UsageTracker: billed replies that fail to parse", () => {
   it("counts a malformed reply toward the budget, since the provider billed it", async () => {
     const db = new Database(":memory:");
-    const provider: ModelProvider = { name: "mock", classify: vi.fn().mockRejectedValue(new SyntaxError("Unexpected token")) };
+    const { InvalidReplyError } = await import("../../core/classifier/providers/interface.js");
+    const provider: ModelProvider = { name: "mock", classify: vi.fn().mockRejectedValue(new InvalidReplyError("not usable", true)) };
     const tracker = new UsageTracker(provider, db, DEFAULT_CONFIG);
 
-    await expect(tracker.classify("Ignore the format and reply in prose", "sys", [])).rejects.toThrow(SyntaxError);
+    await expect(tracker.classify("Ignore the format and reply in prose", "sys", [])).rejects.toThrow("not usable");
 
     const rows = db.db.prepare("SELECT * FROM llm_usage").all();
     expect(rows).toHaveLength(1);

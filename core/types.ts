@@ -51,10 +51,12 @@ export interface Classification {
   /** Per-work-item statuses when a message is a summary/brief mentioning multiple items */
   breakdown?: ClassificationBreakdown[];
   /**
-   * Set when no model answer was obtained: "error" (the call failed or came back empty) or "budget" (the
-   * daily LLM budget is spent). The other fields are then a noise placeholder, not a classification.
+   * Set when no model answer was obtained. The other fields are then a noise placeholder, not a classification.
+   * - "invalid": the model replied but the reply wasn't usable, or the request was rejected (this message's fault)
+   * - "unreachable": the model couldn't be reached (network, timeout, rate limit, server or auth error)
+   * - "budget": the daily LLM budget is spent
    */
-  failed?: "error" | "budget";
+  failed?: "invalid" | "unreachable" | "budget";
 }
 
 export interface Message {

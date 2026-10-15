@@ -1,7 +1,7 @@
 // core/classifier/providers/openai-compatible.ts — Universal provider for OpenAI-compatible and Anthropic APIs
 
 import { createLogger } from "../../logger.js";
-import type { ClassificationResult, ModelProvider } from "./interface.js";
+import { InvalidReplyError, type ClassificationResult, type ModelProvider } from "./interface.js";
 
 const log = createLogger("openai-compatible");
 
@@ -28,11 +28,14 @@ export interface OpenAICompatibleConfig {
 /** Error with an optional Retry-After hint (seconds) from 429 responses */
 class ApiError extends Error {
   retryAfterSeconds?: number;
-  constructor(message: string, retryAfterSeconds?: number) {
+  constructor(message: string, retryAfterSeconds?: number, readonly status?: number) {
     super(message);
     this.retryAfterSeconds = retryAfterSeconds;
   }
 }
+
+/** Statuses meaning this request can't succeed as sent (malformed or too large), unlike auth, outages or limits */
+const REQUEST_REJECTED = new Set([400, 413, 422]);
 
 function isRetryable(error: unknown): boolean {
   if (error instanceof Error) {
@@ -126,8 +129,22 @@ export class OpenAICompatibleProvider implements ModelProvider {
     systemPrompt: string,
     fewShotExamples: Array<{ role: string; content: string }>,
   ): Promise<ClassificationResult> {
-    const rawText = await this.complete(message, systemPrompt, fewShotExamples);
-    const result = this.parseResponse(rawText);
+    let rawText: string;
+    try {
+      rawText = await this.complete(message, systemPrompt, fewShotExamples);
+    } catch (err) {
+      if (err instanceof ApiError && err.status !== undefined && REQUEST_REJECTED.has(err.status)) {
+        throw new InvalidReplyError(`Model rejected the request (HTTP ${err.status})`, false);
+      }
+      throw err;
+    }
+    let result: ClassificationResult;
+    try {
+      result = this.parseResponse(rawText);
+    } catch {
+      // No reply text in the message: it can echo the classified message
+      throw new InvalidReplyError("Model reply wasn't a usable classification", true);
+    }
     log.debug("Classification result", { input: message.slice(0, 120), result });
     return result;
   }
@@ -260,7 +277,7 @@ export class OpenAICompatibleProvider implements ModelProvider {
     if (!response.ok) {
       const text = await response.text().catch(() => "");
       const retryAfter = parseRetryAfter(response);
-      throw new ApiError(`Anthropic API error ${response.status}: ${text}`, retryAfter);
+      throw new ApiError(`Anthropic API error ${response.status}: ${text}`, retryAfter, response.status);
     }
 
     const json = (await response.json()) as {
@@ -330,7 +347,7 @@ export class OpenAICompatibleProvider implements ModelProvider {
           return doCall(false);
         }
         const retryAfter = parseRetryAfter(response);
-        throw new ApiError(`OpenAI API error ${response.status}: ${text}`, retryAfter);
+        throw new ApiError(`OpenAI API error ${response.status}: ${text}`, retryAfter, response.status);
       }
 
       const json = (await response.json()) as {
@@ -354,6 +371,9 @@ export class OpenAICompatibleProvider implements ModelProvider {
     }
 
     const parsed = JSON.parse(cleaned) as Record<string, unknown>;
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+      throw new Error("Reply is not a JSON object");
+    }
 
     const status = typeof parsed.status === "string" ? parsed.status : "noise";
     const confidence = typeof parsed.confidence === "number" ? parsed.confidence : 0;
