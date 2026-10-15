@@ -1,6 +1,6 @@
 // tests/adapters/slack.test.ts — Tests for SlackAdapter
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { SlackAdapter } from "../../core/adapters/messaging/slack/index.js";
 
 // --- Mock @slack/web-api ---
@@ -184,6 +184,101 @@ describe("SlackAdapter", () => {
       } finally {
         vi.useRealTimers();
       }
+    });
+
+    describe("quiet channels that fall due together", () => {
+      const ids = Array.from({ length: 20 }, (_, i) => `CQ${String(i).padStart(2, "0")}`);
+      const since = new Date("2026-10-10T00:00:00Z");
+      const at = (time: string) => vi.setSystemTime(new Date(`2026-10-13T${time}Z`));
+      const readChannels = () => mockConversationsHistory.mock.calls.map((c) => c[0].channel);
+      const listChannels = (list: string[]) =>
+        mockConversationsList.mockResolvedValue({ channels: list.map((id) => ({ id, name: id })), response_metadata: { next_cursor: "" } });
+
+      beforeEach(() => {
+        vi.useFakeTimers({ toFake: ["Date"] });
+        mockConversationsHistory.mockResolvedValue({ messages: [], response_metadata: { next_cursor: "" } });
+      });
+      afterEach(() => vi.useRealTimers());
+
+      it("are spread over several polls, most overdue first, while an active channel is read every poll", async () => {
+        const recent = new Map([["CBUSY", new Date("2026-10-13T11:00:00Z")]]);
+        // Two groups read a minute apart: CQ10..CQ19 first, then CQ00..CQ09
+        listChannels(ids.slice(10));
+        at("12:00:00");
+        await adapter.readThreads(since);
+        listChannels(["CBUSY", ...ids]);
+        at("12:01:00");
+        await adapter.readThreads(since, undefined, recent);
+
+        mockConversationsHistory.mockClear();
+        at("12:06:00"); // every quiet channel is due; the cap takes the ten read first, then five more
+        await adapter.readThreads(since, undefined, recent);
+        expect(readChannels()).toEqual(["CBUSY", ...ids.slice(0, 5), ...ids.slice(10)]);
+
+        mockConversationsHistory.mockClear();
+        at("12:06:30");
+        await adapter.readThreads(since, undefined, recent);
+        expect(readChannels()).toEqual(["CBUSY", ...ids.slice(5, 10)]); // the rest, before any is read again
+      });
+
+      it("keep their place in the queue when the poll fails", async () => {
+        listChannels(ids);
+        at("12:00:00");
+        await adapter.readThreads(since);
+
+        at("12:05:00");
+        mockConversationsHistory.mockImplementation(async ({ channel }: { channel: string }) => {
+          if (channel === "CQ03") throw Object.assign(new Error("invalid_auth"), { data: { ok: false, error: "invalid_auth" } });
+          return { messages: [], response_metadata: { next_cursor: "" } };
+        });
+        await expect(adapter.readThreads(since)).rejects.toThrow("invalid_auth");
+
+        mockConversationsHistory.mockClear();
+        mockConversationsHistory.mockResolvedValue({ messages: [], response_metadata: { next_cursor: "" } });
+        at("12:05:30");
+        await adapter.readThreads(since);
+        expect(readChannels()).toEqual(ids.slice(0, 15)); // the failed poll's threads were dropped, so they're read again
+      });
+
+      it("go ahead of channels that can't be read", async () => {
+        const gone = Object.assign(new Error("not_in_channel"), { data: { ok: false, error: "not_in_channel" } });
+        mockConversationsHistory.mockImplementation(async ({ channel }: { channel: string }) => {
+          if (channel < "CQ05") throw gone;
+          return { messages: [], response_metadata: { next_cursor: "" } };
+        });
+        listChannels(ids);
+        at("12:00:00");
+        await adapter.readThreads(since);
+
+        mockConversationsHistory.mockClear();
+        at("12:05:00");
+        await adapter.readThreads(since);
+        expect(readChannels()).toEqual(ids.slice(5));
+      });
+
+      it("retry a channel that couldn't be read every 30 minutes, even with a backlog of due quiet channels", async () => {
+        let gone = true;
+        mockConversationsHistory.mockImplementation(async ({ channel }: { channel: string }) => {
+          if (channel === "CGONE" && gone) throw Object.assign(new Error("not_in_channel"), { data: { ok: false, error: "not_in_channel" } });
+          return { messages: [], response_metadata: { next_cursor: "" } };
+        });
+        listChannels(["CGONE", ...ids]);
+        at("12:00:00");
+        // CGONE was active until the operator left it, so its cursor alone doesn't make it quiet
+        const left = new Map([["CGONE", new Date("2026-10-13T11:50:00Z")]]);
+        await adapter.readThreads(since, undefined, left);
+        gone = false; // e.g. the operator is invited back
+
+        const goneReads: string[] = [];
+        for (const time of ["12:01:00", "12:06:00", "12:11:00", "12:16:00", "12:21:00", "12:26:00", "12:31:00"]) {
+          mockConversationsHistory.mockClear();
+          at(time);
+          await adapter.readThreads(since, undefined, left);
+          if (readChannels().includes("CGONE")) goneReads.push(time);
+          expect(readChannels().length).toBeLessThanOrEqual(15);
+        }
+        expect(goneReads).toEqual(["12:31:00"]); // not every poll, and not never
+      });
     });
 
     it("still fails the poll on errors that aren't about one channel", async () => {

@@ -135,14 +135,22 @@ const CHANNEL_GONE_ERRORS = new Set(["channel_not_found", "not_in_channel", "is_
 
 /**
  * conversations.history allows ~50 calls/min, so reading every channel each poll takes minutes in a
- * workspace with 100+ channels. A channel with no message in QUIET_AFTER_MS is read every QUIET_POLL_MS
- * instead of every poll; its first new message puts it back on the fast path.
+ * workspace with 100+ channels. A channel with no message in QUIET_AFTER_MS is read at most every
+ * QUIET_POLL_MS instead of every poll, and less often when more than QUIET_READS_PER_POLL fall due at once;
+ * its first new message puts it back on the fast path.
  */
 const QUIET_AFTER_MS = 24 * 60 * 60 * 1000;
 const QUIET_POLL_MS = 5 * 60 * 1000;
+/**
+ * Quiet (and unreadable) channels read in one poll, most overdue first. Without a cap they all fall due in the same poll
+ * (they were all first read together), and ~100 history calls at ~50/min hold that poll for minutes.
+ */
+const QUIET_READS_PER_POLL = 15;
+/** A channel that failed to read (left, archived, removed) is retried this often, in the quiet queue's slots. */
+const UNREADABLE_RETRY_MS = 30 * 60 * 1000;
 
 export class SlackAdapter implements MessagingAdapter {
-  /** Channels that error on read (deleted, archived, left) — skipped and logged once each. */
+  /** Channels that error on read (deleted, archived, left) — logged once, then retried every UNREADABLE_RETRY_MS. */
   private readonly unreadableChannels = new Set<string>();
   /** Latest message time seen per channel (epoch ms), and when each channel was last read. */
   private readonly channelLastActivity = new Map<string, number>();
@@ -229,12 +237,32 @@ export class SlackAdapter implements MessagingAdapter {
     if (atMs > (this.channelLastActivity.get(channelId) ?? 0)) this.channelLastActivity.set(channelId, atMs);
   }
 
-  /** True when the channel has been quiet for a day and was read less than QUIET_POLL_MS ago. */
-  private isQuietAndRecentlyRead(channelId: string, now: number): boolean {
-    const lastRead = this.channelLastRead.get(channelId);
-    if (lastRead === undefined) return false; // never read in this session
-    const lastActivity = this.channelLastActivity.get(channelId) ?? 0;
-    return now - lastActivity > QUIET_AFTER_MS && now - lastRead < QUIET_POLL_MS;
+  /** True when the channel has been read in this session and has had no message for a day. */
+  private isQuiet(channelId: string, now: number): boolean {
+    if (!this.channelLastRead.has(channelId)) return false; // never read in this session
+    return now - (this.channelLastActivity.get(channelId) ?? 0) > QUIET_AFTER_MS;
+  }
+
+  /** Quiet and unreadable channels aren't read every poll, only when due and given one of the capped slots. */
+  private isReadSlowly(channelId: string, now: number): boolean {
+    return this.isQuiet(channelId, now) || (this.unreadableChannels.has(channelId) && this.channelLastRead.has(channelId));
+  }
+
+  /**
+   * The slowly-read channels to read this poll, most overdue first, up to the cap: quiet channels not read for
+   * QUIET_POLL_MS, and unreadable ones not tried for UNREADABLE_RETRY_MS (so they can't crowd out readable ones,
+   * yet a channel that's rejoined is still found).
+   */
+  private slowChannelsDue(channelIds: string[], now: number): Set<string> {
+    const due: Array<{ id: string; lastRead: number }> = [];
+    for (const id of channelIds) {
+      const lastRead = this.channelLastRead.get(id);
+      if (lastRead === undefined || !this.isReadSlowly(id, now)) continue;
+      const interval = this.unreadableChannels.has(id) ? UNREADABLE_RETRY_MS : QUIET_POLL_MS;
+      if (now - lastRead >= interval) due.push({ id, lastRead });
+    }
+    due.sort((a, b) => a.lastRead - b.lastRead);
+    return new Set(due.slice(0, QUIET_READS_PER_POLL).map((c) => c.id));
   }
 
   async readThreads(since: Date, channels?: string[], perChannelSince?: Map<string, Date>): Promise<Thread[]> {
@@ -247,57 +275,74 @@ export class SlackAdapter implements MessagingAdapter {
     const threads: Thread[] = [];
     const globalOldest = String(since.getTime() / 1000);
 
+    // The cursor is the last processed message, so it also tells us when the channel was last active
     for (const channelId of channelIds) {
-      const channelInfo = this.channelMap.get(channelId);
-      const channelName = channelInfo?.name ?? channelId;
-
-      // Use per-channel cursor if available, otherwise fall back to global
       const channelSince = perChannelSince?.get(channelId);
-
-      // The cursor is the last processed message, so it also tells us when the channel was last active
-      const now = Date.now();
       if (channelSince) this.noteActivity(channelId, channelSince.getTime());
-      if (this.isQuietAndRecentlyRead(channelId, now)) continue;
-      this.channelLastRead.set(channelId, now);
-      const oldest = channelSince
-        ? String(channelSince.getTime() / 1000)
-        : globalOldest;
+    }
+    const pollStart = Date.now();
+    const slowDue = this.slowChannelsDue(channelIds, pollStart);
+    // A failed poll's threads are all dropped, so the channels it read keep their place in the quiet queue
+    const lastReadBefore = new Map<string, number | undefined>();
 
-      let messages: Awaited<ReturnType<SlackAdapter["fetchChannelHistory"]>>;
-      try {
-        messages = await this.fetchChannelHistory(channelId, oldest);
-      } catch (err) {
-        // One gone channel must not stop polling for all the others.
-        const code = (err as { data?: { error?: string } }).data?.error;
-        if (code && CHANNEL_GONE_ERRORS.has(code)) {
-          if (!this.unreadableChannels.has(channelId)) {
-            this.unreadableChannels.add(channelId);
-            log.warn(`Skipping channel ${channelName} (${channelId}): ${code}`);
+    try {
+      for (const channelId of channelIds) {
+        const channelInfo = this.channelMap.get(channelId);
+        const channelName = channelInfo?.name ?? channelId;
+
+        // Use per-channel cursor if available, otherwise fall back to global
+        const channelSince = perChannelSince?.get(channelId);
+
+        if (this.isReadSlowly(channelId, pollStart) && !slowDue.has(channelId)) continue;
+        lastReadBefore.set(channelId, this.channelLastRead.get(channelId));
+        this.channelLastRead.set(channelId, Date.now());
+        const oldest = channelSince
+          ? String(channelSince.getTime() / 1000)
+          : globalOldest;
+
+        let messages: Awaited<ReturnType<SlackAdapter["fetchChannelHistory"]>>;
+        try {
+          messages = await this.fetchChannelHistory(channelId, oldest);
+        } catch (err) {
+          // One gone channel must not stop polling for all the others.
+          const code = (err as { data?: { error?: string } }).data?.error;
+          if (code && CHANNEL_GONE_ERRORS.has(code)) {
+            if (!this.unreadableChannels.has(channelId)) {
+              this.unreadableChannels.add(channelId);
+              log.warn(`Skipping channel ${channelName} (${channelId}): ${code}`);
+            }
+            continue;
           }
-          continue;
+          throw err;
         }
-        throw err;
-      }
+        this.unreadableChannels.delete(channelId); // readable again, e.g. rejoined
 
-      for (const msg of messages) {
-        if (msg.ts) this.noteActivity(channelId, parseFloat(msg.ts) * 1000);
-        if (!msg.ts || msg.subtype === "channel_join" || msg.subtype === "channel_leave") {
-          continue;
-        }
+        for (const msg of messages) {
+          if (msg.ts) this.noteActivity(channelId, parseFloat(msg.ts) * 1000);
+          if (!msg.ts || msg.subtype === "channel_join" || msg.subtype === "channel_leave") {
+            continue;
+          }
 
-        if (msg.reply_count && msg.reply_count > 0 && msg.thread_ts) {
-          // This is a parent message with replies — fetch the full thread
-          const replyMessages = await this.fetchThreadReplies(channelId, msg.thread_ts);
-          const thread = this.buildThread(channelId, channelName, msg.thread_ts, replyMessages);
-          threads.push(thread);
-        } else if (!msg.thread_ts || msg.thread_ts === msg.ts) {
-          // Standalone message (no replies, not a reply itself)
-          const thread = this.buildThread(channelId, channelName, msg.ts, [msg]);
-          threads.push(thread);
+          if (msg.reply_count && msg.reply_count > 0 && msg.thread_ts) {
+            // This is a parent message with replies — fetch the full thread
+            const replyMessages = await this.fetchThreadReplies(channelId, msg.thread_ts);
+            const thread = this.buildThread(channelId, channelName, msg.thread_ts, replyMessages);
+            threads.push(thread);
+          } else if (!msg.thread_ts || msg.thread_ts === msg.ts) {
+            // Standalone message (no replies, not a reply itself)
+            const thread = this.buildThread(channelId, channelName, msg.ts, [msg]);
+            threads.push(thread);
+          }
+          // If msg.thread_ts !== msg.ts and no reply_count, it's a reply — skip it,
+          // we'll pick it up when processing the parent message.
         }
-        // If msg.thread_ts !== msg.ts and no reply_count, it's a reply — skip it,
-        // we'll pick it up when processing the parent message.
       }
+    } catch (err) {
+      for (const [channelId, lastRead] of lastReadBefore) {
+        if (lastRead === undefined) this.channelLastRead.delete(channelId);
+        else this.channelLastRead.set(channelId, lastRead);
+      }
+      throw err;
     }
 
     // Notify handler of new messages if registered
