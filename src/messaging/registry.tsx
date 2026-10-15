@@ -15,7 +15,8 @@ import type { JSX } from "react";
 import { buildSlackThreadUrl } from "./slack/urls";
 import { slackSerializeMention } from "./slack/mentions";
 import SlackMessage from "./slack/SlackMessage";
-import SlackFormatToolbar, { handleFormatShortcut as slackFormatShortcut } from "./slack/SlackFormatToolbar";
+import SlackFormatToolbar from "./slack/SlackFormatToolbar";
+import { handleFormatShortcut as slackFormatShortcut } from "./slack/format-editing";
 import type { FormatToolbarProps } from "./slack/SlackFormatToolbar";
 import { decorateSlackMrkdwn } from "./slack/mrkdwnDecorator";
 

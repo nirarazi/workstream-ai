@@ -1,6 +1,7 @@
 import { useState, useRef, useCallback, useEffect, useImperativeHandle, forwardRef, type JSX } from "react";
 import type { Mentionable } from "../lib/api";
-import MentionDropdown, { filterMentionables } from "./MentionDropdown";
+import MentionDropdown from "./MentionDropdown";
+import { filterMentionables } from "../lib/mentions";
 
 export interface MentionInputHandle {
   /** Serialize the current editor content (mentions → platform tokens) */
