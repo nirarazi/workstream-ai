@@ -161,6 +161,7 @@ function createMockGraph(): ContextGraph {
     upsertEnrichment: vi.fn(),
     getActiveThreads: vi.fn().mockReturnValue([]),
     getKnownThreads: vi.fn().mockReturnValue(new Map()),
+    transaction: vi.fn((fn: () => unknown) => fn()),
     setReopened: vi.fn(),
     getRecentChannelContext: vi.fn().mockReturnValue([]),
     expireInactiveItems: vi.fn().mockReturnValue(0),

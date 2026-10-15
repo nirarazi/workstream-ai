@@ -420,6 +420,15 @@ export class ContextGraph {
     return Boolean(newValue);
   }
 
+  /**
+   * Run `fn` in one SQLite transaction: its writes all land, or none do if it throws. It takes the write lock up front
+   * (IMMEDIATE), so a write by another process waits out the busy timeout instead of failing the transaction. `fn`
+   * must be synchronous: anything after an await would run outside it.
+   */
+  transaction<T>(fn: () => T extends Promise<unknown> ? never : T): T {
+    return this.db.db.transaction(fn).immediate() as T;
+  }
+
   /** Mark a completed work item as brought back by a message at `at`, or clear the mark (null) when it's closed. */
   setReopened(workItemId: string, at: string | null): void {
     this.db.db.prepare("UPDATE work_items SET reopened_at = ? WHERE id = ?").run(at, workItemId);
