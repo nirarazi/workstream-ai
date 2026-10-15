@@ -148,6 +148,17 @@ describe("untilDeadlineOrSuperseded", () => {
     expect(signal!.aborted).toBe(true); // the connect itself is told to stop
   });
 
+  it("handles a connect that throws straight away, without leaving a timer behind", async () => {
+    await expect(untilDeadlineOrSuperseded(() => { throw new Error("bad creds"); }, 30, "x")).rejects.toThrow("bad creds");
+    await new Promise((r) => setTimeout(r, 60)); // past the deadline: an armed timer would reject unhandled here
+  });
+
+  it("absorbs the connect's own rejection after it was told to stop", async () => {
+    const start = (s: AbortSignal) => new Promise<void>((_, reject) => s.addEventListener("abort", () => reject(s.reason)));
+    await expect(untilDeadlineOrSuperseded(start, 20, "x")).rejects.toThrow("timed out");
+    await new Promise((r) => setTimeout(r, 20));
+  });
+
   it("passes a result through", async () => {
     await expect(untilDeadlineOrSuperseded(() => Promise.resolve("ok"), 1000, "x")).resolves.toBe("ok");
   });

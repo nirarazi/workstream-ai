@@ -79,10 +79,13 @@ async function withRateLimitRetry<T>(
   fn: () => Promise<T>,
   method: string,
   limiter: SlackRateLimiter,
+  signal?: AbortSignal,
 ): Promise<T> {
   for (let attempt = 0; attempt <= RATE_LIMIT_MAX_RETRIES; attempt++) {
     // Acquire a slot (waits for per-method bucket + global backoff)
     await limiter.acquire(method);
+    // Cancelled while waiting for a slot or a Retry-After: send nothing more with these credentials
+    signal?.throwIfAborted();
     const release = limiter.lock(method);
 
     try {
@@ -107,7 +110,7 @@ async function withRateLimitRetry<T>(
           throw err;
         }
         log.warn(`Rate limited on ${method}, retrying after ${retryAfter}s (attempt ${attempt + 1})`);
-        await sleep(retryAfter * 1000);
+        await sleep(retryAfter * 1000, signal);
       } else {
         throw err;
       }
@@ -116,8 +119,15 @@ async function withRateLimitRetry<T>(
   throw new Error(`Rate limit retries exhausted for ${method}`);
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) return reject(signal.reason);
+    const timer = setTimeout(resolve, ms);
+    signal?.addEventListener("abort", () => {
+      clearTimeout(timer);
+      reject(signal.reason);
+    }, { once: true });
+  });
 }
 
 /** Slack errors that mean "this channel can't be read any more", as opposed to auth or rate-limit failures. */
@@ -209,6 +219,7 @@ export class SlackAdapter implements MessagingAdapter {
       log.info(`Loaded ${this.channelMap.size} Slack channels`);
     } catch (err: unknown) {
       this.client = null;
+      if (signal?.aborted) throw err; // cancelled, not an auth failure
       const message = err instanceof Error ? err.message : String(err);
       throw new Error(`Slack auth failed: ${message}`);
     }
@@ -560,6 +571,7 @@ export class SlackAdapter implements MessagingAdapter {
           }),
         "conversations.list",
         this.limiter,
+        signal,
       );
 
       const channels = (result.channels ?? []) as SlackChannel[];
@@ -650,6 +662,7 @@ export class SlackAdapter implements MessagingAdapter {
           }),
         "users.list",
         this.limiter,
+        signal,
       );
 
       const members = (result.members ?? []) as SlackUser[];

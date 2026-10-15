@@ -77,6 +77,17 @@ describe("SlackAdapter", () => {
       expect(mockConversationsList).not.toHaveBeenCalled();
     });
 
+    it("doesn't retry a rate-limited page after its signal aborts", async () => {
+      const controller = new AbortController();
+      mockUsersList.mockImplementationOnce(async () => {
+        setTimeout(() => controller.abort(new Error("replaced")), 10);
+        throw Object.assign(new Error("ratelimited"), { code: "slack_webapi_rate_limited", retryAfter: 1 });
+      });
+
+      await expect(adapter.connect({ token: "xoxp-valid-token" }, controller.signal)).rejects.toThrow("replaced");
+      expect(mockUsersList).toHaveBeenCalledTimes(1); // no retry after the abort, and no 1s wait
+    });
+
     it("should reject tokens that are not xoxp-", async () => {
       await expect(adapter.connect({ token: "xoxb-bot-token" })).rejects.toThrow(
         "xoxp- user token",

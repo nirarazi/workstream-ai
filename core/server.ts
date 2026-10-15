@@ -98,8 +98,11 @@ export function untilDeadlineOrSuperseded<T>(
       if (superseded()) giveUp(new SaveSupersededError(`${what} abandoned: a newer settings save is waiting`));
     }, 250);
   });
-  const work = start(controller.signal);
+  // Started inside a promise, so a connect that throws synchronously still ends up in the race below (and the
+  // timers are cleared), rather than escaping and leaving an armed timer to reject unhandled later
+  const work = Promise.resolve().then(() => start(controller.signal));
   work.catch(() => undefined); // its rejection after an abort is expected and handled by the race
+  stop.catch(() => undefined); // only observed through the race
   return Promise.race([work, stop]).finally(() => {
     clearTimeout(timer);
     clearInterval(check);
