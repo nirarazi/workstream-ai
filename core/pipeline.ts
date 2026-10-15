@@ -64,6 +64,11 @@ export class Pipeline {
     this.config = config;
   }
 
+  /** True once the first poll has finished and the polling timer is set; false if start() failed or stop() ran. */
+  isPolling(): boolean {
+    return this.intervalHandle !== null;
+  }
+
   async start(): Promise<void> {
     if (this.running) {
       log.warn("Pipeline already running");
