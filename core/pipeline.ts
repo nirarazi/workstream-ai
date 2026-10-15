@@ -714,6 +714,7 @@ export class Pipeline {
   ): Promise<Classification> {
     // Step 0: Skip if we've already processed this message (avoids duplicate LLM calls)
     if (this.graph.hasEvent(message.id, thread.id)) {
+      this.classifiedNotStored.delete(`${thread.id}:${message.id}`);
       log.debug("Skipping already-processed message", message.id);
       const existing = this.graph.getEventByMessageId(message.id, thread.id)!;
       return {
@@ -850,7 +851,8 @@ export class Pipeline {
     };
     // A message whose writes failed after it was classified reuses that answer: the retry redoes the writes, not the call
     const writeKey = `${thread.id}:${message.id}`;
-    const classification = this.classifiedNotStored.get(writeKey) ?? this.fromOperator(
+    const reused = this.classifiedNotStored.get(writeKey);
+    const classification = reused ?? this.fromOperator(
       message,
       await this.classifier.classify(message.text, candidateContext, this.operatorIdentities, senderContext, this.getValidPrefixes(), channelContext, threadContext),
     );
@@ -859,7 +861,8 @@ export class Pipeline {
     if (stopped()) throw new PipelineStopped();
     // No answer from the model: store nothing so the message is tried again, unless this was the last try
     // (a spent budget is never stored: it resets)
-    if (!classification.failed) this.answeredThisPoll++;
+    // Only a real answer shows the model is up (a reused one says nothing about it)
+    if (!reused && !classification.failed) this.answeredThisPoll++;
     if (classification.failed && !(storeFailure && (classification.failed === "invalid" || classification.failed === "unreachable"))) {
       throw new ClassificationFailed(classification.failed);
     }

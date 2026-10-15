@@ -7,6 +7,8 @@ import { DefaultExtractor } from "../../core/graph/extractors/default.js";
 import type { Classification, Message, Thread } from "../../core/types.js";
 
 const CONFIG = { messaging: { pollInterval: 3600, channels: [] }, lookback: { maxThreadsPerPoll: 10, maxActiveThreadRepolls: 0 } } as any;
+const UNREACHABLE = { status: "noise", entryType: "noise", confidence: 0.1, reason: "Classification failed", workItemIds: [], title: "",
+  targetedAtOperator: false, actionRequiredFrom: null, nextAction: null, failed: "unreachable" } as Classification;
 const BLOCKED: Classification = {
   status: "blocked_on_human", entryType: "block", confidence: 0.9, reason: "needs approval", workItemIds: [], title: "Rollback",
   targetedAtOperator: true, actionRequiredFrom: null, nextAction: null,
@@ -56,5 +58,36 @@ describe("Pipeline: a write failing after classification", () => {
     expect(failed).toBe(true);
     expect(linksAfterFailure).toBeGreaterThan(0); // step 6 really ran again
     expect(classify).toHaveBeenCalledTimes(1); // with the answer kept from the failed try, not a new model call
+  });
+
+  it("doesn't count a reused answer as the model answering, so an outage can't give up other messages", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    let clock = Date.parse("2026-10-15T12:00:00.000Z");
+    vi.setSystemTime(clock);
+    const db = new Database(":memory:");
+    const graph = new ContextGraph(db);
+    onTestFinished(() => db.close());
+    const linker = new WorkItemLinker(graph, [new DefaultExtractor({ ticketPatterns: ["\\b([A-Z]{2,6}-\\d+)\\b"], prPatterns: [] })]);
+    const other: Message = { ...message, id: "m2", threadId: "T2", text: "Atlas: need a call on the release plan", timestamp: "2026-10-15T11:55:00.000Z" };
+    const otherThread: Thread = { ...thread, id: "T2", lastActivity: other.timestamp, messages: [other] };
+    // T1 is answered once, then the model goes down; T2 never gets an answer
+    const classify = vi.fn(async (text: string) => (text === message.text && classify.mock.calls.length === 1 ? BLOCKED : UNREACHABLE));
+    const readThreads = vi.fn(async () => [thread, otherThread]);
+    const pipeline = new Pipeline({ name: "fake", readThreads, getThreadMessages: vi.fn(async () => []) } as any, { classify } as any, graph, linker, undefined, CONFIG);
+    // T1's writes keep failing, so every poll reuses its answer
+    const realInsert = graph.insertEvent.bind(graph);
+    vi.spyOn(graph, "insertEvent").mockImplementation((e) => {
+      if (e.threadId === "T1") throw new Error("SQLITE_BUSY");
+      return realInsert(e);
+    });
+
+    for (let i = 0; i < 6; i++) {
+      await pipeline.processOnce();
+      clock += 31 * 60 * 1000;
+      vi.setSystemTime(clock);
+    }
+
+    // During the outage T2's message waits; it isn't given up and stored as noise
+    expect(graph.hasEvent("m2", "T2")).toBe(false);
   });
 });
