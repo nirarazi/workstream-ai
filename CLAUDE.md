@@ -117,7 +117,7 @@ npm run tauri dev
 npm test              # full test suite (Vitest); npm run test:watch to rerun on change
 npm run start:web     # build the UI and serve it from the engine
 npm run mcp           # MCP server on stdio
-npm run classify      # classify a message read from stdin (calls the configured model)
+npm run classify      # classify a message given as arguments or on stdin (calls the configured model)
 ```
 
 The engine and the MCP server open `workstream.db` in the directory they're started from. Start them from the repo root, or point the MCP server at the engine's database with `WORKSTREAM_DB_PATH`.
