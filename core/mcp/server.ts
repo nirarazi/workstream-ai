@@ -43,11 +43,14 @@ export function createMcpServer(graph: ContextGraph): McpServer {
       message: z.string(),
     },
     async ({ workItemId, status, message }) => {
+      // An agent's push is a message: it sets the status time like any polled message does
+      const now = new Date().toISOString();
       graph.upsertWorkItem({
         id: workItemId,
         source: MCP_SOURCE,
         currentAtcStatus: status as StatusCategory,
         currentConfidence: 1.0,
+        statusAt: now,
       });
 
       ensureMcpThread(workItemId);
@@ -60,7 +63,7 @@ export function createMcpServer(graph: ContextGraph): McpServer {
         confidence: 1.0,
         reason: message,
         rawText: message,
-        timestamp: new Date().toISOString(),
+        timestamp: now,
       });
 
       return {
@@ -78,11 +81,14 @@ export function createMcpServer(graph: ContextGraph): McpServer {
       options: z.array(z.string()).optional(),
     },
     async ({ workItemId, description, options }) => {
+      // An agent's push is a message: it sets the status time like any polled message does
+      const now = new Date().toISOString();
       graph.upsertWorkItem({
         id: workItemId,
         source: MCP_SOURCE,
         currentAtcStatus: "needs_decision",
         currentConfidence: 1.0,
+        statusAt: now,
       });
 
       ensureMcpThread(workItemId);
@@ -95,7 +101,7 @@ export function createMcpServer(graph: ContextGraph): McpServer {
         confidence: 1.0,
         reason: options ? JSON.stringify(options) : "",
         rawText: description,
-        timestamp: new Date().toISOString(),
+        timestamp: now,
       });
 
       return {
@@ -112,11 +118,14 @@ export function createMcpServer(graph: ContextGraph): McpServer {
       summary: z.string(),
     },
     async ({ workItemId, summary }) => {
+      // An agent's push is a message: it sets the status time like any polled message does
+      const now = new Date().toISOString();
       graph.upsertWorkItem({
         id: workItemId,
         source: MCP_SOURCE,
         currentAtcStatus: "completed",
         currentConfidence: 1.0,
+        statusAt: now,
       });
 
       ensureMcpThread(workItemId);
@@ -129,7 +138,7 @@ export function createMcpServer(graph: ContextGraph): McpServer {
         confidence: 1.0,
         reason: summary,
         rawText: summary,
-        timestamp: new Date().toISOString(),
+        timestamp: now,
       });
 
       return {
