@@ -535,8 +535,8 @@ describe("SlackAdapter", () => {
       // Re-connect with bot and human users pre-loaded
       mockUsersList.mockResolvedValueOnce({
         members: [
-          { id: "U001", name: "byte", is_bot: true, profile: { display_name: "Relay" } },
-          { id: "U002", name: "nir", is_bot: false, profile: { display_name: "Alex" } },
+          { id: "U001", name: "relay", is_bot: true, profile: { display_name: "Relay" } },
+          { id: "U002", name: "alex", is_bot: false, profile: { display_name: "Alex" } },
         ],
         response_metadata: { next_cursor: "" },
       });

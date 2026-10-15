@@ -563,7 +563,7 @@ describe("Stream", () => {
 
       const agents = graph.getAgentsForWorkItem("OPS-100");
       expect(agents).toHaveLength(2);
-      expect(agents.map((a) => a.name).sort()).toEqual(["Relay", "Prism"]);
+      expect(agents.map((a) => a.name).sort()).toEqual(["Prism", "Relay"]);
     });
 
     it("getChannelsForWorkItem returns all channels", () => {

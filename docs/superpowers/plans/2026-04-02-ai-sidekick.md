@@ -106,7 +106,7 @@ describe("sidekick query methods", () => {
   });
 
   it("getAgentByName finds by case-insensitive name", () => {
-    const agent = graph.getAgentByName("byte");
+    const agent = graph.getAgentByName("relay");
     expect(agent).not.toBeNull();
     expect(agent!.name).toBe("Relay");
   });

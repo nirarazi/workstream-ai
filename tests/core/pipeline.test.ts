@@ -229,17 +229,17 @@ describe("Pipeline", () => {
     });
 
     it("upserts agent from message metadata", async () => {
-      const msg = makeMessage({ userId: "U-byte", userName: "Relay" });
+      const msg = makeMessage({ userId: "U-relay", userName: "Relay" });
       vi.mocked(adapter.readThreads).mockResolvedValue([makeThread({}, [msg])]);
 
       await pipeline.processOnce();
 
       expect(graph.upsertAgent).toHaveBeenCalledWith(
         expect.objectContaining({
-          id: "U-byte",
+          id: "U-relay",
           name: "Relay",
           platform: "slack",
-          platformUserId: "U-byte",
+          platformUserId: "U-relay",
         }),
       );
     });
@@ -547,7 +547,7 @@ describe("Pipeline", () => {
         id: "OPS-382",
         title: "Fix login bug",
         status: "In Progress",
-        assignee: "byte@agents.com",
+        assignee: "relay@agents.com",
         url: "https://jira.example.com/OPS-382",
         labels: ["bug"],
         description: "Login page crashes on submit",
@@ -587,7 +587,7 @@ describe("Pipeline", () => {
           id: "OPS-382",
           title: "Fix login bug",
           externalStatus: "In Progress",
-          assignee: "byte@agents.com",
+          assignee: "relay@agents.com",
           url: "https://jira.example.com/OPS-382",
         }),
       );

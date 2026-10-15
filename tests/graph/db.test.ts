@@ -605,7 +605,7 @@ describe("Database", () => {
     });
 
     it("getAgentByName finds by case-insensitive name", () => {
-      const agent = graph.getAgentByName("byte");
+      const agent = graph.getAgentByName("relay");
       expect(agent).not.toBeNull();
       expect(agent!.name).toBe("Relay");
     });
@@ -718,8 +718,8 @@ describe("Database", () => {
   describe("findCandidateWorkItems", () => {
     function setupGraphData() {
       // Create agents
-      graph.upsertAgent({ id: "byte", name: "Relay", platform: "slack", platformUserId: "byte" });
-      graph.upsertAgent({ id: "pixel", name: "Prism", platform: "slack", platformUserId: "pixel" });
+      graph.upsertAgent({ id: "relay", name: "Relay", platform: "slack", platformUserId: "relay" });
+      graph.upsertAgent({ id: "prism", name: "Prism", platform: "slack", platformUserId: "prism" });
 
       // Create work items
       graph.upsertWorkItem({ id: "OPS-100", source: "extracted", title: "Deploy payment service to staging", currentAtcStatus: "in_progress" });
@@ -732,15 +732,15 @@ describe("Database", () => {
       graph.upsertThread({ id: "t-3", channelId: "C-2", channelName: "#ops", platform: "slack", workItemId: "OPS-300", lastActivity: new Date().toISOString(), messageCount: 1 });
 
       // Create events — Relay worked on OPS-100, Prism worked on OPS-200
-      graph.insertEvent({ threadId: "t-1", messageId: "m-1", workItemId: "OPS-100", agentId: "byte", status: "in_progress", confidence: 0.9, reason: "Working", rawText: "Deploying payment service", timestamp: new Date().toISOString() });
-      graph.insertEvent({ threadId: "t-2", messageId: "m-2", workItemId: "OPS-200", agentId: "pixel", status: "in_progress", confidence: 0.9, reason: "Working", rawText: "Refactoring auth", timestamp: new Date().toISOString() });
+      graph.insertEvent({ threadId: "t-1", messageId: "m-1", workItemId: "OPS-100", agentId: "relay", status: "in_progress", confidence: 0.9, reason: "Working", rawText: "Deploying payment service", timestamp: new Date().toISOString() });
+      graph.insertEvent({ threadId: "t-2", messageId: "m-2", workItemId: "OPS-200", agentId: "prism", status: "in_progress", confidence: 0.9, reason: "Working", rawText: "Refactoring auth", timestamp: new Date().toISOString() });
     }
 
     it("ranks same-agent work items highest", () => {
       setupGraphData();
 
       const candidates = graph.findCandidateWorkItems({
-        agentId: "byte",
+        agentId: "relay",
         channelId: "C-1",
         messageText: "still working on the service",
       });
@@ -755,7 +755,7 @@ describe("Database", () => {
       setupGraphData();
 
       const candidates = graph.findCandidateWorkItems({
-        agentId: "byte",
+        agentId: "relay",
         channelId: "C-2",
         messageText: "the login bug",
       });
@@ -780,7 +780,7 @@ describe("Database", () => {
       setupGraphData();
 
       const candidates = graph.findCandidateWorkItems({
-        agentId: "pixel",
+        agentId: "prism",
         channelId: "C-1",
         messageText: "the auth middleware refactoring is going well",
       });
@@ -796,7 +796,7 @@ describe("Database", () => {
 
       // With a very high threshold, nothing should match
       const candidates = graph.findCandidateWorkItems({
-        agentId: "byte",
+        agentId: "relay",
         channelId: "C-1",
         messageText: "hello",
         scoreThreshold: 100,
@@ -826,21 +826,21 @@ describe("Database", () => {
 
     it("classifies conversational bots as agent", () => {
       // Create an AI agent bot: varied messages, participates in threads with others
-      graph.upsertAgent({ id: "U-levy", name: "Atlas", platform: "slack", platformUserId: "U-levy", isBot: true });
+      graph.upsertAgent({ id: "U-atlas", name: "Atlas", platform: "slack", platformUserId: "U-atlas", isBot: true });
       graph.upsertAgent({ id: "U-human", name: "Alex", platform: "slack", platformUserId: "U-human", isBot: false });
       graph.upsertWorkItem({ id: "OPS-100", source: "extracted", title: "Deployment task" });
 
       graph.upsertThread({ id: "t-conv1", channelId: "C-ops", channelName: "#ops", platform: "slack", workItemId: "OPS-100", lastActivity: new Date().toISOString(), messageCount: 3 });
       // Atlas starts a thread
-      graph.insertEvent({ threadId: "t-conv1", messageId: "m-levy-1", workItemId: "OPS-100", agentId: "U-levy", status: "in_progress", confidence: 0.9, reason: "Working", rawText: "Starting deployment of OPS-100", timestamp: new Date().toISOString() });
+      graph.insertEvent({ threadId: "t-conv1", messageId: "m-atlas-1", workItemId: "OPS-100", agentId: "U-atlas", status: "in_progress", confidence: 0.9, reason: "Working", rawText: "Starting deployment of OPS-100", timestamp: new Date().toISOString() });
       // Human replies
       graph.insertEvent({ threadId: "t-conv1", messageId: "m-human-1", workItemId: "OPS-100", agentId: "U-human", status: "noise", confidence: 0.9, reason: "Ack", rawText: "Sounds good, proceed", timestamp: new Date().toISOString() });
       // Atlas responds
-      graph.insertEvent({ threadId: "t-conv1", messageId: "m-levy-2", workItemId: "OPS-100", agentId: "U-levy", status: "in_progress", confidence: 0.9, reason: "Continuing", rawText: "Deployment 60% complete, running migrations", timestamp: new Date().toISOString() });
+      graph.insertEvent({ threadId: "t-conv1", messageId: "m-atlas-2", workItemId: "OPS-100", agentId: "U-atlas", status: "in_progress", confidence: 0.9, reason: "Continuing", rawText: "Deployment 60% complete, running migrations", timestamp: new Date().toISOString() });
 
       graph.computeBotTypes();
 
-      expect(graph.getBotType("U-levy")).toBe("agent");
+      expect(graph.getBotType("U-atlas")).toBe("agent");
     });
 
     it("requires minimum 2 events before classifying", () => {

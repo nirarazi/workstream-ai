@@ -6,7 +6,7 @@ This guide covers how to connect workstream.ai to your Slack workspace, with spe
 
 - A Slack workspace where your agents operate
 - Admin or Owner permissions to install Slack apps
-- Your agent fleet's gateway (e.g., the agent gateway) configured and running
+- Your agent fleet's gateway configured and running
 
 ## 1. Create the workstream.ai Slack App
 
@@ -67,9 +67,9 @@ When you @-mention an agent in your reply (e.g., `@Atlas approve this`):
 
 For your agent fleet to respond to messages sent via workstream.ai, you need to configure your agent gateway to **not ignore messages from the workstream.ai app when the agent is mentioned**.
 
-### the agent gateway
+### Gateway-managed fleets
 
-In your fleet configuration, enable the setting for agents to respond to bot/app messages in threads when they are mentioned. This ensures that when you @-mention an agent in a workstream.ai reply, the agent processes the message as if you had typed it directly in Slack.
+In your agent gateway's configuration, enable the setting for agents to respond to bot/app messages in threads when they are mentioned. This ensures that when you @-mention an agent in a workstream.ai reply, the agent processes the message as if you had typed it directly in Slack.
 
 ### General Guidance for Other Frameworks
 
