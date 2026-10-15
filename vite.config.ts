@@ -24,6 +24,7 @@ export default defineConfig({
         ".env", ".env.*", "*.{crt,pem}", "**/.git/**", // Vite's defaults
         "**/*.db", "**/*.db-*",
         here("config/local.yaml"), `${here("eval-data")}/**`, `${here(".claude")}/**`, `${here(".worktrees")}/**`,
+        `${here(".superpowers")}/**`, // local design-session drafts
       ],
     },
     watch: {

@@ -33,6 +33,10 @@ interface FormatAction {
   apply: (editor: HTMLDivElement) => void;
 }
 
+// ---------------------------------------------------------------------------
+// Lucide icon size — consistent across all toolbar buttons
+// ---------------------------------------------------------------------------
+
 const ICON = { size: 15, strokeWidth: 2 } as const;
 
 // ---------------------------------------------------------------------------

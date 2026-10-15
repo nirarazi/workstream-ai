@@ -137,9 +137,6 @@ export function insertCodeBlock(editor: HTMLDivElement) {
   editor.dispatchEvent(new Event("input", { bubbles: true }));
 }
 
-// ---------------------------------------------------------------------------
-// Lucide icon size — consistent across all toolbar buttons
-// ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
 // Keyboard shortcut matching
