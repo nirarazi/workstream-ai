@@ -107,9 +107,9 @@ Requirements: a current Node.js LTS and npm. For the desktop app, also the Rust 
 ```bash
 npm install
 
-# In a browser: two terminals
-npm run engine        # engine on 127.0.0.1:9847, restarts on change
-npm run dev           # UI on http://localhost:5173, proxying /api to the engine
+# In a browser: engine and UI together
+npm run dev:web       # engine on 127.0.0.1:9847 and UI on http://localhost:5173, both restart on change
+# (or run them in two terminals: npm run engine, npm run dev)
 
 # Or as the desktop app: starts the UI and the engine itself (don't run the two above as well)
 npm run tauri dev

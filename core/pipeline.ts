@@ -9,6 +9,7 @@ import type { TaskAdapter } from "./adapters/tasks/interface.js";
 import type { Classifier } from "./classifier/index.js";
 import type { ContextGraph } from "./graph/index.js";
 import type { WorkItemLinker } from "./graph/linker.js";
+import { looksLikeTicketKey } from "./graph/extractors/default.js";
 
 const log = createLogger("pipeline");
 
@@ -371,10 +372,12 @@ export class Pipeline {
   }
 
   private isValidWorkItemId(id: string): boolean {
+    // Also allow synthetic IDs (thread:xxx), and any work item that already exists (e.g. one an agent created over
+    // MCP as "deploy-payments"): the prompt offers those as candidates
+    if (id.startsWith("thread:") || this.graph.getWorkItemById(id)) return true;
     const prefixes = this.getValidPrefixes();
-    if (prefixes.length === 0) return true; // no prefixes configured → accept all
-    // Also allow synthetic IDs (thread:xxx) and known patterns like "PR #123"
-    if (id.startsWith("thread:")) return true;
+    // No prefixes configured: accept a ticket key (but not a technical term like UTF-8) or a pull request
+    if (prefixes.length === 0) return looksLikeTicketKey(id) || /^PR\s*#?\d+$/i.test(id);
     return prefixes.some(prefix => id.toUpperCase().startsWith(prefix));
   }
 

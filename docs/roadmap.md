@@ -228,7 +228,7 @@ accuracy on the reference fleet) has never been measured.
 12. **Self-contained desktop build.** Tauri currently starts the engine with `npx tsx` from the project
    root (`src-tauri/src/lib.rs`). Ship the engine as a bundled sidecar instead.
 13. **Project docs.** ✅ CLAUDE.md now describes the product as built and reads as an open-source project
-    guide. Still to add: the README, LICENSE, `docs/adapters.md` and `docs/mcp.md`.
+    guide. LICENSE added. Still to add: the README, `docs/adapters.md` and `docs/mcp.md`.
 
 ## Cleanup
 

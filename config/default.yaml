@@ -27,10 +27,10 @@ taskAdapter:
   # baseUrl loaded from WORKSTREAM_JIRA_BASE_URL env var
   # token loaded from WORKSTREAM_JIRA_TOKEN env var
   enabled: false
-  ticketPrefixes:
-    - "AI-"
-    - "IT-"
-    - "MS-"
+  # Your tracker's ticket key prefixes, e.g. ["OPS-", "ENG-"]. Recommended: they also list projects in Create
+  # Ticket. Empty = accept any KEY-123 style key, except technical terms such as UTF-8 or SHA-256 (set this if
+  # one of your project keys is such a term).
+  ticketPrefixes: []
 
 extractors:
   # Regex patterns for work item ID extraction
