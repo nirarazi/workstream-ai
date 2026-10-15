@@ -35,6 +35,9 @@ const MAX_HOLD_MS = 6 * 60 * 60 * 1000;
 const RETRY_BASE_MS = 30_000;
 const RETRY_MAX_MS = 30 * 60 * 1000;
 
+/** Classified threads that started within this long stay in the history window, so late replies to them are read */
+const REPLY_WINDOW_MS = 24 * 60 * 60 * 1000;
+
 /** While the model looks unavailable, read the platform no more often than this (new messages wait at most this) */
 const OUTAGE_READ_MAX_WAIT_MS = 60 * 1000;
 
@@ -336,6 +339,25 @@ export class Pipeline {
     }
 
     if (stopped()) return { processed, classified, errors };
+
+    // Threads that were already fully classified when history returned them (often picked up by the active-thread
+    // re-poll) move their channel's cursor too, otherwise a quiet channel's cursor stays days old and every
+    // quiet-channel read re-fetches that whole window and its replies. But not later than REPLY_WINDOW_MS ago, nor
+    // past such a thread's own start, so those threads stay in the history window and their late replies are read.
+    // A thread classified in this poll still moves the cursor to its last message (above), as before; late replies
+    // to it rely on the active-thread re-poll. Held and deferred threads still win below.
+    const replyWindowStart = Date.now() - REPLY_WINDOW_MS;
+    for (const t of threads) {
+      if (pendingKey.has(t) || t.messages.length === 0) continue;
+      const before = Date.parse(threadStart(t)) - 1;
+      if (Number.isNaN(before)) continue;
+      const at = new Date(Math.min(before, replyWindowStart)).toISOString();
+      // Only ever forward: the window mustn't pull a recent cursor back a day (that re-reads more, every poll)
+      const stored = perChannelSince.get(t.channelId);
+      if (stored && at <= stored.toISOString()) continue;
+      const existing = latestTimestamps.get(t.channelId);
+      if (!existing || at > existing) latestTimestamps.set(t.channelId, at);
+    }
 
     // A channel with a thread to retry doesn't move past it (null: its start time is unknown, so don't move)
     for (const [channelId, at] of heldBack) {
