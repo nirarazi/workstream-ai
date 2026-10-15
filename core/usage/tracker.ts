@@ -235,6 +235,20 @@ export class UsageTracker implements ModelProvider {
     }
   }
 
+  private retired = false;
+
+  /** This tracker has been replaced by new settings: cancel its calls and refuse any more, model or decision */
+  dispose(): void {
+    this.retired = true;
+    if (this.provider instanceof OpenAICompatibleProvider) {
+      this.provider.dispose();
+    }
+  }
+
+  get isDisposed(): boolean {
+    return this.retired;
+  }
+
   /** Prune records older than 365 days */
   pruneOldRecords(): number {
     const cutoff = new Date();

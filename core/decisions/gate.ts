@@ -34,6 +34,7 @@ export class DecisionGate {
     private readonly interruptThreshold: number,
     private readonly onUsage?: (model: string, inputTokens: number, outputTokens: number) => void,
     private readonly budgetExhausted?: () => boolean,
+    private readonly replaced?: () => boolean,
   ) {}
 
   get name(): string {
@@ -42,6 +43,7 @@ export class DecisionGate {
 
   async decide(input: DecisionClassificationInput): Promise<DecisionClassification> {
     // The daily budget covers decision calls too; the classifier falls back to the LLM's result
+    if (this.replaced?.()) throw new Error("Decision gate was replaced by new settings");
     if (this.budgetExhausted?.()) throw new Error("Daily LLM budget exhausted. Resets at midnight UTC.");
     const result = await classifyWithDecisions(this.provider, input, { interruptThreshold: this.interruptThreshold });
     if (result.usage) this.onUsage?.(this.provider.name, result.usage.inputTokens, result.usage.outputTokens);
@@ -114,7 +116,8 @@ export function createDecisionGate(config: Config, usageTracker?: UsageTracker):
 
   log.info(`Decision gate on: ${d.provider} (${model}), interrupt threshold ${d.interruptThreshold}`);
   const budgetExhausted = usageTracker ? () => usageTracker.getBudgetStatus().exhausted : undefined;
-  return new DecisionGate(provider, d.interruptThreshold, onUsage, budgetExhausted);
+  const replaced = usageTracker ? () => usageTracker.isDisposed : undefined;
+  return new DecisionGate(provider, d.interruptThreshold, onUsage, budgetExhausted, replaced);
 }
 
 function buildProvider(config: Config, d: NonNullable<Config["classifier"]["decisions"]>): DecisionProvider {
