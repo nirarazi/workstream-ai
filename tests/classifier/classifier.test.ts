@@ -1123,6 +1123,21 @@ describe("describeProviderError", () => {
   });
 });
 
+describe("OpenAICompatibleProvider: timed-out attempts", () => {
+  it("reports each attempt cut off at the timeout, and not an abort", async () => {
+    const timeout = Object.assign(new Error("The operation was aborted due to timeout"), { name: "TimeoutError" });
+    const ok = new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ status: "noise", confidence: 0.9, reason: "", workItemIds: [], title: "" }) } }] }), { status: 200 });
+    vi.spyOn(globalThis, "fetch").mockRejectedValueOnce(timeout).mockResolvedValueOnce(ok);
+    const provider = new OpenAICompatibleProvider({ name: "test", baseUrl: "http://localhost:11434/v1", model: "m" });
+    const onTimedOutAttempt = vi.fn();
+
+    await provider.classify("OPS-100 is done", "sys", [], { onTimedOutAttempt }); // one timeout, then an answer
+
+    expect(onTimedOutAttempt).toHaveBeenCalledTimes(1);
+    vi.restoreAllMocks();
+  });
+});
+
 describe("Classifier: marking a missing answer", () => {
   it("marks an unreachable model as failed, so the pipeline retries instead of storing the placeholder", async () => {
     const classifier = new Classifier(failingProvider(new Error("API timeout")), SYSTEM_PROMPT, FEW_SHOT);

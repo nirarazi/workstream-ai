@@ -349,6 +349,18 @@ describe("UsageTracker: billed replies that fail to parse", () => {
     db.close();
   });
 
+  it("still counts one timeout for a provider that doesn't report attempts", async () => {
+    const db = new Database(":memory:");
+    const timeout = Object.assign(new Error("timeout"), { name: "TimeoutError" });
+    const provider: ModelProvider = { name: "mock", classify: vi.fn().mockRejectedValue(timeout) };
+    const tracker = new UsageTracker(provider, db, DEFAULT_CONFIG);
+
+    await expect(tracker.classify("hello", "sys", [])).rejects.toThrow("timeout");
+
+    expect(db.db.prepare("SELECT * FROM llm_usage").all()).toHaveLength(1);
+    db.close();
+  });
+
   it("doesn't count a call that never got a reply", async () => {
     const db = new Database(":memory:");
     const provider: ModelProvider = { name: "mock", classify: vi.fn().mockRejectedValue(new Error("fetch failed")) };

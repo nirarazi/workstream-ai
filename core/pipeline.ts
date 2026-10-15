@@ -36,7 +36,7 @@ const RETRY_BASE_MS = 30_000;
 const RETRY_MAX_MS = 30 * 60 * 1000;
 
 /** While the model looks unavailable, read the platform no more often than this (new messages wait at most this) */
-const OUTAGE_READ_MAX_WAIT_MS = 5 * 60 * 1000;
+const OUTAGE_READ_MAX_WAIT_MS = 2 * 60 * 1000;
 
 /** After the provider refuses the credentials, try again this often (a settings save resumes at once) */
 const AUTH_PAUSE_MS = 5 * 60 * 1000;
@@ -174,6 +174,8 @@ export class Pipeline {
     }
     this.running = false;
     this.runId++;
+    this.modelUnavailable = false;
+    this.outageReadsAfter = 0;
     log.info("Pipeline stopped");
   }
 
@@ -408,14 +410,24 @@ export class Pipeline {
     // A failed try counts only if other messages were classified this poll: the model is up, so the message is
     // the problem. During an outage nothing counts, and messages wait for the model to come back.
     // Failures and not one real answer: the model looks unavailable (shown as a degraded status)
-    this.modelUnavailable = failedThisPoll.length > 0 && this.answeredThisPoll === 0;
+    // Only a poll that tried something says anything about the model; one where every held message was still
+    // backing off keeps the previous verdict (and its read gate)
+    if (failedThisPoll.length > 0 || this.answeredThisPoll > 0) {
+      this.modelUnavailable = failedThisPoll.length > 0 && this.answeredThisPoll === 0;
+    }
     if (this.modelUnavailable) {
       // Nothing could be classified: re-reading the platform before a held message is due again (up to 30 min
-      // with backoff) only costs reads and rate limit. Capped, so a message arriving meanwhile waits at most 5 min.
+      // with backoff) only costs reads and rate limit. Gate only while several messages are held, so a single
+      // message that keeps failing doesn't delay new ones; capped, so a new message waits at most 2 minutes.
       const now = Date.now();
       let earliest = now + OUTAGE_READ_MAX_WAIT_MS;
-      for (const rec of this.failedMessages.values()) earliest = Math.min(earliest, rec.nextTryAt);
-      this.outageReadsAfter = earliest;
+      let held = 0;
+      for (const rec of this.failedMessages.values()) {
+        if (rec.nextTryAt <= now) continue; // stale: a message deleted, or no longer re-polled
+        held++;
+        earliest = Math.min(earliest, rec.nextTryAt);
+      }
+      this.outageReadsAfter = held >= 2 ? earliest : 0;
     }
     if (this.answeredThisPoll > 0) {
       for (const key of failedThisPoll) {

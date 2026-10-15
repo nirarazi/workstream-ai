@@ -2,7 +2,7 @@
 
 import { randomUUID } from "node:crypto";
 import { createLogger } from "../logger.js";
-import { InvalidReplyError, type ModelProvider, type ClassificationResult } from "../classifier/providers/interface.js";
+import { InvalidReplyError, type ClassifyOptions, type ModelProvider, type ClassificationResult } from "../classifier/providers/interface.js";
 import type { BackoffState } from "../classifier/providers/openai-compatible.js";
 import { OpenAICompatibleProvider } from "../classifier/providers/openai-compatible.js";
 import type { Database } from "../graph/db.js";
@@ -87,9 +87,11 @@ export class UsageTracker implements ModelProvider {
     message: string,
     systemPrompt: string,
     fewShotExamples: Array<{ role: string; content: string }>,
-    caller = "classifier",
+    callerOrOptions: string | (ClassifyOptions & { caller?: string }) = "classifier",
   ): Promise<ClassificationResult> {
     this.assertNotRetired();
+    const caller = typeof callerOrOptions === "string" ? callerOrOptions : callerOrOptions.caller ?? "classifier";
+    const passOn = typeof callerOrOptions === "string" ? undefined : callerOrOptions.onTimedOutAttempt;
     if (this.isBudgetExhausted()) {
       throw new BudgetExhaustedError();
     }
@@ -106,8 +108,15 @@ export class UsageTracker implements ModelProvider {
     };
     let result: ClassificationResult;
     try {
-      result = await this.provider.classify(message, systemPrompt, fewShotExamples, { onTimedOutAttempt: () => timedOut++ });
+      result = await this.provider.classify(message, systemPrompt, fewShotExamples, {
+        onTimedOutAttempt: () => {
+          timedOut++;
+          passOn?.();
+        },
+      });
     } catch (err) {
+      // A provider that doesn't report attempts still timed out at least once
+      if (timedOut === 0 && err instanceof Error && err.name === "TimeoutError") timedOut = 1;
       recordTimeouts();
       // A reply that came back but couldn't be used was still billed
       if (err instanceof InvalidReplyError && err.billed) this.recordUsage(caller, inputTokens, MIN_OUTPUT_TOKEN_OVERHEAD, "estimated");

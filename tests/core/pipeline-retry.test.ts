@@ -235,37 +235,57 @@ describe("Pipeline.isModelUnavailable", () => {
 });
 
 describe("Pipeline: during an outage", () => {
-  it("doesn't re-read the platform before a held message is due, and waits at most 5 minutes", async () => {
+  function setup(threads: () => Thread[]) {
     vi.useFakeTimers({ toFake: ["Date"] });
     let clock = Date.parse("2026-10-15T08:00:00.000Z");
     vi.setSystemTime(clock);
     const db = new Database(":memory:");
     const graph = new ContextGraph(db);
-    const readThreads = vi.fn(async () => [thread("T1", "2026-10-15T05:00:00.000Z")]);
+    const readThreads = vi.fn(async () => threads());
     const classify = vi.fn().mockResolvedValue(UNREACHABLE);
     const pipeline = new Pipeline({ name: "fake", readThreads, getThreadMessages: vi.fn(async () => []) } as any, { classify } as any, graph,
       new WorkItemLinker(graph, [new DefaultExtractor({ ticketPatterns: [], prPatterns: [] })]), undefined, CONFIG);
-    const pollAfter = async (ms: number) => {
-      clock += ms;
+    const poll = async () => {
+      clock += 30_000; // the real poll interval
       vi.setSystemTime(clock);
       await pipeline.processOnce();
     };
+    return { db, pipeline, readThreads, poll, done: () => { vi.useRealTimers(); db.close(); } };
+  }
 
-    await pipeline.processOnce(); // fails; first retry is due at once
-    await pollAfter(30_000); // fails again; next retry in 30s
-    const readsSoFar = readThreads.mock.calls.length;
-    await pollAfter(10_000); // before the retry is due: no read
-    expect(readThreads.mock.calls.length).toBe(readsSoFar);
-    await pollAfter(25_000); // due: reads again
-    expect(readThreads.mock.calls.length).toBe(readsSoFar + 1);
+  it("reads the platform rarely for hours, not every 30s, and keeps reporting the model as unavailable", async () => {
+    const t = setup(() => [thread("T1", "2026-10-15T05:00:00.000Z"), thread("T2", "2026-10-15T05:01:00.000Z")]);
+    await t.pipeline.processOnce();
+    let unavailableEveryPoll = true;
+    for (let i = 0; i < 240; i++) { // 2 hours of polls
+      await t.poll();
+      unavailableEveryPoll &&= t.pipeline.isModelUnavailable();
+    }
+    expect(unavailableEveryPoll).toBe(true);
+    // At most one read per 2 minutes (the cap), against 240 without the gate
+    expect(t.readThreads.mock.calls.length).toBeLessThanOrEqual(70);
+    t.done();
+  });
 
-    // Much later in a long outage, the wait between reads is capped at 5 minutes
-    for (let i = 0; i < 12; i++) await pollAfter(31 * 60_000);
-    const before = readThreads.mock.calls.length;
-    await pollAfter(5 * 60_000 + 1_000);
-    expect(readThreads.mock.calls.length).toBe(before + 1);
+  it("doesn't gate reads for a single message that keeps failing, so new messages aren't delayed", async () => {
+    const t = setup(() => [thread("T1", "2026-10-15T05:00:00.000Z")]);
+    await t.pipeline.processOnce();
+    for (let i = 0; i < 20; i++) await t.poll();
+    expect(t.readThreads.mock.calls.length).toBe(21);
+    t.done();
+  });
 
-    vi.useRealTimers();
-    db.close();
+  it("isn't switched off by a held message that disappeared", async () => {
+    let both = true;
+    const t = setup(() => (both
+      ? [thread("T1", "2026-10-15T05:00:00.000Z"), thread("T2", "2026-10-15T05:01:00.000Z"), thread("T3", "2026-10-15T05:02:00.000Z")]
+      : [thread("T1", "2026-10-15T05:00:00.000Z"), thread("T2", "2026-10-15T05:01:00.000Z")]));
+    await t.pipeline.processOnce();
+    for (let i = 0; i < 20; i++) await t.poll(); // backoff grows past a few minutes
+    both = false; // T3 is deleted on the platform; its failure record stays behind
+    const before = t.readThreads.mock.calls.length;
+    for (let i = 0; i < 10; i++) await t.poll(); // 5 minutes
+    expect(t.readThreads.mock.calls.length - before).toBeLessThanOrEqual(3);
+    t.done();
   });
 });
