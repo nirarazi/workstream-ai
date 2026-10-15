@@ -1,6 +1,6 @@
 // tests/classifier/classifier.test.ts — Tests for classifier orchestration, prompt formatting, response parsing, error handling
 
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import { Classifier } from "../../core/classifier/index.js";
 import type { ModelProvider, ClassificationResult } from "../../core/classifier/providers/interface.js";
 import { OpenAICompatibleProvider } from "../../core/classifier/providers/openai-compatible.js";
@@ -1124,7 +1124,9 @@ describe("describeProviderError", () => {
 });
 
 describe("OpenAICompatibleProvider: timed-out attempts", () => {
-  it("reports each attempt cut off at the timeout, and not an abort", async () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it("reports each attempt cut off at the timeout", async () => {
     const timeout = Object.assign(new Error("The operation was aborted due to timeout"), { name: "TimeoutError" });
     const ok = new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ status: "noise", confidence: 0.9, reason: "", workItemIds: [], title: "" }) } }] }), { status: 200 });
     vi.spyOn(globalThis, "fetch").mockRejectedValueOnce(timeout).mockResolvedValueOnce(ok);

@@ -392,3 +392,25 @@ describe("UsageTracker: timed-out attempts", () => {
     db.close();
   });
 });
+
+describe("UsageTracker: options", () => {
+  it("passes a caller's own timeout hook through and records under its caller name", async () => {
+    const db = new Database(":memory:");
+    const provider: ModelProvider = {
+      name: "mock",
+      classify: vi.fn(async (_m, _s, _f, options) => {
+        options?.onTimedOutAttempt?.();
+        return { status: "noise", confidence: 0.9, reason: "", workItemIds: [], title: "" };
+      }),
+    };
+    const tracker = new UsageTracker(provider, db, DEFAULT_CONFIG);
+    const onTimedOutAttempt = vi.fn();
+
+    await tracker.classify("hello", "sys", [], { caller: "eval", onTimedOutAttempt });
+
+    expect(onTimedOutAttempt).toHaveBeenCalledTimes(1);
+    const callers = (db.db.prepare("SELECT caller FROM llm_usage").all() as Array<{ caller: string }>).map((r) => r.caller);
+    expect(callers).toEqual(["eval", "eval"]);
+    db.close();
+  });
+});

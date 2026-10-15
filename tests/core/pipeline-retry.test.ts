@@ -283,10 +283,37 @@ describe("Pipeline: during an outage", () => {
     await t.pipeline.processOnce();
     for (let i = 0; i < 20; i++) await t.poll(); // backoff grows past a few minutes
     both = false; // T3 is deleted on the platform; its failure record stays behind
+    for (let i = 0; i < 60; i++) await t.poll(); // past T3's next retry, so its record is stale
     const before = t.readThreads.mock.calls.length;
-    for (let i = 0; i < 10; i++) await t.poll(); // 5 minutes
-    expect(t.readThreads.mock.calls.length - before).toBeLessThanOrEqual(6);
+    for (let i = 0; i < 20; i++) await t.poll(); // 10 minutes
+    expect(t.readThreads.mock.calls.length - before).toBeLessThanOrEqual(11); // about one per minute, not 20
     t.done();
+  });
+});
+
+describe("Pipeline: when the held messages vanish", () => {
+  it("stops reporting the model as unavailable", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    let clock = Date.parse("2026-10-15T08:00:00.000Z");
+    vi.setSystemTime(clock);
+    const db = new Database(":memory:");
+    const graph = new ContextGraph(db);
+    let threads = [thread("T1", "2026-10-15T05:00:00.000Z"), thread("T2", "2026-10-15T05:01:00.000Z")];
+    const pipeline = new Pipeline({ name: "fake", readThreads: vi.fn(async () => threads), getThreadMessages: vi.fn(async () => []) } as any,
+      { classify: vi.fn().mockResolvedValue(UNREACHABLE) } as any, graph,
+      new WorkItemLinker(graph, [new DefaultExtractor({ ticketPatterns: [], prPatterns: [] })]), undefined, CONFIG);
+    await pipeline.processOnce();
+    expect(pipeline.isModelUnavailable()).toBe(true);
+
+    threads = []; // both deleted on the platform
+    for (let i = 0; i < 80; i++) {
+      clock += 30_000;
+      vi.setSystemTime(clock);
+      await pipeline.processOnce();
+    }
+    expect(pipeline.isModelUnavailable()).toBe(false);
+    vi.useRealTimers();
+    db.close();
   });
 });
 

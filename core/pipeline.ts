@@ -421,11 +421,14 @@ export class Pipeline {
     // backing off keeps the previous verdict (and its read gate)
     if (failedThisPoll.length > 0 || this.answeredThisPoll > 0) {
       this.modelUnavailable = failedThisPoll.length > 0 && this.answeredThisPoll === 0;
+    } else if (this.modelUnavailable && ![...this.failedMessages.values()].some((r) => r.nextTryAt > Date.now())) {
+      this.modelUnavailable = false; // nothing is held any more (deleted, or given up): no evidence of an outage
     }
     if (this.modelUnavailable) {
       // Nothing could be classified: re-reading the platform before a held message is due again (up to 30 min
       // with backoff) only costs reads and rate limit. Gate only while several messages are held, so a single
-      // message that keeps failing doesn't delay new ones; capped, so a new message waits at most a minute.
+      // message that keeps failing doesn't delay new ones (an outage that has held just one message so far is read
+      // every poll); capped, so a new message waits at most a minute.
       const now = Date.now();
       let earliest = now + OUTAGE_READ_MAX_WAIT_MS;
       let held = 0;
