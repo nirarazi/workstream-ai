@@ -126,7 +126,7 @@ describe("UsageTracker", () => {
     const result = await tracker.classify("OPS-1: PR merged", "system prompt", [], "classifier");
 
     expect(result.status).toBe("completed");
-    expect(provider.classify).toHaveBeenCalledWith("OPS-1: PR merged", "system prompt", []);
+    expect(provider.classify).toHaveBeenCalledWith("OPS-1: PR merged", "system prompt", [], expect.objectContaining({ onTimedOutAttempt: expect.any(Function) }));
 
     // Check a record was persisted
     const rows = db.db.prepare("SELECT * FROM llm_usage").all() as Array<Record<string, unknown>>;
@@ -333,6 +333,25 @@ describe("UsageTracker: billed replies that fail to parse", () => {
   it("counts a generation cut off by the timeout, which providers usually bill", async () => {
     const db = new Database(":memory:");
     const timeout = Object.assign(new Error("The operation was aborted due to timeout"), { name: "TimeoutError" });
+    // The provider reports each timed-out attempt, then gives up after its retries
+    const provider: ModelProvider = {
+      name: "mock",
+      classify: vi.fn(async (_m, _s, _f, options) => {
+        for (let i = 0; i < 6; i++) options?.onTimedOutAttempt?.();
+        throw timeout;
+      }),
+    };
+    const tracker = new UsageTracker(provider, db, DEFAULT_CONFIG);
+
+    await expect(tracker.classify("hello", "sys", [])).rejects.toThrow("timeout");
+
+    expect(db.db.prepare("SELECT * FROM llm_usage").all()).toHaveLength(6);
+    db.close();
+  });
+
+  it("still counts one timeout for a provider that doesn't report attempts", async () => {
+    const db = new Database(":memory:");
+    const timeout = Object.assign(new Error("timeout"), { name: "TimeoutError" });
     const provider: ModelProvider = { name: "mock", classify: vi.fn().mockRejectedValue(timeout) };
     const tracker = new UsageTracker(provider, db, DEFAULT_CONFIG);
 
@@ -350,6 +369,48 @@ describe("UsageTracker: billed replies that fail to parse", () => {
     await expect(tracker.classify("hello", "sys", [])).rejects.toThrow("fetch failed");
 
     expect(db.db.prepare("SELECT * FROM llm_usage").all()).toHaveLength(0);
+    db.close();
+  });
+});
+
+describe("UsageTracker: timed-out attempts", () => {
+  it("counts every attempt the provider cut off at its timeout, even when a retry then succeeds", async () => {
+    const db = new Database(":memory:");
+    const provider: ModelProvider = {
+      name: "mock",
+      classify: vi.fn(async (_m, _s, _f, options) => {
+        options?.onTimedOutAttempt?.();
+        options?.onTimedOutAttempt?.();
+        return { status: "noise", confidence: 0.9, reason: "", workItemIds: [], title: "" };
+      }),
+    };
+    const tracker = new UsageTracker(provider, db, DEFAULT_CONFIG);
+
+    await tracker.classify("hello", "sys", []);
+
+    expect(db.db.prepare("SELECT * FROM llm_usage").all()).toHaveLength(3); // two timeouts and the answer
+    db.close();
+  });
+});
+
+describe("UsageTracker: options", () => {
+  it("passes a caller's own timeout hook through and records under its caller name", async () => {
+    const db = new Database(":memory:");
+    const provider: ModelProvider = {
+      name: "mock",
+      classify: vi.fn(async (_m, _s, _f, options) => {
+        options?.onTimedOutAttempt?.();
+        return { status: "noise", confidence: 0.9, reason: "", workItemIds: [], title: "" };
+      }),
+    };
+    const tracker = new UsageTracker(provider, db, DEFAULT_CONFIG);
+    const onTimedOutAttempt = vi.fn();
+
+    await tracker.classify("hello", "sys", [], { caller: "eval", onTimedOutAttempt });
+
+    expect(onTimedOutAttempt).toHaveBeenCalledTimes(1);
+    const callers = (db.db.prepare("SELECT caller FROM llm_usage").all() as Array<{ caller: string }>).map((r) => r.caller);
+    expect(callers).toEqual(["eval", "eval"]);
     db.close();
   });
 });

@@ -2,7 +2,7 @@
 
 import { randomUUID } from "node:crypto";
 import { createLogger } from "../logger.js";
-import { InvalidReplyError, type ModelProvider, type ClassificationResult } from "../classifier/providers/interface.js";
+import { InvalidReplyError, type ClassifyOptions, type ModelProvider, type ClassificationResult } from "../classifier/providers/interface.js";
 import type { BackoffState } from "../classifier/providers/openai-compatible.js";
 import { OpenAICompatibleProvider } from "../classifier/providers/openai-compatible.js";
 import type { Database } from "../graph/db.js";
@@ -87,9 +87,11 @@ export class UsageTracker implements ModelProvider {
     message: string,
     systemPrompt: string,
     fewShotExamples: Array<{ role: string; content: string }>,
-    caller = "classifier",
+    callerOrOptions: string | (ClassifyOptions & { caller?: string }) = "classifier",
   ): Promise<ClassificationResult> {
     this.assertNotRetired();
+    const caller = typeof callerOrOptions === "string" ? callerOrOptions : callerOrOptions.caller ?? "classifier";
+    const passOn = typeof callerOrOptions === "string" ? undefined : callerOrOptions.onTimedOutAttempt;
     if (this.isBudgetExhausted()) {
       throw new BudgetExhaustedError();
     }
@@ -99,18 +101,28 @@ export class UsageTracker implements ModelProvider {
     const fewShotText = fewShotExamples.map((e) => e.content).join("");
     const inputTokens = estimateTokens(systemPrompt + fewShotText + message) + MIN_INPUT_TOKEN_OVERHEAD;
 
+    // Each attempt cut off at the timeout (the provider retries those) was usually billed too
+    let timedOut = 0;
+    const recordTimeouts = () => {
+      for (let i = 0; i < timedOut; i++) this.recordUsage(caller, inputTokens, MIN_OUTPUT_TOKEN_OVERHEAD, "estimated");
+    };
     let result: ClassificationResult;
     try {
-      result = await this.provider.classify(message, systemPrompt, fewShotExamples);
+      result = await this.provider.classify(message, systemPrompt, fewShotExamples, {
+        onTimedOutAttempt: () => {
+          timedOut++;
+          passOn?.();
+        },
+      });
     } catch (err) {
-      // A reply that came back but couldn't be used was still billed, and so, usually, is a generation cut off by
-      // the timeout: both count toward the budget
-      const timedOut = err instanceof Error && err.name === "TimeoutError";
-      if ((err instanceof InvalidReplyError && err.billed) || timedOut) {
-        this.recordUsage(caller, inputTokens, MIN_OUTPUT_TOKEN_OVERHEAD, "estimated");
-      }
+      // A provider that doesn't report attempts still timed out at least once
+      if (timedOut === 0 && err instanceof Error && err.name === "TimeoutError") timedOut = 1;
+      recordTimeouts();
+      // A reply that came back but couldn't be used was still billed
+      if (err instanceof InvalidReplyError && err.billed) this.recordUsage(caller, inputTokens, MIN_OUTPUT_TOKEN_OVERHEAD, "estimated");
       throw err;
     }
+    recordTimeouts();
 
     const outputTokens = estimateTokens(JSON.stringify(result)) + MIN_OUTPUT_TOKEN_OVERHEAD;
 

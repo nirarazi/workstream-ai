@@ -1,6 +1,6 @@
 // tests/classifier/classifier.test.ts — Tests for classifier orchestration, prompt formatting, response parsing, error handling
 
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import { Classifier } from "../../core/classifier/index.js";
 import type { ModelProvider, ClassificationResult } from "../../core/classifier/providers/interface.js";
 import { OpenAICompatibleProvider } from "../../core/classifier/providers/openai-compatible.js";
@@ -1119,6 +1119,34 @@ describe("describeProviderError", () => {
     const described = describeProviderError(err);
     expect(described).toContain("400");
     expect(described).not.toContain("secret");
+    vi.restoreAllMocks();
+  });
+});
+
+describe("OpenAICompatibleProvider: timed-out attempts", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it("reports each attempt cut off at the timeout", async () => {
+    const timeout = Object.assign(new Error("The operation was aborted due to timeout"), { name: "TimeoutError" });
+    const ok = new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ status: "noise", confidence: 0.9, reason: "", workItemIds: [], title: "" }) } }] }), { status: 200 });
+    vi.spyOn(globalThis, "fetch").mockRejectedValueOnce(timeout).mockResolvedValueOnce(ok);
+    const provider = new OpenAICompatibleProvider({ name: "test", baseUrl: "http://localhost:11434/v1", model: "m" });
+    const onTimedOutAttempt = vi.fn();
+
+    await provider.classify("OPS-100 is done", "sys", [], { onTimedOutAttempt }); // one timeout, then an answer
+
+    expect(onTimedOutAttempt).toHaveBeenCalledTimes(1);
+    vi.restoreAllMocks();
+  });
+
+  it("retries a timeout once, not five times: a second one is likely the request itself", async () => {
+    const timeout = () => Object.assign(new Error("The operation was aborted due to timeout"), { name: "TimeoutError" });
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () => { throw timeout(); });
+    const provider = new OpenAICompatibleProvider({ name: "test", baseUrl: "http://localhost:11434/v1", model: "m" });
+
+    await expect(provider.classify("OPS-100 is done", "sys", [])).rejects.toThrow("timeout");
+
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
     vi.restoreAllMocks();
   });
 });

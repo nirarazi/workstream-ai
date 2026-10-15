@@ -35,6 +35,9 @@ const MAX_HOLD_MS = 6 * 60 * 60 * 1000;
 const RETRY_BASE_MS = 30_000;
 const RETRY_MAX_MS = 30 * 60 * 1000;
 
+/** While the model looks unavailable, read the platform no more often than this (new messages wait at most this) */
+const OUTAGE_READ_MAX_WAIT_MS = 60 * 1000;
+
 /** After the provider refuses the credentials, try again this often (a settings save resumes at once) */
 const AUTH_PAUSE_MS = 5 * 60 * 1000;
 
@@ -88,6 +91,8 @@ export class Pipeline {
   private pausedFor: "budget" | "auth" | null = null;
   /** The last poll had failures and no real model answers */
   private modelUnavailable = false;
+  /** During such an outage, skip platform reads until the earliest held message is due for a retry */
+  private outageReadsAfter = 0;
 
   constructor(
     messagingAdapter: MessagingAdapter,
@@ -110,6 +115,20 @@ export class Pipeline {
   /** Why classification is paused right now, if it is: shown as a degraded model status */
   pauseReason(): "budget" | "auth" | null {
     return Date.now() < this.pausedUntil ? this.pausedFor : null;
+  }
+
+  /**
+   * Whether the item's status was last set by a message posted after this one. Only messages set status_at, so an
+   * operator action (approve, close, reply) or a mere mention elsewhere never stops an earlier-posted message, for
+   * example a block the operator hadn't seen yet, from updating the status.
+   */
+  private isOlderThanStatus(item: { statusAt: string | null } | null, message: Message): boolean {
+    return Boolean(item?.statusAt && message.timestamp < item.statusAt);
+  }
+
+  /** Whether this message has failed more than once, so later messages in its thread go ahead without it */
+  private failedRepeatedly(message: Message, thread: Thread): boolean {
+    return (this.failedMessages.get(`${thread.id}:${message.id}`)?.attempts ?? 0) >= 2;
   }
 
   /** Whether the last poll got failures and no real model answers (an outage, or an account-wide refusal) */
@@ -169,6 +188,8 @@ export class Pipeline {
     }
     this.running = false;
     this.runId++;
+    this.modelUnavailable = false;
+    this.outageReadsAfter = 0;
     log.info("Pipeline stopped");
   }
 
@@ -181,7 +202,7 @@ export class Pipeline {
     // just rotated the credentials or moved the model endpoint this poll was started with
     const run = this.runId;
     const stopped = () => run !== this.runId;
-    if (Date.now() < this.pausedUntil) {
+    if (Date.now() < this.pausedUntil || (this.modelUnavailable && Date.now() < this.outageReadsAfter)) {
       this.expireInactiveItems();
       return { processed, classified, errors };
     }
@@ -280,7 +301,9 @@ export class Pipeline {
           if (outcome !== "waiting") errors++;
           held = true;
           if (outcome === "paused") paused = true;
-          break; // later messages in the thread wait, so they're classified in order
+          // Later messages wait so they're classified in order, but only behind a first failure: a message that
+          // keeps failing (or a crafted reply) mustn't hide the rest of its thread for hours
+          if (outcome === "paused" || !this.failedRepeatedly(message, thread)) break;
         } catch (err) {
           if (err instanceof PipelineStopped) break;
           log.error("Failed to process message", message.id, err);
@@ -378,7 +401,7 @@ export class Pipeline {
               // No cursor here: an active thread is fetched again on the next poll
               if (outcome !== "waiting") errors++;
               if (outcome === "paused") paused = true;
-              break;
+              if (outcome === "paused" || !this.failedRepeatedly(msg, threadObj)) break;
             } catch (err) {
               if (err instanceof PipelineStopped) break;
               log.error("Failed to process re-polled message", msg.id, err);
@@ -403,7 +426,28 @@ export class Pipeline {
     // A failed try counts only if other messages were classified this poll: the model is up, so the message is
     // the problem. During an outage nothing counts, and messages wait for the model to come back.
     // Failures and not one real answer: the model looks unavailable (shown as a degraded status)
-    this.modelUnavailable = failedThisPoll.length > 0 && this.answeredThisPoll === 0;
+    // Only a poll that tried something says anything about the model; one where every held message was still
+    // backing off keeps the previous verdict (and its read gate)
+    if (failedThisPoll.length > 0 || this.answeredThisPoll > 0) {
+      this.modelUnavailable = failedThisPoll.length > 0 && this.answeredThisPoll === 0;
+    } else if (this.modelUnavailable && ![...this.failedMessages.values()].some((r) => r.nextTryAt > Date.now())) {
+      this.modelUnavailable = false; // nothing is held any more (deleted, or given up): no evidence of an outage
+    }
+    if (this.modelUnavailable) {
+      // Nothing could be classified: re-reading the platform before a held message is due again (up to 30 min
+      // with backoff) only costs reads and rate limit. Gate only while several messages are held, so a single
+      // message that keeps failing doesn't delay new ones (an outage that has held just one message so far is read
+      // every poll); capped, so a new message waits at most a minute.
+      const now = Date.now();
+      let earliest = now + OUTAGE_READ_MAX_WAIT_MS;
+      let held = 0;
+      for (const rec of this.failedMessages.values()) {
+        if (rec.nextTryAt <= now) continue; // stale: a message deleted, or no longer re-polled
+        held++;
+        earliest = Math.min(earliest, rec.nextTryAt);
+      }
+      this.outageReadsAfter = held >= 2 ? earliest : 0;
+    }
     if (this.answeredThisPoll > 0) {
       for (const key of failedThisPoll) {
         const rec = this.failedMessages.get(key);
@@ -820,13 +864,17 @@ export class Pipeline {
     // keyed by thread ID so the conversation stays grouped under one item
     if (allWorkItemIds.size === 0 && classification.status !== "noise") {
       const syntheticId = `thread:${thread.id}`;
-      this.graph.upsertWorkItem({
-        id: syntheticId,
-        source: "inferred",
-        title: classification.title || "Untitled conversation",
-        currentAtcStatus: classification.status,
-        currentConfidence: classification.confidence,
-      });
+      // A message classified late (held for a retry) mustn't overwrite the state a newer message already set
+      if (!this.isOlderThanStatus(this.graph.getWorkItemById(syntheticId), message)) {
+        this.graph.upsertWorkItem({
+          id: syntheticId,
+          source: "inferred",
+          title: classification.title || "Untitled conversation",
+          currentAtcStatus: classification.status,
+          currentConfidence: classification.confidence,
+          statusAt: message.timestamp,
+        });
+      }
       allWorkItemIds.add(syntheticId);
       log.debug("Created synthetic work item for unticketed thread", syntheticId, classification.title);
     }
@@ -852,7 +900,10 @@ export class Pipeline {
       platformMeta: thread.platformMeta,
       platform: thread.platform,
       workItemId: isManuallyLinked ? existingThread!.workItemId : primaryWorkItemId,
-      lastActivity: message.timestamp,
+      // Never backwards: a message classified late (held for a retry) is older than what's already recorded
+      lastActivity: existingThread?.lastActivity && existingThread.lastActivity > message.timestamp
+        ? existingThread.lastActivity
+        : message.timestamp,
       messageCount: thread.messages.length,
     });
 
@@ -902,9 +953,10 @@ export class Pipeline {
         const itemConfidence = itemClassification?.confidence ?? classification.confidence;
         const itemTitle = itemClassification?.title ?? classification.title;
 
+        // A message classified late (held for a retry) doesn't overwrite the status a newer message already set
         const shouldUpdate =
-          !existing.currentConfidence ||
-          itemConfidence >= existing.currentConfidence;
+          (!existing.currentConfidence || itemConfidence >= existing.currentConfidence) &&
+          !this.isOlderThanStatus(existing, message);
 
         if (shouldUpdate) {
           this.graph.upsertWorkItem({
@@ -912,6 +964,7 @@ export class Pipeline {
             source: existing.source,
             currentAtcStatus: itemStatus,
             currentConfidence: itemConfidence,
+            statusAt: message.timestamp,
             // Set LLM title if work item has no title yet (e.g. extracted IDs with no Jira enrichment)
             ...(itemTitle && !existing.title ? { title: itemTitle } : {}),
           });

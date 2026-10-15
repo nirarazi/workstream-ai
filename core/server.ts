@@ -970,6 +970,7 @@ export function createApp(state: EngineState): Hono {
             url: ticket.url,
             currentAtcStatus: workItem.currentAtcStatus,
             currentConfidence: workItem.currentConfidence,
+            statusAt: workItem.statusAt,
           });
 
           // Relink: update the old synthetic work item's threads and junction rows to point to the real ticket

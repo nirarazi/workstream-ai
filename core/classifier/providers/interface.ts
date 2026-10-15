@@ -40,11 +40,18 @@ export class InvalidReplyError extends Error {
 /** The provider rejected the API key or account (401/403): nothing will classify until settings change. */
 export class ProviderAuthError extends Error {}
 
+/** Optional per-call hooks a provider may support */
+export interface ClassifyOptions {
+  /** Called for each attempt the provider cut off at its timeout (providers usually bill those) */
+  onTimedOutAttempt?: () => void;
+}
+
 export interface ModelProvider {
   name: string;
   classify(
     message: string,
     systemPrompt: string,
     fewShotExamples: Array<{ role: string; content: string }>,
+    options?: ClassifyOptions,
   ): Promise<ClassificationResult>;
 }
