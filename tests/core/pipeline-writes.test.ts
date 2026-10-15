@@ -71,7 +71,7 @@ describe("Pipeline: a write failing after classification", () => {
     const other: Message = { ...message, id: "m2", threadId: "T2", text: "Atlas: need a call on the release plan", timestamp: "2026-10-15T11:55:00.000Z" };
     const otherThread: Thread = { ...thread, id: "T2", lastActivity: other.timestamp, messages: [other] };
     // T1 is answered once, then the model goes down; T2 never gets an answer
-    const classify = vi.fn(async (text: string) => (text === message.text && classify.mock.calls.length === 1 ? BLOCKED : UNREACHABLE));
+    const classify = vi.fn(async (text: string) => (text === message.text ? BLOCKED : UNREACHABLE));
     const readThreads = vi.fn(async () => [thread, otherThread]);
     const pipeline = new Pipeline({ name: "fake", readThreads, getThreadMessages: vi.fn(async () => []) } as any, { classify } as any, graph, linker, undefined, CONFIG);
     // T1's writes keep failing, so every poll reuses its answer
@@ -87,6 +87,7 @@ describe("Pipeline: a write failing after classification", () => {
       vi.setSystemTime(clock);
     }
 
+    expect(classify.mock.calls.filter(([t]) => t === message.text)).toHaveLength(1); // T1's answer was reused, not asked again
     // During the outage T2's message waits; it isn't given up and stored as noise
     expect(graph.hasEvent("m2", "T2")).toBe(false);
   });
