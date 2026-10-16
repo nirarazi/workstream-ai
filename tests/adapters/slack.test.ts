@@ -424,16 +424,19 @@ describe("SlackAdapter", () => {
         let dmReads = 0;
         // A minute apart, so the test's frozen clock never has the rate limiter wait
         const times = ["12:00:00", "12:01:00", "12:02:00", "12:03:00", "12:04:00", "12:05:00"];
-        for (const time of times) {
-          mockConversationsHistory.mockClear();
-          at(time);
-          await adapter.readThreads(since, undefined, cursors, every30s);
-          if (readChannels().includes(dm)) dmReads++;
-          for (const id of readChannels().filter((c) => c.startsWith("GNEW"))) cursors.set(id, new Date("2026-10-13T11:00:00Z"));
+        try {
+          for (const time of times) {
+            mockConversationsHistory.mockClear();
+            at(time);
+            await adapter.readThreads(since, undefined, cursors, every30s);
+            if (readChannels().includes(dm)) dmReads++;
+            for (const id of readChannels().filter((c) => c.startsWith("GNEW"))) cursors.set(id, new Date("2026-10-13T11:00:00Z"));
+          }
+        } finally {
+          mockConversationsList.mockReset();
         }
 
-        expect(dmReads).toBeGreaterThanOrEqual(times.length / 2);
-        mockConversationsList.mockReset();
+        expect(dmReads).toBe(times.length); // a DM already being read keeps its head start
       });
 
       it("spends late-reply reads only on channels this poll reads", async () => {

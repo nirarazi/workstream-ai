@@ -155,7 +155,7 @@ const QUIET_READS_PER_POLL = 15;
  * busy conversations can't stop quiet channels (and DMs) from being read. Active channels take turns by when they
  * were last read; one never read counts from when it first appeared, so a flood of new conversations (group DMs
  * anyone can open with the operator) waits behind the ones already being read instead of crowding them out, and a
- * 1:1 DM gets the same head start as in the quiet queue. The budget counts channel reads, not calls: a channel with
+ * 1:1 DM already being read gets the same head start as in the quiet queue. The budget counts channel reads, not calls: a channel with
  * more than a page of new messages, and thread replies (a separate limit), aren't counted.
  */
 const MIN_QUIET_READS_PER_POLL = 5;
@@ -319,8 +319,10 @@ export class SlackAdapter implements MessagingAdapter {
       log.info(`${active.length} active conversations, ${cap} read per poll: they take turns, so new messages may wait a poll or two`);
     }
     const turn = (id: string) => {
-      const since = this.channelLastRead.get(id) ?? this.channelFirstSeen.get(id) ?? now;
-      return since - (this.channelMap.get(id)?.isDirect ? DIRECT_HEAD_START_MS : 0);
+      const lastRead = this.channelLastRead.get(id);
+      // The DM head start only once it's been read: new DMs, like any new conversation, queue behind the rest
+      if (lastRead === undefined) return this.channelFirstSeen.get(id) ?? now;
+      return lastRead - (this.channelMap.get(id)?.isDirect ? DIRECT_HEAD_START_MS : 0);
     };
     // On a tie, one never read goes first
     active.sort((a, b) => turn(a) - turn(b) || Number(this.channelLastRead.has(a)) - Number(this.channelLastRead.has(b)));
