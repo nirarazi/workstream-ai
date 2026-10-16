@@ -1017,10 +1017,16 @@ export class Pipeline {
         const existing = this.graph.getWorkItemById(workItemId);
         if (existing) {
           const itemClassification = validatedBreakdownMap.get(workItemId);
+          // The message's own line for this item puts it in front of the operator: it counts for the item even where
+          // the item is only mentioned, digest or not
+          const escalates = Boolean(itemClassification?.targetedAtOperator)
+            && (itemClassification!.status === "blocked_on_human" || itemClassification!.status === "needs_decision");
+          if (escalates) this.graph.addEventTarget(event.id, workItemId);
 
-          // A digest doesn't decide the items it names (its thread's own item, if any, is handled as usual): what it
-          // says about each is compared with the app's view instead, with the whole message's status where it gave none
-          if (digest && workItemId !== primaryWorkItemId) {
+          // A digest doesn't decide the items it names (its thread's own item, if any, is handled as usual, and so is an
+          // item its line says needs the operator): what it says about each is compared with the app's view instead,
+          // with the whole message's status where it gave none
+          if (digest && workItemId !== primaryWorkItemId && !escalates) {
             const digestStatus = itemClassification?.status ?? classification.status;
             // Nothing to contradict: what the digest says about this item in particular (not the whole message) sets a
             // first status, so the item shows in All active. With no confidence, so any message about the item itself

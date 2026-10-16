@@ -167,6 +167,8 @@ function createMockGraph(): ContextGraph {
     expireInactiveItems: vi.fn().mockReturnValue(0),
     findRecurringWorkItem: vi.fn().mockReturnValue(null),
     linkThreadWorkItem: vi.fn(),
+    addEventTarget: vi.fn(),
+    recordDigestCheck: vi.fn(),
   } as unknown as ContextGraph;
 }
 

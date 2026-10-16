@@ -39,11 +39,12 @@ function setup(text: string, answer: Classification, threadId = "T-DIGEST", send
   return { graph, pipeline, adapter, classify, message };
 }
 
-const DIGEST_TEXT = "Daily digest: OPS-1 still blocked on Alex, OPS-2 blocked on review, OPS-3 shipped";
+// The whole message reads as needing the operator, but no line puts a particular item in front of them
+const DIGEST_TEXT = "Daily digest: OPS-1 still blocked on Dana, OPS-2 blocked on review, OPS-3 shipped";
 const DIGEST_ANSWER: Classification = {
-  status: "blocked_on_human", entryType: "block", confidence: 0.9, reason: "digest asks the operator for two things",
+  status: "blocked_on_human", entryType: "block", confidence: 0.9, reason: "round-up, a few things are stuck",
   workItemIds: ["OPS-1", "OPS-2", "OPS-3"], title: "Daily digest", targetedAtOperator: true, actionRequiredFrom: ["U0OPERATOR1"], nextAction: null,
-  breakdown: [breakdown("OPS-1", "blocked_on_human", true), breakdown("OPS-2", "blocked_on_human", true), breakdown("OPS-3", "completed")],
+  breakdown: [breakdown("OPS-1", "blocked_on_human"), breakdown("OPS-2", "blocked_on_human"), breakdown("OPS-3", "completed")],
 };
 
 describe("Pipeline: digests", () => {
@@ -79,6 +80,56 @@ describe("Pipeline: digests", () => {
       { work_item_id: "OPS-3", relation: "mentioned" },
     ]);
     expect(graph.getEventByMessageId("m1", "T-DIGEST")!.digest).toBe(true);
+  });
+
+  it("puts an item in Needs me when its own line says it needs the operator, even in a digest", async () => {
+    const answer: Classification = {
+      status: "blocked_on_human", entryType: "block", confidence: 0.95, reason: "approval needed", workItemIds: ["OPS-101", "OPS-102", "OPS-103"],
+      title: "Deploy approval", targetedAtOperator: true, actionRequiredFrom: ["U0OPERATOR1"], nextAction: "Approve",
+      breakdown: [breakdown("OPS-101", "blocked_on_human", true), breakdown("OPS-102", "in_progress"), breakdown("OPS-103", "in_progress")],
+    };
+    const { graph, pipeline } = setup("I need your approval to deploy OPS-101 to prod; it unblocks OPS-102 and OPS-103", answer);
+    graph.upsertWorkItem({ id: "OPS-101", source: "jira", title: "Deploy", currentAtcStatus: "in_progress", currentConfidence: 0.5 });
+    graph.upsertWorkItem({ id: "OPS-102", source: "jira", title: "Two", currentAtcStatus: "blocked_on_human", currentConfidence: 0.5 });
+
+    await pipeline.processOnce();
+
+    expect(graph.getWorkItemById("OPS-101")!.currentAtcStatus).toBe("blocked_on_human");
+    // Only the item its line escalates: not OPS-102, though the whole message reads as blocked
+    expect(graph.getActionableItems().map((i) => i.workItem.id)).toEqual(["OPS-101"]);
+  });
+
+  it("doesn't count a message in a thread that merely mentions an item, for that item", () => {
+    db = new Database(":memory:");
+    const graph = new ContextGraph(db);
+    graph.upsertAgent({ id: "U-atlas", name: "Atlas", platform: "slack", platformUserId: "U-atlas" });
+    graph.upsertWorkItem({ id: "OPS-9", source: "jira", title: "Nine", currentAtcStatus: "blocked_on_human" });
+    graph.upsertWorkItem({ id: "OPS-1", source: "jira", title: "One", currentAtcStatus: "in_progress" });
+    graph.upsertThread({ id: "T-OTHER", channelId: "C1", channelName: "fleet-ops", platform: "slack", workItemId: "OPS-1" });
+    graph.linkThreadWorkItem("T-OTHER", "OPS-9", "mentioned");
+    graph.insertEvent({ threadId: "T-OTHER", messageId: "x", workItemId: "OPS-1", agentId: "U-atlas", status: "blocked_on_human", confidence: 0.9, entryType: "block", targetedAtOperator: true, timestamp: new Date().toISOString() });
+
+    expect(graph.getActionableItems().map((i) => i.workItem.id)).not.toContain("OPS-9");
+
+    // In the item's own thread it does count
+    graph.upsertThread({ id: "T-NINE", channelId: "C1", channelName: "fleet-ops", platform: "slack", workItemId: "OPS-9" });
+    graph.linkThreadWorkItem("T-NINE", "OPS-9", "primary");
+    graph.insertEvent({ threadId: "T-NINE", messageId: "y", workItemId: null, agentId: "U-atlas", status: "blocked_on_human", confidence: 0.9, entryType: "block", targetedAtOperator: true, timestamp: new Date().toISOString() });
+    expect(graph.getActionableItems().map((i) => i.workItem.id)).toContain("OPS-9");
+  });
+
+  it("doesn't put a digest-seeded item in Needs me through a later reply in the digest's thread", async () => {
+    const answer: Classification = { ...DIGEST_ANSWER, workItemIds: ["OPS-7", "OPS-8", "OPS-9"], breakdown: [breakdown("OPS-9", "blocked_on_human")] };
+    const { graph, pipeline, adapter, classify, message } = setup("Round-up: OPS-7, OPS-8 moving, OPS-9 blocked on Dana", answer);
+    await pipeline.processOnce();
+    expect(graph.getWorkItemById("OPS-9")!.currentAtcStatus).toBe("blocked_on_human");
+
+    const reply = { ...message, id: "m2", userId: "U-relay", userName: "Relay", text: "thoughts on the above?", timestamp: "2026-10-15T10:00:00.000Z" };
+    adapter.readThreads.mockResolvedValue([{ id: "T-DIGEST", channelId: "C1", channelName: "fleet-ops", platform: "slack", workItemId: null, lastActivity: reply.timestamp, messageCount: 2, messages: [message, reply] }]);
+    classify.mockResolvedValue({ status: "needs_decision", entryType: "block", confidence: 0.9, reason: "asks the operator", workItemIds: [], title: "Thoughts", targetedAtOperator: true, actionRequiredFrom: ["U0OPERATOR1"], nextAction: null });
+    await pipeline.processOnce();
+
+    expect(graph.getActionableItems().map((i) => i.workItem.id)).not.toContain("OPS-9");
   });
 
   it("doesn't put the items it names in Needs me", async () => {

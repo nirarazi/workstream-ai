@@ -183,6 +183,25 @@ function sameSet(a: Set<string>, b: Set<string>): boolean {
 }
 
 /**
+ * SQL: event `e` is about work item `item`, so it can decide where the item stands for the operator. That's a message
+ * whose subject is the item (its work_item_id; not a digest marked by the backfill, whose subject came from the old
+ * rule), any non-digest message in the item's own thread, or one whose own line for the item puts it in front of the
+ * operator. A message in a thread that merely mentions the item, or a digest naming it, isn't.
+ */
+function aboutItem(e: string, item: string, viaOwnLine = true): string {
+  return `((${e}.work_item_id = ${item} AND ${e}.digest < 2)
+    OR (${e}.digest = 0 AND ${e}.thread_id IN (SELECT thread_id FROM thread_work_items WHERE work_item_id = ${item} AND relation = 'primary'))${
+    viaOwnLine ? `
+    OR EXISTS (SELECT 1 FROM event_targets et WHERE et.event_id = ${e}.id AND et.work_item_id = ${item})` : ""})`;
+}
+
+/** SQL: event `e` is aimed at the operator, as a whole or by its own line for work item `item` */
+function forOperator(e: string, item: string): string {
+  return `(${e}.targeted_at_operator = 1
+    OR EXISTS (SELECT 1 FROM event_targets eto WHERE eto.event_id = ${e}.id AND eto.work_item_id = ${item}))`;
+}
+
+/**
  * A work item that belongs in Done (as `w`): completed, not merged, and not a conversation item replaced by a
  * ticket created from it. Creating a ticket points the thread itself at the ticket; a ticket merely mentioned in it doesn't.
  */
@@ -475,9 +494,7 @@ export class ContextGraph {
       .prepare(`
         UPDATE work_items SET dismissed_at = (
           SELECT MAX(e.timestamp) FROM events e
-          WHERE (e.work_item_id = work_items.id
-             OR e.thread_id IN (SELECT thread_id FROM thread_work_items WHERE work_item_id = work_items.id))
-            AND (e.digest = 0 OR (e.digest = 1 AND e.work_item_id = work_items.id)) -- a digest only counts for its thread's own item
+          WHERE ${aboutItem("e", "work_items.id")}
         ), dismiss_reason = 'expired'
         WHERE id IN (
           SELECT wi.id FROM work_items wi
@@ -487,17 +504,13 @@ export class ContextGraph {
             AND (wi.snoozed_until IS NULL OR wi.snoozed_until <= ?)
             AND (
               SELECT MAX(e.timestamp) FROM events e
-              WHERE (e.work_item_id = wi.id
-                 OR e.thread_id IN (SELECT thread_id FROM thread_work_items WHERE work_item_id = wi.id))
-                AND (e.digest = 0 OR (e.digest = 1 AND e.work_item_id = wi.id))
+              WHERE ${aboutItem("e", "wi.id")}
             ) < ?
             -- not dismissed, or brought back by a later message aimed at the operator (as the inbox does)
             AND (wi.dismissed_at IS NULL OR wi.dismissed_at < (
               SELECT MAX(e.timestamp) FROM events e
-              WHERE (e.work_item_id = wi.id
-                 OR e.thread_id IN (SELECT thread_id FROM thread_work_items WHERE work_item_id = wi.id))
-                AND e.targeted_at_operator = 1
-                AND (e.digest = 0 OR (e.digest = 1 AND e.work_item_id = wi.id))
+              WHERE ${aboutItem("e", "wi.id")}
+                AND ${forOperator("e", "wi.id")}
             ))
         )
       `)
@@ -684,6 +697,11 @@ export class ContextGraph {
       INSERT OR IGNORE INTO digest_checks (event_id, work_item_id, digest_status, digest_targeted, item_status, agrees, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?)
     `).run(check.eventId, check.workItemId, check.digestStatus, check.digestTargeted ? 1 : 0, check.itemStatus, agrees, check.at);
+  }
+
+  /** Records that a message's own line for a work item puts it in front of the operator (see aboutItem) */
+  addEventTarget(eventId: string, workItemId: string): void {
+    this.db.db.prepare("INSERT OR IGNORE INTO event_targets (event_id, work_item_id) VALUES (?, ?)").run(eventId, workItemId);
   }
 
   /** Digest checks that disagree with the app and aren't settled yet, oldest first */
@@ -1313,11 +1331,8 @@ export class ContextGraph {
       FROM work_items wi
       INNER JOIN events e ON e.id = (
           SELECT e2.id FROM events e2
-          WHERE (e2.work_item_id = wi.id
-             OR e2.thread_id IN (SELECT thread_id FROM thread_work_items WHERE work_item_id = wi.id))
-            AND e2.targeted_at_operator = 1
-            -- a digest informs the items it names, it doesn't put them in front of the operator (only its thread's own)
-            AND (e2.digest = 0 OR (e2.digest = 1 AND e2.work_item_id = wi.id))
+          WHERE ${aboutItem("e2", "wi.id")}
+            AND ${forOperator("e2", "wi.id")}
           ORDER BY e2.timestamp DESC
           LIMIT 1
         )
@@ -1329,10 +1344,8 @@ export class ContextGraph {
         AND (wi.merged_into IS NULL)
         AND NOT EXISTS (
           SELECT 1 FROM events e4
-          WHERE (e4.work_item_id = wi.id
-             OR e4.thread_id IN (SELECT thread_id FROM thread_work_items WHERE work_item_id = wi.id))
+          WHERE ${aboutItem("e4", "wi.id", false)}
             AND e4.targeted_at_operator = 0
-            AND (e4.digest = 0 OR (e4.digest = 1 AND e4.work_item_id = wi.id))
             AND e4.status IN ('blocked_on_human', 'needs_decision')
             AND e4.confidence >= ?
             AND e4.timestamp > e.timestamp
@@ -1391,10 +1404,8 @@ export class ContextGraph {
         AND (wi.merged_into IS NULL)
         AND (wi.dismissed_at IS NULL OR EXISTS (
           SELECT 1 FROM events e3
-          WHERE (e3.work_item_id = wi.id
-             OR e3.thread_id IN (SELECT thread_id FROM thread_work_items WHERE work_item_id = wi.id))
-            AND e3.targeted_at_operator = 1
-            AND (e3.digest = 0 OR (e3.digest = 1 AND e3.work_item_id = wi.id)) -- a digest doesn't bring back the items it names
+          WHERE ${aboutItem("e3", "wi.id")}
+            AND ${forOperator("e3", "wi.id")}
             AND e3.timestamp > wi.dismissed_at
         ))
       ORDER BY
@@ -1455,10 +1466,8 @@ export class ContextGraph {
         AND (wi.current_atc_status IS NULL OR wi.current_atc_status NOT IN ('completed', 'noise'))
         AND NOT EXISTS (
           SELECT 1 FROM events e3
-          WHERE (e3.work_item_id = wi.id
-             OR e3.thread_id IN (SELECT thread_id FROM thread_work_items WHERE work_item_id = wi.id))
-            AND e3.targeted_at_operator = 1
-            AND (e3.digest = 0 OR (e3.digest = 1 AND e3.work_item_id = wi.id)) -- a digest doesn't bring back the items it names
+          WHERE ${aboutItem("e3", "wi.id")}
+            AND ${forOperator("e3", "wi.id")}
             AND e3.timestamp > wi.dismissed_at
         )
       ORDER BY wi.dismissed_at DESC

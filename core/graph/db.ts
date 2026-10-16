@@ -106,6 +106,15 @@ CREATE TABLE IF NOT EXISTS meta (
   value TEXT NOT NULL
 );
 
+-- Work items a message puts in front of the operator by its own line for them (the model's per-item breakdown says
+-- blocked on, or a decision for, the operator): it counts for them though they're only mentioned in its thread
+CREATE TABLE IF NOT EXISTS event_targets (
+  event_id     TEXT NOT NULL REFERENCES events(id),
+  work_item_id TEXT NOT NULL REFERENCES work_items(id),
+  PRIMARY KEY (event_id, work_item_id)
+);
+CREATE INDEX IF NOT EXISTS idx_event_targets_work_item ON event_targets(work_item_id);
+
 -- What a digest (a message naming several work items) says about each, against what the app already believes
 CREATE TABLE IF NOT EXISTS digest_checks (
   event_id       TEXT NOT NULL REFERENCES events(id),

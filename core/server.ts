@@ -133,10 +133,6 @@ export function settingsNeedRestart(previous: Config, next: Config, envChanged: 
   return JSON.stringify(before) !== JSON.stringify(after);
 }
 
-/**
- * The posted message as the adapter reported it, if it's usable as an event key: a real platform message ID. A blank
- * or missing one would make every later action in the thread collide with it, so it's treated as not reported.
- */
 /** The ways a model names the operator in "who it's waiting on": platform IDs, usernames, full and first names */
 function operatorNames(identities: OperatorIdentityMap | undefined, configuredName: string | undefined): string[] {
   const names = [
@@ -146,6 +142,10 @@ function operatorNames(identities: OperatorIdentityMap | undefined, configuredNa
   return [...new Set([...names, ...names.map((n) => n.trim().split(/[\s.]+/)[0])])];
 }
 
+/**
+ * The posted message as the adapter reported it, if it's usable as an event key: a real platform message ID. A blank
+ * or missing one would make every later action in the thread collide with it, so it's treated as not reported.
+ */
 function usablePosted(posted: PostedMessage | void): PostedMessage | undefined {
   if (!posted || typeof posted.messageId !== "string" || !posted.messageId.trim()) return undefined;
   if (typeof posted.timestamp !== "string" || Number.isNaN(Date.parse(posted.timestamp))) return undefined;
