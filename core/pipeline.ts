@@ -761,6 +761,8 @@ export class Pipeline {
     const existingThread = this.graph.getThreadById(thread.id);
     const inheritedWorkItemId = existingThread?.workItemId ?? null;
     const allWorkItemIds = new Set<string>();
+    // The item this thread is about: the one it already belongs to, or the open item a repeated alert joins
+    let ownItemId = inheritedWorkItemId;
     if (inheritedWorkItemId) {
       allWorkItemIds.add(inheritedWorkItemId);
     } else if (message.senderType !== "human" && thread.messages[0]?.id === message.id) {
@@ -774,6 +776,7 @@ export class Pipeline {
       if (recurringId) {
         log.debug("Recurring alert joins existing work item", recurringId, thread.id);
         allWorkItemIds.add(recurringId);
+        ownItemId = recurringId;
       }
     }
 
@@ -804,7 +807,7 @@ export class Pipeline {
         actionRequiredFrom: cachedResult.actionRequiredFrom,
         nextAction: cachedResult.nextAction,
         // Same text, same thread: a digest the first time is one now
-        digest: !inheritedWorkItemId && this.canBeDigest(message) && namesDigest(this.linker.extractIds(message.text), null),
+        digest: this.canBeDigest(message) && namesDigest(this.linker.extractIds(message.text), ownItemId),
       });
       return cachedResult;
     }
@@ -958,12 +961,12 @@ export class Pipeline {
 
       // A digest makes none of the items it names the thread's own: they're all mentioned. Decided as the linker does,
       // from the IDs in the text, so the two agree (IDs the model adds don't make a message a digest).
-      const digest = this.canBeDigest(message) && namesDigest(extractedIds, inheritedWorkItemId);
+      const digest = this.canBeDigest(message) && namesDigest(extractedIds, ownItemId);
 
       // Step 4: Upsert thread in graph — preserve manually linked work items
       const isManuallyLinked = existingThread?.manuallyLinked === true;
       const primaryWorkItemId = digest
-        ? inheritedWorkItemId
+        ? ownItemId
         : allWorkItemIds.size > 0 ? [...allWorkItemIds][0] : null;
 
       this.graph.upsertThread({
@@ -995,8 +998,8 @@ export class Pipeline {
         targetedAtOperator: classification.targetedAtOperator,
         actionRequiredFrom: classification.actionRequiredFrom,
         nextAction: classification.nextAction,
-        // About its thread's own item when there is one, so it counts for that item as usual
-        digest: digest && !primaryWorkItemId,
+        // A digest still counts for its thread's own item (its work_item_id) wherever an event decides an item
+        digest,
       });
 
       // Step 6: Update work item status and write junction rows
@@ -1019,15 +1022,17 @@ export class Pipeline {
           // says about each is compared with the app's view instead, with the whole message's status where it gave none
           if (digest && workItemId !== primaryWorkItemId) {
             const digestStatus = itemClassification?.status ?? classification.status;
-            if (!existing.currentAtcStatus) {
-              // Nothing to contradict: the digest is all the app knows, so it sets where the item stands. Its event
-              // is a digest, so this doesn't put the item in Needs me.
+            // Nothing to contradict: what the digest says about this item in particular (not the whole message) sets a
+            // first status, so the item shows in All active. With no confidence, so any message about the item itself
+            // replaces it; never done or noise, which would hold the item there or hide it.
+            if (!existing.currentAtcStatus && itemClassification && itemClassification.status !== "completed" && itemClassification.status !== "noise") {
               this.graph.upsertWorkItem({
                 id: workItemId,
                 source: existing.source,
-                currentAtcStatus: digestStatus,
-                currentConfidence: itemClassification?.confidence ?? classification.confidence,
+                currentAtcStatus: itemClassification.status,
+                currentConfidence: 0,
                 statusAt: message.timestamp,
+                ...(itemClassification.title && !existing.title ? { title: itemClassification.title } : {}),
               });
             }
             // A digest older than the item's status is compared with a later state, so it isn't checked

@@ -477,7 +477,7 @@ export class ContextGraph {
           SELECT MAX(e.timestamp) FROM events e
           WHERE (e.work_item_id = work_items.id
              OR e.thread_id IN (SELECT thread_id FROM thread_work_items WHERE work_item_id = work_items.id))
-            AND e.digest = 0 -- a digest naming the item isn't activity on it
+            AND (e.digest = 0 OR (e.digest = 1 AND e.work_item_id = work_items.id)) -- a digest only counts for its thread's own item
         ), dismiss_reason = 'expired'
         WHERE id IN (
           SELECT wi.id FROM work_items wi
@@ -489,7 +489,7 @@ export class ContextGraph {
               SELECT MAX(e.timestamp) FROM events e
               WHERE (e.work_item_id = wi.id
                  OR e.thread_id IN (SELECT thread_id FROM thread_work_items WHERE work_item_id = wi.id))
-                AND e.digest = 0
+                AND (e.digest = 0 OR (e.digest = 1 AND e.work_item_id = wi.id))
             ) < ?
             -- not dismissed, or brought back by a later message aimed at the operator (as the inbox does)
             AND (wi.dismissed_at IS NULL OR wi.dismissed_at < (
@@ -497,7 +497,7 @@ export class ContextGraph {
               WHERE (e.work_item_id = wi.id
                  OR e.thread_id IN (SELECT thread_id FROM thread_work_items WHERE work_item_id = wi.id))
                 AND e.targeted_at_operator = 1
-                AND e.digest = 0
+                AND (e.digest = 0 OR (e.digest = 1 AND e.work_item_id = wi.id))
             ))
         )
       `)
@@ -696,9 +696,11 @@ export class ContextGraph {
 
   /**
    * Once, for messages stored before digests were told apart: marks those that would be digests now (`isDigest`
-   * given the IDs in the text and the thread's own item) as digest = 2, so the change can be undone
-   * (`UPDATE events SET digest = 0 WHERE digest = 2`). Humans' messages are never digests. A message that started its
-   * thread made its first item the thread's own under the old rule, so it has no own item here. Returns the IDs marked.
+   * given the IDs in the text) as digest = 2, so the change can be undone (`UPDATE events SET digest = 0 WHERE
+   * digest = 2`). Humans' messages are never digests. A message that started its thread made its first item the
+   * thread's own under the old rule, so that item isn't really its own: a digest = 2 counts for no item, unlike a
+   * live digest (1), which still counts for its thread's own. A reply in an item's own thread is left as it was.
+   * Returns the IDs marked.
    */
   backfillDigests(isDigest: (ids: string[], ownItemId: string | null) => boolean, extractIds: (text: string) => string[]): string[] {
     const events = this.db.db.prepare(`
@@ -720,6 +722,7 @@ export class ContextGraph {
         mark.run(event.id);
         marked.push(event.id);
       }
+      this.db.db.prepare("DELETE FROM meta WHERE key = 'digest_backfill'").run(); // done, with the marks
     });
     return marked;
   }
@@ -1313,7 +1316,8 @@ export class ContextGraph {
           WHERE (e2.work_item_id = wi.id
              OR e2.thread_id IN (SELECT thread_id FROM thread_work_items WHERE work_item_id = wi.id))
             AND e2.targeted_at_operator = 1
-            AND e2.digest = 0 -- a digest informs the item, it doesn't put it in front of the operator
+            -- a digest informs the items it names, it doesn't put them in front of the operator (only its thread's own)
+            AND (e2.digest = 0 OR (e2.digest = 1 AND e2.work_item_id = wi.id))
           ORDER BY e2.timestamp DESC
           LIMIT 1
         )
@@ -1328,7 +1332,7 @@ export class ContextGraph {
           WHERE (e4.work_item_id = wi.id
              OR e4.thread_id IN (SELECT thread_id FROM thread_work_items WHERE work_item_id = wi.id))
             AND e4.targeted_at_operator = 0
-            AND e4.digest = 0
+            AND (e4.digest = 0 OR (e4.digest = 1 AND e4.work_item_id = wi.id))
             AND e4.status IN ('blocked_on_human', 'needs_decision')
             AND e4.confidence >= ?
             AND e4.timestamp > e.timestamp
@@ -1390,7 +1394,7 @@ export class ContextGraph {
           WHERE (e3.work_item_id = wi.id
              OR e3.thread_id IN (SELECT thread_id FROM thread_work_items WHERE work_item_id = wi.id))
             AND e3.targeted_at_operator = 1
-            AND e3.digest = 0 -- a digest doesn't bring a dismissed item back
+            AND (e3.digest = 0 OR (e3.digest = 1 AND e3.work_item_id = wi.id)) -- a digest doesn't bring back the items it names
             AND e3.timestamp > wi.dismissed_at
         ))
       ORDER BY
@@ -1454,7 +1458,7 @@ export class ContextGraph {
           WHERE (e3.work_item_id = wi.id
              OR e3.thread_id IN (SELECT thread_id FROM thread_work_items WHERE work_item_id = wi.id))
             AND e3.targeted_at_operator = 1
-            AND e3.digest = 0 -- a digest doesn't bring a dismissed item back
+            AND (e3.digest = 0 OR (e3.digest = 1 AND e3.work_item_id = wi.id)) -- a digest doesn't bring back the items it names
             AND e3.timestamp > wi.dismissed_at
         )
       ORDER BY wi.dismissed_at DESC

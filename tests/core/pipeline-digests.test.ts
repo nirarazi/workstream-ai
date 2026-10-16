@@ -134,14 +134,20 @@ describe("Pipeline: digests", () => {
     expect(graph.getEventByMessageId("d1", "T-OLD")!.digest).toBe(false);
   });
 
-  it("asks for the backfill only when the digest column is first added", () => {
+  it("keeps the backfill owed, in the database, until it has run", () => {
     const file = join(mkdtempSync(join(tmpdir(), "ws-digest-")), "graph.db");
     const first = new Database(file);
     expect(first.digestBackfillPending).toBe(true);
     first.close();
+    // Opened again (say by the MCP server) before the engine ran it: still owed
     const second = new Database(file);
+    expect(second.digestBackfillPending).toBe(true);
+    new ContextGraph(second).backfillDigests(namesDigest, () => []);
     expect(second.digestBackfillPending).toBe(false);
     second.close();
+    const third = new Database(file);
+    expect(third.digestBackfillPending).toBe(false);
+    third.close();
   });
 
   it("handles a reply in an item's own thread as usual, even when it names two other tickets", async () => {
@@ -196,15 +202,62 @@ describe("Pipeline: digests", () => {
     expect(graph.getActionableItems().map((i) => i.workItem.id)).not.toContain("OPS-2");
   });
 
-  it("gives an item it alone knows about a status, still outside Needs me", async () => {
+  it("gives an item it alone knows about a first status from its own line, still outside Needs me", async () => {
     const { graph, pipeline } = setup(DIGEST_TEXT, DIGEST_ANSWER);
 
     await pipeline.processOnce();
 
     expect(graph.getWorkItemById("OPS-1")!.currentAtcStatus).toBe("blocked_on_human");
+    expect(graph.getWorkItemById("OPS-1")!.currentConfidence).toBe(0);
+    // Done isn't seeded: it would hold the item there
+    expect(graph.getWorkItemById("OPS-3")!.currentAtcStatus).toBeNull();
     expect(graph.getAllActiveItems().map((i) => i.workItem.id)).toContain("OPS-1");
     expect(graph.getActionableItems()).toEqual([]);
     expect(db.db.prepare("SELECT agrees FROM digest_checks WHERE work_item_id = 'OPS-1'").get()).toEqual({ agrees: null });
+  });
+
+  it("doesn't give items the whole message's status, and a direct message about one still wins", async () => {
+    const answer: Classification = {
+      status: "in_progress", entryType: "progress", confidence: 0.97, reason: "all moving", workItemIds: ["OPS-7", "OPS-8", "OPS-9"],
+      title: "Daily", targetedAtOperator: false, actionRequiredFrom: null, nextAction: null,
+    };
+    const { graph, pipeline, adapter, classify, message } = setup("Daily: OPS-7, OPS-8, OPS-9 all moving", answer);
+    await pipeline.processOnce();
+    expect(graph.getWorkItemById("OPS-7")!.currentAtcStatus).toBeNull();
+    // Every named item is still checked, with the whole message's status
+    expect(db.db.prepare("SELECT COUNT(*) AS n FROM digest_checks").get()).toEqual({ n: 3 });
+
+    const blocker = { ...message, id: "m2", threadId: "T-RELAY", userId: "U-relay", userName: "Relay", text: "OPS-7 is blocked: I need your approval to rotate the prod key", timestamp: "2026-10-15T10:00:00.000Z" };
+    adapter.readThreads.mockResolvedValue([{ id: "T-RELAY", channelId: "C1", channelName: "fleet-ops", platform: "slack", workItemId: null, lastActivity: blocker.timestamp, messageCount: 1, messages: [blocker] }]);
+    classify.mockResolvedValue({
+      status: "blocked_on_human", entryType: "block", confidence: 0.9, reason: "needs approval", workItemIds: ["OPS-7"],
+      title: "Rotate key", targetedAtOperator: true, actionRequiredFrom: ["U0OPERATOR1"], nextAction: "Approve",
+    });
+    await pipeline.processOnce();
+
+    expect(graph.getWorkItemById("OPS-7")!.currentAtcStatus).toBe("blocked_on_human");
+    expect(graph.getActionableItems().map((i) => i.workItem.id)).toEqual(["OPS-7"]);
+  });
+
+  it("counts a digest posted in an item's own thread for that item only", async () => {
+    const answer: Classification = {
+      status: "blocked_on_human", entryType: "block", confidence: 0.95, reason: "round-up", workItemIds: ["OPS-2", "OPS-3", "OPS-4"],
+      title: "Round-up", targetedAtOperator: true, actionRequiredFrom: ["U0OPERATOR1"], nextAction: null,
+      breakdown: [breakdown("OPS-2", "blocked_on_human", true), breakdown("OPS-3", "in_progress"), breakdown("OPS-4", "in_progress")],
+    };
+    const { graph, pipeline } = setup("Round-up: OPS-2 blocked, OPS-3 and OPS-4 moving", answer, "T-OWN");
+    graph.upsertWorkItem({ id: "OPS-1", source: "jira", title: "One", currentAtcStatus: "blocked_on_human", currentConfidence: 0.5 });
+    graph.upsertThread({ id: "T-OWN", channelId: "C1", channelName: "fleet-ops", platform: "slack", workItemId: "OPS-1", lastActivity: "2026-10-15T08:00:00.000Z" });
+    graph.linkThreadWorkItem("T-OWN", "OPS-1", "primary");
+    graph.upsertWorkItem({ id: "OPS-2", source: "jira", title: "Two", currentAtcStatus: "blocked_on_human" });
+    graph.dismissWorkItem("OPS-2");
+
+    await pipeline.processOnce();
+
+    const needsMe = graph.getActionableItems().map((i) => i.workItem.id);
+    expect(needsMe).toContain("OPS-1");
+    expect(needsMe).not.toContain("OPS-2");
+    expect(graph.getEventByMessageId("m1", "T-OWN")!.digest).toBe(true);
   });
 
   it("doesn't check a digest held back for a retry against a status set after it", async () => {

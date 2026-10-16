@@ -137,6 +137,15 @@ export function settingsNeedRestart(previous: Config, next: Config, envChanged: 
  * The posted message as the adapter reported it, if it's usable as an event key: a real platform message ID. A blank
  * or missing one would make every later action in the thread collide with it, so it's treated as not reported.
  */
+/** The ways a model names the operator in "who it's waiting on": platform IDs, usernames, full and first names */
+function operatorNames(identities: OperatorIdentityMap | undefined, configuredName: string | undefined): string[] {
+  const names = [
+    ...[...(identities?.values() ?? [])].flatMap((id) => [id.userId, id.userName]),
+    configuredName,
+  ].filter((n): n is string => Boolean(n?.trim()));
+  return [...new Set([...names, ...names.map((n) => n.trim().split(/[\s.]+/)[0])])];
+}
+
 function usablePosted(posted: PostedMessage | void): PostedMessage | undefined {
   if (!posted || typeof posted.messageId !== "string" || !posted.messageId.trim()) return undefined;
   if (typeof posted.timestamp !== "string" || Number.isNaN(Date.parse(posted.timestamp))) return undefined;
@@ -235,13 +244,10 @@ export function createApp(state: EngineState): Hono {
 
   // --- GET /api/inbox ---
   app.get("/api/inbox", (c) => {
-    // Models name the operator by platform ID, username, full or first name
-    const names = [
-      ...[...(state.operatorIdentities?.values() ?? [])].flatMap((id) => [id.userId, id.userName]),
-      state.config.operator?.name,
-    ].filter((n): n is string => Boolean(n?.trim()));
-    const operatorNames = [...new Set([...names, ...names.map((n) => n.trim().split(/[\s.]+/)[0])])];
-    const items = state.graph.getActionableItems(state.config.inbox?.handoffMinConfidence, operatorNames);
+    const items = state.graph.getActionableItems(
+      state.config.inbox?.handoffMinConfidence,
+      operatorNames(state.operatorIdentities, state.config.operator?.name),
+    );
     return c.json({ items });
   });
 
@@ -1678,16 +1684,24 @@ async function main(): Promise<void> {
   // Backfill junction rows from existing events' raw_text
   graph.backfillJunctionFromRawText([extractor]);
   // Once, for messages stored before digests were told apart: mark them, so they stop putting items in Needs me.
-  // Which items that takes out of Needs me is logged, and the marks can be undone (see backfillDigests).
+  // Which items that takes out of Needs me is logged, and the marks can be undone (see backfillDigests). If it fails,
+  // it's tried again at the next start.
   if (db.digestBackfillPending) {
-    const inNeedsMe = () => new Set(graph.getActionableItems().map((i) => i.workItem.id));
-    const before = inNeedsMe();
-    const extractIds = (text: string) => [...new Set(extractor.extractWorkItemIds(text))];
-    const marked = graph.backfillDigests(namesDigest, extractIds);
-    const after = inNeedsMe();
-    const left = [...before].filter((id) => !after.has(id));
-    log.info(`Marked ${marked.length} earlier message(s) naming ${DIGEST_MIN_ITEMS}+ work items as digests`
-      + (left.length > 0 ? `; out of Needs me: ${left.join(", ")}` : ""));
+    try {
+      // Before the adapters connect, the operator is known by the configured name only
+      const inNeedsMe = () => new Set(
+        graph.getActionableItems(config.inbox?.handoffMinConfidence, operatorNames(undefined, config.operator?.name)).map((i) => i.workItem.id),
+      );
+      const before = inNeedsMe();
+      const extractIds = (text: string) => [...new Set(extractor.extractWorkItemIds(text))];
+      const marked = graph.backfillDigests(namesDigest, extractIds);
+      const after = inNeedsMe();
+      const left = [...before].filter((id) => !after.has(id));
+      log.info(`Marked ${marked.length} earlier message(s) naming ${DIGEST_MIN_ITEMS}+ work items as digests`
+        + (left.length > 0 ? `; out of Needs me: ${left.join(", ")}` : ""));
+    } catch (err) {
+      log.error("Couldn't mark earlier digests (will try again at the next start)", err instanceof Error ? err.message : String(err));
+    }
   }
 
   // Initialize engine state

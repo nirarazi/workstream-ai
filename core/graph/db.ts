@@ -100,6 +100,12 @@ CREATE TABLE IF NOT EXISTS thread_work_items (
   PRIMARY KEY (thread_id, work_item_id)
 );
 
+-- One-off upkeep the engine still owes the stored data, e.g. digest_backfill = pending
+CREATE TABLE IF NOT EXISTS meta (
+  key   TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
+
 -- What a digest (a message naming several work items) says about each, against what the app already believes
 CREATE TABLE IF NOT EXISTS digest_checks (
   event_id       TEXT NOT NULL REFERENCES events(id),
@@ -126,8 +132,10 @@ CREATE INDEX IF NOT EXISTS idx_twi_work_item ON thread_work_items(work_item_id);
 
 export class Database {
   readonly db: BetterSqlite3Type.Database;
-  /** Set when this open added events.digest: messages stored before then still need marking (once) */
-  digestBackfillPending = false;
+  /** Messages stored before events.digest existed still need marking (once; cleared when it's done) */
+  get digestBackfillPending(): boolean {
+    return this.db.prepare("SELECT 1 FROM meta WHERE key = 'digest_backfill'").get() !== undefined;
+  }
 
   constructor(dbPath: string = "workstream.db") {
     // Migrate legacy "atc.db" → "workstream.db" if the new name doesn't exist yet
@@ -277,7 +285,9 @@ export class Database {
     const eventColsForDigest = this.db.pragma("table_info(events)") as Array<{ name: string }>;
     if (!eventColsForDigest.some((c) => c.name === "digest")) {
       this.db.exec("ALTER TABLE events ADD COLUMN digest INTEGER NOT NULL DEFAULT 0");
-      this.digestBackfillPending = true; // the engine marks earlier digests once (it has the extractors)
+      // The engine marks earlier digests once (it has the extractors). Kept in the database, so it isn't lost when
+      // the MCP server or a CLI opens it first, or the engine stops before it's done.
+      this.db.prepare("INSERT OR REPLACE INTO meta (key, value) VALUES ('digest_backfill', 'pending')").run();
       log.info("Migration: added digest column to events");
     }
 
