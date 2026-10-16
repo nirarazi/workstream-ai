@@ -156,7 +156,6 @@ function digestJudgeFor(state: EngineState): DigestJudge {
  * The posted message as the adapter reported it, if it's usable as an event key: a real platform message ID. A blank
  * or missing one would make every later action in the thread collide with it, so it's treated as not reported.
  */
-
 function usablePosted(posted: PostedMessage | void): PostedMessage | undefined {
   if (!posted || typeof posted.messageId !== "string" || !posted.messageId.trim()) return undefined;
   if (typeof posted.timestamp !== "string" || Number.isNaN(Date.parse(posted.timestamp))) return undefined;

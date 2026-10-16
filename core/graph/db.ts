@@ -310,6 +310,8 @@ export class Database {
     const checkCols = this.db.pragma("table_info(digest_checks)") as Array<{ name: string }>;
     if (!checkCols.some((c) => c.name === "from_line")) {
       this.db.exec("ALTER TABLE digest_checks ADD COLUMN from_line INTEGER NOT NULL DEFAULT 1");
+      // Recorded before the column existed: where a claim came from isn't known, so it isn't taken as the item's line
+      this.db.exec("UPDATE digest_checks SET from_line = 0");
       log.info("Migration: added from_line to digest_checks");
     }
     for (const column of ["judge_verdict", "judge_reason", "judged_at"]) {

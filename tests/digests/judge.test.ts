@@ -141,6 +141,40 @@ describe("DigestJudge", () => {
     expect(check("OPS-1")).toMatchObject({ resolution: null, judge_verdict: "unsure" });
   });
 
+  it("doesn't let a check the model always fails on hold up the others", async () => {
+    disagreement("OPS-1", "in_progress", "blocked_on_human", { at: "2026-10-15T08:00:00.000Z", messageId: "d0" }); // oldest
+    disagreement("OPS-2", "in_progress", "completed");
+    disagreement("OPS-3", "in_progress", "completed", { messageId: "d2", at: "2026-10-15T09:30:00.000Z" });
+    const complete = vi.fn(async (prompt: string) => {
+      if (prompt.startsWith("Work item: OPS-1")) throw new Error("400 bad request");
+      return '{"verdict":"app","reason":"fine"}';
+    });
+    const judge = new DigestJudge(graph, complete);
+
+    for (let i = 0; i < 3; i++) await judge.judgeSome();
+
+    expect(check("OPS-1")).toMatchObject({ resolution: null, judge_verdict: "unsure" });
+    expect(check("OPS-2").resolution).toBe("app");
+    expect(check("OPS-3").resolution).toBe("app");
+  });
+
+  it("doesn't let another sender's whole-message flag make a waiting claim need the operator", () => {
+    disagreement("OPS-1", "in_progress", "blocked_on_human"); // Atlas: its own line, not aimed at the operator
+    disagreement("OPS-1", "in_progress", "blocked_on_human", { messageId: "r1", at: "2026-10-15T10:00:00.000Z", agentId: "U-relay", targeted: true, fromLine: false });
+
+    const rows = db.db.prepare("SELECT digest_targeted, from_line FROM digest_checks WHERE work_item_id = 'OPS-1'").all();
+    expect(rows).toEqual([{ digest_targeted: 0, from_line: 1 }]);
+  });
+
+  it("clips long text on a whole character", () => {
+    const text = "a".repeat(1499) + "😀" + "b".repeat(10);
+    const prompt = buildJudgePrompt(
+      { eventId: "e", workItemId: "OPS-9", digestStatus: "completed", digestTargeted: false, itemStatus: "in_progress", createdAt: DIGEST_AT, digestText: text, threadId: "T", fromLine: true },
+      { title: null, currentAtcStatus: "in_progress" }, [],
+    );
+    expect(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/.test(prompt)).toBe(false);
+  });
+
   it("leaves checks alone through an outage or a spent budget", async () => {
     disagreement("OPS-1", "in_progress", "blocked_on_human");
     const judge = new DigestJudge(graph, vi.fn().mockRejectedValue(new Error("Daily LLM budget exhausted")));
@@ -216,7 +250,8 @@ describe("DigestJudge", () => {
     for (const id of ["OPS-1", "OPS-2", "OPS-3", "OPS-4", "OPS-5"]) disagreement(id, "in_progress", "completed");
     const down = vi.fn().mockRejectedValue(new Error("Daily LLM budget exhausted"));
 
-    expect(await new DigestJudge(graph, down).judgeSome()).toEqual({ settled: 0, asked: 1 });
+    // One call, and one probe to tell a bad check from a down model
+    expect(await new DigestJudge(graph, down).judgeSome()).toEqual({ settled: 0, asked: 2 });
     expect(check("OPS-1").judged_at).toBeNull();
 
     const up = answering("app");

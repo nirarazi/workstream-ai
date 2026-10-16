@@ -47,7 +47,8 @@ Reply with JSON only: {"verdict": "app" | "digest" | "unsure", "reason": "<one s
 
 /** Untrusted text as data: no angle brackets (so it can't open or close a tag, in any spelling), clipped */
 function asData(text: string, max: number): string {
-  const clipped = text.length > max ? `${text.slice(0, max)}…` : text;
+  // Cut on a whole character: half an emoji (a lone surrogate) makes some providers reject the request
+  const clipped = text.length > max ? `${text.slice(0, max).replace(/[\uD800-\uDBFF]$/, "")}…` : text;
   return clipped.replace(/[<＜]/g, "‹").replace(/[>＞]/g, "›");
 }
 
@@ -103,6 +104,9 @@ export class DigestJudge {
     let settled = 0;
     let asked = 0;
     let modelDown = false;
+    // After a failed call, one other check is asked as a probe: answered, the failure was that check's doing
+    let failedFirst: DigestDisagreement | null = null;
+    let probed = false;
     for (const d of this.graph.getOpenDigestDisagreements(CHECKS_PER_RUN)) {
       if (stopped()) break;
       if (this.settleForFree(d)) {
@@ -119,14 +123,24 @@ export class DigestJudge {
         reply = await this.complete(buildJudgePrompt(d, item, own), JUDGE_SYSTEM_PROMPT);
       } catch (err) {
         if (stopped()) break; // settings changed mid-call (e.g. new credentials): write nothing
-        // Down, or the budget is spent: settle what's free and try the model again next run
-        modelDown = true;
-        this.noteFailedCall(d, err);
+        this.warn(err);
+        if (!failedFirst && !probed) {
+          failedFirst = d;
+          probed = true;
+        } else {
+          // A second failure: down, or the budget is spent. Settle what's free; ask again next run
+          modelDown = true;
+          failedFirst = null;
+        }
         continue;
       }
       if (stopped()) break; // settings changed mid-call: write nothing
       this.lastAnsweredAt = Date.now();
       this.failedCalls.delete(checkKey(d));
+      if (failedFirst) {
+        this.countFailure(failedFirst);
+        failedFirst = null;
+      }
       // The operator may have acted on the item, or a message about it arrived, during the call
       if (this.settleForFree(d)) {
         settled++;
@@ -134,6 +148,8 @@ export class DigestJudge {
       }
       if (this.apply(d, this.graph.getWorkItemById(d.workItemId)!, parseVerdict(reply))) settled++;
     }
+    // Nothing else was asked after it: count it only if the model has been answering lately
+    if (failedFirst && !stopped() && Date.now() - this.lastAnsweredAt < MODEL_ANSWERING_MS) this.countFailure(failedFirst);
     if (settled > 0 || asked > 0) log.info(`Digest checks: ${settled} settled, ${asked} judged by the model`);
     return { settled, asked };
   }
@@ -188,18 +204,19 @@ export class DigestJudge {
     return true;
   }
 
-  private noteFailedCall(d: DigestDisagreement, err: unknown): void {
-    // Only while the model answers other calls is a failure this check's doing; otherwise it's an outage
-    if (Date.now() - this.lastAnsweredAt < MODEL_ANSWERING_MS) {
-      const key = checkKey(d);
-      const failures = (this.failedCalls.get(key) ?? 0) + 1;
-      if (failures >= MAX_FAILED_CALLS) {
-        this.failedCalls.delete(key);
-        this.graph.markDigestCheckUnsure(d.eventId, d.workItemId, "The model couldn't be asked about it");
-      } else {
-        this.failedCalls.set(key, failures);
-      }
+  /** A call about this check failed while the model answers others: after a few, it's left for the operator */
+  private countFailure(d: DigestDisagreement): void {
+    const key = checkKey(d);
+    const failures = (this.failedCalls.get(key) ?? 0) + 1;
+    if (failures >= MAX_FAILED_CALLS) {
+      this.failedCalls.delete(key);
+      this.graph.markDigestCheckUnsure(d.eventId, d.workItemId, "The model couldn't be asked about it");
+    } else {
+      this.failedCalls.set(key, failures);
     }
+  }
+
+  private warn(err: unknown): void {
     if (Date.now() - this.lastWarnAt >= WARN_EVERY_MS) {
       this.lastWarnAt = Date.now();
       log.warn("Couldn't judge digest disagreements", err instanceof Error ? err.message : String(err));

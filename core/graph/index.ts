@@ -733,20 +733,28 @@ export class ContextGraph {
       // The same claim about the item, still waiting to be judged, isn't queued again (a digest posted daily); one
       // that now says the item needs the operator makes the waiting one say so
       const waiting = this.db.db.prepare(`
-        SELECT event_id FROM digest_checks WHERE work_item_id = ? AND digest_status = ? AND agrees = 0
-          AND resolved_at IS NULL AND judged_at IS NULL
-      `).get(check.workItemId, check.digestStatus) as { event_id: string } | undefined;
+        SELECT dc.event_id, e.agent_id IS (SELECT agent_id FROM events WHERE id = ?) AS same_sender
+        FROM digest_checks dc JOIN events e ON e.id = dc.event_id
+        WHERE dc.work_item_id = ? AND dc.digest_status = ? AND dc.agrees = 0
+          AND dc.resolved_at IS NULL AND dc.judged_at IS NULL
+      `).get(check.eventId, check.workItemId, check.digestStatus) as { event_id: string; same_sender: number } | undefined;
       if (waiting) {
-        if (check.digestTargeted) {
-          this.db.db.prepare("UPDATE digest_checks SET digest_targeted = 1 WHERE event_id = ? AND work_item_id = ?").run(waiting.event_id, check.workItemId);
+        // The same sender's own line for the item makes the waiting claim the item's own line (and targeted if it is)
+        if (waiting.same_sender && check.fromLine !== false) {
+          this.db.db.prepare(`
+            UPDATE digest_checks SET from_line = 1, digest_targeted = MAX(digest_targeted, ?) WHERE event_id = ? AND work_item_id = ?
+          `).run(check.digestTargeted ? 1 : 0, waiting.event_id, check.workItemId);
         }
         return;
       }
-      // Nor is a claim already judged against the item, or left for the operator, while the item stands as it did
+      // Nor is the same sender's claim already judged against the item, or left for the operator, while the item
+      // stands as it did (one the judge rejected comes back after a week, in case it was right after all)
       if (this.db.db.prepare(`
-        SELECT 1 FROM digest_checks WHERE work_item_id = ? AND digest_status = ? AND item_status IS ? AND agrees = 0
-          AND (resolution = 'app' OR judge_verdict = 'unsure')
-      `).get(check.workItemId, check.digestStatus, check.itemStatus)) return;
+        SELECT 1 FROM digest_checks dc JOIN events e ON e.id = dc.event_id
+        WHERE dc.work_item_id = ? AND dc.digest_status = ? AND dc.item_status IS ? AND dc.agrees = 0
+          AND e.agent_id IS (SELECT agent_id FROM events WHERE id = ?)
+          AND (dc.judge_verdict = 'unsure' OR (dc.resolution = 'app' AND dc.resolved_at > ?))
+      `).get(check.workItemId, check.digestStatus, check.itemStatus, check.eventId, new Date(Date.now() - 7 * 86400000).toISOString())) return;
     }
     this.db.db.prepare(`
       INSERT OR IGNORE INTO digest_checks (event_id, work_item_id, digest_status, digest_targeted, item_status, agrees, created_at, from_line)
@@ -783,7 +791,7 @@ export class ContextGraph {
   hasLaterDigestCheck(workItemId: string, at: string, eventId: string): boolean {
     return this.db.db.prepare(`
       SELECT 1 FROM digest_checks dc JOIN events e ON e.id = dc.event_id
-      WHERE dc.work_item_id = ? AND dc.created_at > ?
+      WHERE dc.work_item_id = ? AND dc.created_at > ? AND dc.from_line = 1
         AND e.agent_id IS (SELECT agent_id FROM events WHERE id = ?)
       LIMIT 1
     `).get(workItemId, at, eventId) !== undefined;
