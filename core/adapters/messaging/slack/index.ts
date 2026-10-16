@@ -24,6 +24,8 @@ interface SlackMessage {
   text?: string;
   user?: string;
   bot_id?: string;
+  /** The name a webhook or bot posted under (overrides the bot's own name in Slack) */
+  username?: string;
   /** Set when an app posted it, also under a user's token */
   app_id?: string;
   bot_profile?: {
@@ -188,6 +190,8 @@ export class SlackAdapter implements MessagingAdapter {
   /** When each conversation first showed up in the list: a never-read one's place in the active queue */
   private readonly channelFirstSeen = new Map<string, number>();
   private lastDeferredLog = -Infinity;
+  /** Bots' names from bots.info, by bot ID (null: looked up, none found), so each bot is looked up once */
+  private readonly botNames = new Map<string, string | null>();
   /** Latest message time seen per channel (epoch ms), and when each channel was last read. */
   private readonly channelLastActivity = new Map<string, number>();
   private readonly channelLastRead = new Map<string, number>();
@@ -449,10 +453,12 @@ export class SlackAdapter implements MessagingAdapter {
           if (msg.reply_count && msg.reply_count > 0 && msg.thread_ts) {
             // A parent message with replies: fetch the full thread, unless nothing's been added since it was processed
             const replyMessages = hasNewReply ? await this.fetchThreadReplies(channelId, msg.thread_ts) : [msg];
+            await this.learnBotNames(replyMessages);
             const thread = this.buildThread(channelId, channelName, msg.thread_ts, replyMessages);
             threads.push(thread);
           } else if (isParent) {
             // Standalone message (no replies, not a reply itself)
+            await this.learnBotNames([msg]);
             const thread = this.buildThread(channelId, channelName, msg.ts, [msg]);
             threads.push(thread);
           }
@@ -586,13 +592,13 @@ export class SlackAdapter implements MessagingAdapter {
     const channelName = channelInfo?.name ?? channelId;
 
     const slackMessages = await this.fetchThreadReplies(channelId, threadId);
+    await this.learnBotNames(slackMessages);
 
     return slackMessages.map((msg) => {
       const userInfo = this.userInfoMap.get(msg.user ?? "")
         ?? (msg.bot_id ? this.userInfoMap.get(msg.bot_id) : undefined);
 
       // For bot messages, use bot_profile as additional fallback
-      const botName = msg.bot_profile?.name;
       const botAvatar = msg.bot_profile?.icons?.image_48;
 
       return {
@@ -601,7 +607,7 @@ export class SlackAdapter implements MessagingAdapter {
         channelId,
         channelName,
         userId: msg.user ?? msg.bot_id ?? "",
-        userName: userInfo?.name ?? botName ?? msg.user ?? "unknown",
+        userName: userInfo?.name ?? this.botNameOf(msg) ?? msg.user ?? msg.bot_id ?? "unknown",
         userAvatarUrl: userInfo?.avatar || botAvatar || undefined,
         text: this.resolveSlackMentions(msg.text ?? ""),
         timestamp: msg.ts ? slackTsToISO(msg.ts) : "",
@@ -668,6 +674,16 @@ export class SlackAdapter implements MessagingAdapter {
     const users = await this.getUsers();
     let backfilled = 0;
     for (const agent of agents) {
+      // A bot stored as "unknown" (or under its ID) before bots were looked up gets its name now
+      if ((agent.name === "unknown" || agent.name === agent.platformUserId) && agent.platformUserId.startsWith("B")) {
+        if (!this.botNames.has(agent.platformUserId)) this.botNames.set(agent.platformUserId, await this.lookUpBotName(agent.platformUserId));
+        const botName = this.botNames.get(agent.platformUserId);
+        if (botName) {
+          graph.upsertAgent({ id: agent.id, name: botName, platform: agent.platform, platformUserId: agent.platformUserId, avatarUrl: agent.avatarUrl });
+          backfilled++;
+          continue;
+        }
+      }
       const slackName = users.get(agent.platformUserId);
       const avatar = this.getUserAvatar(agent.platformUserId);
       const needsName = agent.name === agent.platformUserId && slackName;
@@ -874,6 +890,37 @@ export class SlackAdapter implements MessagingAdapter {
     } while (cursor);
   }
 
+  /** A bot's name for its message: its profile on the message, the name it posted under, or bots.info's */
+  private botNameOf(msg: SlackMessage): string | undefined {
+    return msg.bot_profile?.name || msg.username || (msg.bot_id ? this.botNames.get(msg.bot_id) ?? undefined : undefined);
+  }
+
+  /**
+   * Looks up, once each, the bots in these messages whose name the messages don't carry (no profile, no posted
+   * name), so their messages aren't from "unknown". A failed lookup is remembered as no name and not retried.
+   */
+  private async learnBotNames(messages: SlackMessage[]): Promise<void> {
+    for (const msg of messages) {
+      const botId = msg.bot_id;
+      if (!botId || this.botNames.has(botId) || this.userInfoMap.has(msg.user ?? "") || msg.bot_profile?.name || msg.username) continue;
+      this.botNames.set(botId, await this.lookUpBotName(botId));
+    }
+  }
+
+  private async lookUpBotName(botId: string): Promise<string | null> {
+    try {
+      const result = await withRateLimitRetry(
+        () => this.client!.bots.info({ bot: botId }),
+        "bots.info",
+        this.limiter,
+      );
+      return (result as { bot?: { name?: string } }).bot?.name || null;
+    } catch (err) {
+      log.warn(`Couldn't look up bot ${botId}`, err instanceof Error ? err.message : String(err));
+      return null;
+    }
+  }
+
   private buildThread(
     channelId: string,
     channelName: string,
@@ -885,7 +932,6 @@ export class SlackAdapter implements MessagingAdapter {
         ?? (msg.bot_id ? this.userInfoMap.get(msg.bot_id) : undefined);
 
       // For bot messages, use bot_profile as additional fallback
-      const botName = msg.bot_profile?.name;
       const botAvatar = msg.bot_profile?.icons?.image_48;
 
       return {
@@ -894,7 +940,7 @@ export class SlackAdapter implements MessagingAdapter {
         channelId,
         channelName,
         userId: msg.user ?? msg.bot_id ?? "",
-        userName: userInfo?.name ?? botName ?? msg.user ?? "unknown",
+        userName: userInfo?.name ?? this.botNameOf(msg) ?? msg.user ?? msg.bot_id ?? "unknown",
         userAvatarUrl: userInfo?.avatar || botAvatar || undefined,
         text: this.resolveSlackMentions(msg.text ?? ""),
         timestamp: msg.ts ? slackTsToISO(msg.ts) : "",
