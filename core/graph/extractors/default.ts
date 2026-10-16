@@ -23,25 +23,47 @@ export function looksLikeTicketKey(id: string): boolean {
   return m !== null && !NOT_TICKET_KEYS.has(m[1]);
 }
 
+/**
+ * Known ticket prefixes (e.g. ["OPS-", "ENG-"]): the configured ones plus those the task adapter
+ * learned from the tracker (Jira's project keys), upper-cased and without duplicates.
+ */
+export function knownTicketPrefixes(
+  configured: string[] | undefined,
+  taskAdapter?: { getValidIdPrefixes?(): string[] } | null,
+): string[] {
+  const all = [...(configured ?? []), ...(taskAdapter?.getValidIdPrefixes?.() ?? [])];
+  return [...new Set(all.map((p) => p.toUpperCase()))];
+}
+
 export interface DefaultExtractorConfig {
   ticketPatterns: string[];
   prPatterns: string[];
-  /** Known ticket prefixes from config (e.g. ["OPS-", "ENG-", "MKT-"]) */
-  ticketPrefixes?: string[];
+  /** Known ticket prefixes (e.g. ["OPS-", "ENG-", "MKT-"]), or a function returning the current ones */
+  ticketPrefixes?: string[] | (() => string[]);
+  /** IDs that are work items already, which are kept whatever their prefix */
+  isKnownId?: (id: string) => boolean;
 }
 
 export class DefaultExtractor implements Extractor {
   readonly name = "default";
   private ticketRegexes: RegExp[];
-  private ticketPrefixes: string[];
+  private prefixSource: () => string[];
+  private isKnownId: (id: string) => boolean;
 
   constructor(config: DefaultExtractorConfig) {
     this.ticketRegexes = config.ticketPatterns.map((p) => new RegExp(p, "g"));
-    this.ticketPrefixes = (config.ticketPrefixes ?? []).map((p) => p.toUpperCase());
+    const source = config.ticketPrefixes ?? [];
+    this.prefixSource = typeof source === "function" ? source : () => source;
+    this.isKnownId = config.isKnownId ?? (() => false);
+  }
+
+  private get ticketPrefixes(): string[] {
+    return this.prefixSource().map((p) => p.toUpperCase());
   }
 
   extractWorkItemIds(text: string): string[] {
     const ids = new Set<string>();
+    const prefixes = this.ticketPrefixes;
 
     for (const regex of this.ticketRegexes) {
       regex.lastIndex = 0;
@@ -50,7 +72,8 @@ export class DefaultExtractor implements Extractor {
         const captured = match[1] ?? match[0];
         // Only accept IDs whose prefix is in the known ticket prefixes list. With none configured, accept
         // anything shaped like a ticket key except common technical terms.
-        if (this.ticketPrefixes.length === 0 ? looksLikeTicketKey(captured) : this.matchesKnownPrefix(captured)) {
+        const valid = prefixes.length === 0 ? looksLikeTicketKey(captured) : this.matchesKnownPrefix(captured, prefixes);
+        if (valid || this.isKnownId(captured)) {
           ids.add(captured);
         }
       }
@@ -62,8 +85,8 @@ export class DefaultExtractor implements Extractor {
     return Array.from(ids);
   }
 
-  private matchesKnownPrefix(id: string): boolean {
+  private matchesKnownPrefix(id: string, prefixes: string[]): boolean {
     const upper = id.toUpperCase();
-    return this.ticketPrefixes.some((prefix) => upper.startsWith(prefix));
+    return prefixes.some((prefix) => upper.startsWith(prefix));
   }
 }

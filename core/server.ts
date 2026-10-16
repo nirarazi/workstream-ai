@@ -9,7 +9,7 @@ import { ContextGraph } from "./graph/index.js";
 import { Classifier, createProvider, loadPrompt, buildFewShotMessages, buildOperatorContext, hasRemit } from "./classifier/index.js";
 import { createDecisionGate } from "./decisions/gate.js";
 import { UsageTracker } from "./usage/tracker.js";
-import { DefaultExtractor } from "./graph/extractors/default.js";
+import { DefaultExtractor, knownTicketPrefixes } from "./graph/extractors/default.js";
 import { WorkItemLinker } from "./graph/linker.js";
 import { createMessagingAdapter, createTaskAdapter, getMessagingAdapterSetupInfo, getTaskAdapterSetupInfo } from "./adapters/registry.js";
 import { Pipeline } from "./pipeline.js";
@@ -211,10 +211,13 @@ export function createApp(state: EngineState): Hono {
       },
       llmBackoff,
       llmUsage,
-      // Ticket prefixes double as the Create Ticket project list; fall back to the default project
+      // Ticket prefixes double as the Create Ticket project list; fall back to the default project,
+      // then to the tracker's own projects
       projectKeys: (state.config.taskAdapter?.ticketPrefixes?.length
         ? state.config.taskAdapter.ticketPrefixes
-        : [state.config.taskAdapter?.defaultProject].filter((p): p is string => Boolean(p))
+        : state.config.taskAdapter?.defaultProject
+          ? [state.config.taskAdapter.defaultProject]
+          : state.taskAdapter?.getValidIdPrefixes?.() ?? []
       ).map((p: string) => p.replace(/-$/, "")),
     });
   });
@@ -1227,10 +1230,14 @@ export function createApp(state: EngineState): Hono {
           }
         }
 
-        // Prepare credentials (e.g. Jira base64 encoding)
-        const prepared = adapter.prepareCredentials
-          ? adapter.prepareCredentials(fields)
-          : fields;
+        // Prepare credentials (e.g. Jira base64 encoding); an adapter throws on a value it can't use, such as
+        // a Jira base URL that isn't https, and nothing is saved
+        let prepared: Record<string, string>;
+        try {
+          prepared = adapter.prepareCredentials ? adapter.prepareCredentials(fields) : fields;
+        } catch (err) {
+          return c.json({ error: err instanceof Error ? err.message : String(err) }, 400);
+        }
 
         // Write the computed auth token env var if adapter produces one
         // For Jira: the base64 token goes to WORKSTREAM_JIRA_TOKEN
@@ -1246,7 +1253,7 @@ export function createApp(state: EngineState): Hono {
           localConfig.taskAdapter = {
             ...existingTask,
             enabled: true,
-            baseUrl: fields.baseUrl,
+            baseUrl: prepared.baseUrl ?? fields.baseUrl,
           };
         }
       }
@@ -1412,6 +1419,7 @@ export function createApp(state: EngineState): Hono {
           : body.task.fields;
         await untilDeadlineOrSuperseded((signal) => adapter.connect(creds as Record<string, string> & { token: string }, signal), CONNECT_DEADLINE_MS, `${adapter.name} connect`, superseded);
         state.taskAdapter = adapter;
+        adapter.getValidIdPrefixes?.(); // start loading the tracker's prefixes before the next poll needs them
         reconnecting.delete("task");
         const taskIdentity = adapter.getAuthenticatedUser?.();
         if (taskIdentity) {
@@ -1637,10 +1645,16 @@ async function main(): Promise<void> {
   const classifier = new Classifier(usageTracker, prompt.system, fewShot, undefined, operatorRole, null, buildOperatorContext(config), hasRemit(config));
   classifier.setRateLimiter(rateLimiters.llm);
   classifier.setDecisionGate(createDecisionGate(config, usageTracker));
+  // Late-bound: the junction backfill below runs the extractor before the engine state exists (with the
+  // configured prefixes only); once it does, the extractor also knows the tracker's project keys
+  let engine: EngineState | null = null;
   const extractor = new DefaultExtractor({
     ticketPatterns: config.extractors.ticketPatterns,
     prPatterns: config.extractors.prPatterns,
-    ticketPrefixes: config.taskAdapter.ticketPrefixes,
+    ticketPrefixes: () => engine
+      ? knownTicketPrefixes(engine.config.taskAdapter.ticketPrefixes, engine.taskAdapter)
+      : config.taskAdapter.ticketPrefixes,
+    isKnownId: (id) => graph.getWorkItemById(id) !== null,
   });
   const linker = new WorkItemLinker(graph, [extractor]);
 
@@ -1664,6 +1678,7 @@ async function main(): Promise<void> {
     processed: 0,
     operatorIdentities: new Map(),
   };
+  engine = state;
 
   // 5. If messaging adapter configured, create and connect via registry
   // Import adapter modules so they self-register with the registry
@@ -1711,6 +1726,7 @@ async function main(): Promise<void> {
         baseUrl: process.env.WORKSTREAM_JIRA_BASE_URL ?? config.taskAdapter.baseUrl ?? "",
       });
       state.taskAdapter = adapter;
+      adapter.getValidIdPrefixes?.(); // start loading the tracker's prefixes before the first poll
       const taskIdentity = adapter.getAuthenticatedUser?.();
       if (taskIdentity) {
         state.operatorIdentities.set(adapter.name, taskIdentity);

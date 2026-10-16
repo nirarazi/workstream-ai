@@ -1,7 +1,7 @@
 // tests/graph/extractor.test.ts — Regex extractor edge cases
 
 import { describe, it, expect } from "vitest";
-import { DefaultExtractor } from "../../core/graph/extractors/default.js";
+import { DefaultExtractor, knownTicketPrefixes } from "../../core/graph/extractors/default.js";
 
 const defaultConfig = {
   ticketPatterns: ["\\b([A-Z]{2,6}-\\d+)\\b"],
@@ -131,6 +131,27 @@ describe("DefaultExtractor", () => {
       const ids = custom.extractWorkItemIds("Working on FEAT-42 and OPS-100");
       expect(ids).toContain("FEAT-42");
       expect(ids).not.toContain("OPS-100");
+    });
+
+    it("reads prefixes that arrive later, such as a tracker's project keys", () => {
+      let known: string[] = [];
+      const live = new DefaultExtractor({ ticketPatterns: ["\\b([A-Z]{2,6}-\\d+)\\b"], prPatterns: [], ticketPrefixes: () => known });
+      expect(live.extractWorkItemIds("OPS-100 and CRM-7")).toEqual(["OPS-100", "CRM-7"]);
+      known = ["ops-"];
+      expect(live.extractWorkItemIds("OPS-100 and CRM-7")).toEqual(["OPS-100"]);
+    });
+
+    it("keeps an ID that is already a work item, whatever its prefix", () => {
+      const strict = new DefaultExtractor({
+        ticketPatterns: ["\\b([A-Z]{2,6}-\\d+)\\b"], prPatterns: [], ticketPrefixes: ["OPS-"],
+        isKnownId: (id) => id === "CRM-7",
+      });
+      expect(strict.extractWorkItemIds("OPS-1, CRM-7 and CRM-8")).toEqual(["OPS-1", "CRM-7"]);
+    });
+
+    it("knownTicketPrefixes joins configured and tracker prefixes once each", () => {
+      expect(knownTicketPrefixes(["OPS-"], { getValidIdPrefixes: () => ["ops-", "ENG-"] })).toEqual(["OPS-", "ENG-"]);
+      expect(knownTicketPrefixes(undefined, null)).toEqual([]);
     });
   });
 });

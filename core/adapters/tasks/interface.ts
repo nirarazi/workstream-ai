@@ -32,10 +32,10 @@ export interface TaskAdapter {
   createWorkItem?(params: CreateWorkItemParams): Promise<WorkItemDetail>;
 
   /**
-   * Return valid work item ID prefixes for this adapter (e.g. ["OPS-", "ENG-", "MKT-"]).
-   * Used to validate LLM-extracted IDs — if an ID doesn't match any known prefix,
-   * it's discarded rather than creating a phantom work item.
-   * Falls back to config.taskAdapter.ticketPrefixes if not implemented.
+   * Work item ID prefixes the tracker knows (e.g. ["OPS-", "ENG-", "MKT-"]). They're joined with
+   * config.taskAdapter.ticketPrefixes; an ID matching neither, and not already a work item, is
+   * discarded rather than creating a phantom work item. Called often (per extracted ID), so it must
+   * answer from memory: an adapter that loads the list may return [] until it has it.
    */
   getValidIdPrefixes?(): string[];
 }
