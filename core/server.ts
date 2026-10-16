@@ -17,6 +17,7 @@ import type { MessagingAdapter, PostedMessage } from "./adapters/messaging/inter
 import type { TaskAdapter } from "./adapters/tasks/interface.js";
 import { createRateLimiter, type RateLimiter } from "./rate-limiter.js";
 import { Summarizer } from "./summarizer/index.js";
+import { DigestJudge } from "./digests/judge.js";
 import { detectAnomalies, type FleetItemInput } from "./graph/anomalies.js";
 import { Sidekick, type SidekickMessage } from "./sidekick/index.js";
 import { buildUnifiedStatus, buildTimeline, usableName } from "./stream.js";
@@ -140,6 +141,15 @@ function operatorNames(identities: OperatorIdentityMap | undefined, configuredNa
     configuredName,
   ].filter((n): n is string => Boolean(n?.trim()));
   return [...new Set([...names, ...names.map((n) => n.trim().split(/[\s.]+/)[0])])];
+}
+
+/** The digest judge, asking the configured model (read per call, so a settings change applies at once) */
+function digestJudgeFor(state: EngineState): DigestJudge {
+  return new DigestJudge(state.graph, (userPrompt, systemPrompt) => {
+    const { baseUrl, model, apiKey } = state.config.classifier.provider;
+    return new Summarizer({ baseUrl, model, apiKey, usageTracker: state.usageTracker ?? undefined })
+      .ask(userPrompt, systemPrompt, "digest-judge");
+  });
 }
 
 /**
@@ -941,6 +951,8 @@ export function createApp(state: EngineState): Hono {
             id: body.workItemId,
             source: workItem.source,
             currentAtcStatus: "in_progress",
+            // The operator's word is the newest on it: an earlier message (or digest) classified later doesn't undo it
+            statusAt: new Date().toISOString(),
           });
           break;
 
@@ -954,6 +966,7 @@ export function createApp(state: EngineState): Hono {
             id: body.workItemId,
             source: workItem.source,
             currentAtcStatus: "noise",
+            statusAt: new Date().toISOString(), // as for redirect
           });
           state.graph.setReopened(body.workItemId, null);
           break; // recorded in the timeline below, with any message
@@ -1483,6 +1496,7 @@ export function createApp(state: EngineState): Hono {
           state.config,
           state.operatorIdentities,
         );
+        state.pipeline.setDigestJudge(digestJudgeFor(state));
         // Start in background — initial poll can take minutes with rate limiting
         state.pipeline.start().catch((err) => log.error("Pipeline restart failed", err));
         log.info("Pipeline restarting in background");
@@ -1798,6 +1812,7 @@ async function main(): Promise<void> {
       state.config,
       state.operatorIdentities,
     );
+    state.pipeline.setDigestJudge(digestJudgeFor(state));
   } else {
     log.warn("No messaging adapter available — pipeline not started (configure via POST /api/setup)");
   }

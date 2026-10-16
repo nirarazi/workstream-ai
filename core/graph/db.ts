@@ -121,12 +121,18 @@ CREATE TABLE IF NOT EXISTS digest_checks (
   work_item_id   TEXT NOT NULL REFERENCES work_items(id),
   digest_status  TEXT NOT NULL,
   digest_targeted INTEGER NOT NULL DEFAULT 0,
+  -- 1 when the claim is the digest's own line for the item, 0 when it's the whole message's status
+  from_line      INTEGER NOT NULL DEFAULT 1,
   item_status    TEXT,
   -- 1 agrees, 0 disagrees, NULL when the app had no status for the item yet
   agrees         INTEGER,
   created_at     TEXT NOT NULL,
   resolved_at    TEXT,
   resolution     TEXT,
+  -- What the judge made of a disagreement: app, digest or unsure (unsure ones wait for the operator)
+  judge_verdict  TEXT,
+  judge_reason   TEXT,
+  judged_at      TEXT,
   PRIMARY KEY (event_id, work_item_id)
 );
 
@@ -299,6 +305,29 @@ export class Database {
       this.db.prepare("INSERT OR REPLACE INTO meta (key, value) VALUES ('digest_backfill', 'pending')").run();
       log.info("Migration: added digest column to events");
     }
+
+    // Add the judge's columns to digest_checks (created by an earlier build without them)
+    const checkCols = this.db.pragma("table_info(digest_checks)") as Array<{ name: string }>;
+    if (!checkCols.some((c) => c.name === "from_line")) {
+      // Recorded before the column existed: where a claim came from isn't known, so it isn't taken as the item's line.
+      // Together, so a crash between them can't leave those rows taken as lines
+      this.db.transaction(() => {
+        this.db.exec("ALTER TABLE digest_checks ADD COLUMN from_line INTEGER NOT NULL DEFAULT 1");
+        this.db.exec("UPDATE digest_checks SET from_line = 0");
+      })();
+      log.info("Migration: added from_line to digest_checks");
+    }
+    for (const column of ["judge_verdict", "judge_reason", "judged_at"]) {
+      if (!checkCols.some((c) => c.name === column)) {
+        this.db.exec(`ALTER TABLE digest_checks ADD COLUMN ${column} TEXT`);
+        log.info(`Migration: added ${column} to digest_checks`);
+      }
+    }
+    // What later digests said about an item
+    this.db.exec("CREATE INDEX IF NOT EXISTS idx_digest_checks_item ON digest_checks(work_item_id, created_at)");
+    // The judge's queue: open disagreements, oldest first
+    this.db.exec(`CREATE INDEX IF NOT EXISTS idx_digest_checks_open ON digest_checks(created_at)
+      WHERE agrees = 0 AND resolved_at IS NULL AND judged_at IS NULL`);
 
     // Add is_bot column to agents table
     const agentColsForBot = this.db.pragma("table_info(agents)") as Array<{ name: string }>;

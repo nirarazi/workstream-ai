@@ -10,6 +10,7 @@ import type { Classifier } from "./classifier/index.js";
 import type { ContextGraph } from "./graph/index.js";
 import { DIGEST_MIN_ITEMS, namesDigest, type WorkItemLinker } from "./graph/linker.js";
 import { knownTicketPrefixes, looksLikeTicketKey } from "./graph/extractors/default.js";
+import type { DigestJudge } from "./digests/judge.js";
 
 export { DIGEST_MIN_ITEMS };
 
@@ -90,6 +91,8 @@ export class Pipeline {
   private taskAdapter?: TaskAdapter;
   private config?: Config;
   private intervalHandle: ReturnType<typeof setInterval> | null = null;
+  private digestJudge: DigestJudge | null = null;
+  private judging = false;
   private running = false;
   private polling = false;
   private recentContentHashes = new Map<string, Classification>();
@@ -523,8 +526,21 @@ export class Pipeline {
     }
 
     this.expireInactiveItems();
+    // What digests disagree with the app about: settled once the poll's own work is done, if the model is answering.
+    // In the background, so model calls don't hold up the next poll; one run at a time.
+    if (this.digestJudge && !this.judging && !stopped() && !this.modelUnavailable) {
+      this.judging = true;
+      this.digestJudge.judgeSome(stopped)
+        .catch((err) => log.error("Failed to judge digest checks", err))
+        .finally(() => { this.judging = false; });
+    }
 
     return { processed, classified, errors };
+  }
+
+  /** Settles digest disagreements after each poll (see core/digests/judge.ts) */
+  setDigestJudge(judge: DigestJudge | null): void {
+    this.digestJudge = judge;
   }
 
   /** Optional: auto-dismiss Needs-me items nobody has written about for inbox.expireAfterDays */
@@ -1050,6 +1066,7 @@ export class Pipeline {
                 digestTargeted: itemClassification?.targetedAtOperator ?? classification.targetedAtOperator,
                 itemStatus: existing.currentAtcStatus,
                 at: message.timestamp,
+                fromLine: Boolean(itemClassification),
               });
             }
             continue;
