@@ -423,6 +423,21 @@ describe("the operator's message is logged once", () => {
     expect(graph.getWorkItemById("OPS-301")!.currentAtcStatus).toBe("completed");
   });
 
+  for (const action of ["redirect", "noise"] as const) {
+    it(`${action} records when the operator acted, so an earlier message or digest can't undo it`, async () => {
+      graph.upsertWorkItem({ id: "OPS-200", source: "jira", statusAt: "2026-10-01T00:00:00.000Z" });
+      const before = Date.now();
+
+      await createApp(makeState(graph, db)).request("/api/action", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ workItemId: "OPS-200", action }),
+      });
+
+      expect(Date.parse(graph.getWorkItemById("OPS-200")!.statusAt!)).toBeGreaterThanOrEqual(before);
+    });
+  }
+
   it("still records the action when its message fails to post", async () => {
     const state = makeState(graph, db);
     state.messagingAdapter.replyToThread.mockRejectedValue(new Error("Slack is down"));

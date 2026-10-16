@@ -951,6 +951,8 @@ export function createApp(state: EngineState): Hono {
             id: body.workItemId,
             source: workItem.source,
             currentAtcStatus: "in_progress",
+            // The operator's word is the newest on it: an earlier message (or digest) classified later doesn't undo it
+            statusAt: new Date().toISOString(),
           });
           break;
 
@@ -964,6 +966,7 @@ export function createApp(state: EngineState): Hono {
             id: body.workItemId,
             source: workItem.source,
             currentAtcStatus: "noise",
+            statusAt: new Date().toISOString(), // as for redirect
           });
           state.graph.setReopened(body.workItemId, null);
           break; // recorded in the timeline below, with any message

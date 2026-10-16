@@ -182,6 +182,14 @@ function sameSet(a: Set<string>, b: Set<string>): boolean {
   return true;
 }
 
+/** The kinds of state that matter to the operator: someone's needed, it's done, or neither (working, or noise) */
+export function statusKind(status: string): "needs" | "done" | "other" {
+  return status === "blocked_on_human" || status === "needs_decision" ? "needs" : status === "completed" ? "done" : "other";
+}
+
+/** Open disagreements from one sender handed to the judge per run, at most */
+const DIGEST_CHECKS_PER_SENDER = 5;
+
 /** A digest check the app and the digest disagree on, not yet settled or judged */
 export interface DigestDisagreement {
   eventId: string;
@@ -192,6 +200,8 @@ export interface DigestDisagreement {
   createdAt: string;
   digestText: string;
   threadId: string;
+  /** A later digest has said something about the same item since */
+  laterDigest: boolean;
 }
 
 /**
@@ -716,10 +726,12 @@ export class ContextGraph {
     itemStatus: StatusCategory | null;
     at: string;
   }): void {
-    // The kinds of state that matter to the operator: someone's needed, it's done, or neither (working, or noise)
-    const kind = (s: string) =>
-      s === "blocked_on_human" || s === "needs_decision" ? "needs" : s === "completed" ? "done" : "other";
-    const agrees = check.itemStatus === null ? null : kind(check.digestStatus) === kind(check.itemStatus) ? 1 : 0;
+    const agrees = check.itemStatus === null ? null : statusKind(check.digestStatus) === statusKind(check.itemStatus) ? 1 : 0;
+    // The same claim about the item, still waiting to be judged, isn't queued again (a digest posted daily)
+    if (agrees === 0 && this.db.db.prepare(`
+      SELECT 1 FROM digest_checks WHERE work_item_id = ? AND digest_status = ? AND agrees = 0
+        AND resolved_at IS NULL AND judged_at IS NULL
+    `).get(check.workItemId, check.digestStatus)) return;
     this.db.db.prepare(`
       INSERT OR IGNORE INTO digest_checks (event_id, work_item_id, digest_status, digest_targeted, item_status, agrees, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -736,12 +748,18 @@ export class ContextGraph {
     return (this.db.db.prepare(`
       SELECT dc.event_id AS eventId, dc.work_item_id AS workItemId, dc.digest_status AS digestStatus,
         dc.digest_targeted AS digestTargeted, dc.item_status AS itemStatus, dc.created_at AS createdAt,
-        e.raw_text AS digestText, e.thread_id AS threadId
-      FROM digest_checks dc JOIN events e ON e.id = dc.event_id
-      WHERE dc.agrees = 0 AND dc.resolved_at IS NULL AND dc.judged_at IS NULL
+        e.raw_text AS digestText, e.thread_id AS threadId,
+        EXISTS (SELECT 1 FROM digest_checks later WHERE later.work_item_id = dc.work_item_id AND later.created_at > dc.created_at) AS laterDigest
+      FROM (
+        -- At most a few per sender, so one agent's digests can't keep the judge from everyone else's
+        SELECT c.*, ROW_NUMBER() OVER (PARTITION BY COALESCE(ev.agent_id, '') ORDER BY c.created_at) AS per_sender
+        FROM digest_checks c JOIN events ev ON ev.id = c.event_id
+        WHERE c.agrees = 0 AND c.resolved_at IS NULL AND c.judged_at IS NULL
+      ) dc JOIN events e ON e.id = dc.event_id
+      WHERE dc.per_sender <= ?
       ORDER BY dc.created_at LIMIT ?
-    `).all(limit) as Array<Omit<DigestDisagreement, "digestTargeted"> & { digestTargeted: number }>)
-      .map((r) => ({ ...r, digestTargeted: r.digestTargeted === 1 }));
+    `).all(DIGEST_CHECKS_PER_SENDER, limit) as Array<Omit<DigestDisagreement, "digestTargeted" | "laterDigest"> & { digestTargeted: number; laterDigest: number }>)
+      .map((r) => ({ ...r, digestTargeted: r.digestTargeted === 1, laterDigest: r.laterDigest === 1 }));
   }
 
   /** Settles a digest check: `app` (the app's view stands), `digest` (adopted), or why it no longer needs judging */

@@ -306,12 +306,15 @@ export class Database {
 
     // Add the judge's columns to digest_checks (created by an earlier build without them)
     const checkCols = this.db.pragma("table_info(digest_checks)") as Array<{ name: string }>;
-    if (!checkCols.some((c) => c.name === "judge_verdict")) {
-      this.db.exec("ALTER TABLE digest_checks ADD COLUMN judge_verdict TEXT");
-      this.db.exec("ALTER TABLE digest_checks ADD COLUMN judge_reason TEXT");
-      this.db.exec("ALTER TABLE digest_checks ADD COLUMN judged_at TEXT");
-      log.info("Migration: added judge columns to digest_checks");
+    for (const column of ["judge_verdict", "judge_reason", "judged_at"]) {
+      if (!checkCols.some((c) => c.name === column)) {
+        this.db.exec(`ALTER TABLE digest_checks ADD COLUMN ${column} TEXT`);
+        log.info(`Migration: added ${column} to digest_checks`);
+      }
     }
+    // The judge's queue: open disagreements, oldest first
+    this.db.exec(`CREATE INDEX IF NOT EXISTS idx_digest_checks_open ON digest_checks(created_at)
+      WHERE agrees = 0 AND resolved_at IS NULL AND judged_at IS NULL`);
 
     // Add is_bot column to agents table
     const agentColsForBot = this.db.pragma("table_info(agents)") as Array<{ name: string }>;

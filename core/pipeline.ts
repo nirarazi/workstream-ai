@@ -92,6 +92,7 @@ export class Pipeline {
   private config?: Config;
   private intervalHandle: ReturnType<typeof setInterval> | null = null;
   private digestJudge: DigestJudge | null = null;
+  private judging = false;
   private running = false;
   private polling = false;
   private recentContentHashes = new Map<string, Classification>();
@@ -525,13 +526,13 @@ export class Pipeline {
     }
 
     this.expireInactiveItems();
-    // What digests disagree with the app about: settled once the poll's own work is done, if the model is answering
-    if (this.digestJudge && !stopped() && !this.modelUnavailable) {
-      try {
-        await this.digestJudge.judgeSome(stopped);
-      } catch (err) {
-        log.error("Failed to judge digest checks", err);
-      }
+    // What digests disagree with the app about: settled once the poll's own work is done, if the model is answering.
+    // In the background, so model calls don't hold up the next poll; one run at a time.
+    if (this.digestJudge && !this.judging && !stopped() && !this.modelUnavailable) {
+      this.judging = true;
+      this.digestJudge.judgeSome(stopped)
+        .catch((err) => log.error("Failed to judge digest checks", err))
+        .finally(() => { this.judging = false; });
     }
 
     return { processed, classified, errors };
