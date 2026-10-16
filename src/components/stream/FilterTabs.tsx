@@ -6,10 +6,12 @@ interface FilterTabsProps {
   onChange: (filter: StreamFilter) => void;
 }
 
-const TABS: { id: StreamFilter; label: string; countKey: keyof FilterTabsProps["counts"] }[] = [
+// Done keeps everything finished, so a count there would only grow: it has none
+const TABS: { id: StreamFilter; label: string; countKey?: keyof FilterTabsProps["counts"] }[] = [
   { id: "needs-me", label: "Needs me", countKey: "needsMe" },
   { id: "snoozed", label: "Snoozed", countKey: "snoozed" },
   { id: "all-active", label: "All active", countKey: "allActive" },
+  { id: "done", label: "Done" },
   { id: "dismissed", label: "Dismissed", countKey: "dismissed" },
 ];
 
@@ -17,7 +19,7 @@ export default function FilterTabs({ active, counts, onChange }: FilterTabsProps
   return (
     <div className="flex gap-1 px-4 py-2 border-b border-gray-800 overflow-x-auto">
       {TABS.map(({ id, label, countKey }) => {
-        const count = counts[countKey];
+        const count = countKey ? counts[countKey] : 0;
         const isActive = active === id;
         return (
           <button
