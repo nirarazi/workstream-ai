@@ -553,16 +553,16 @@ describe("timeline pagination", () => {
       expect((await res.json()).unifiedStatus).toMatch(/^Waiting on Dana · \d+m$/);
     });
 
-    it("asks the graph before the directory, and not at all for item agents", async () => {
+    it("asks the graph before the directory", async () => {
       seedBlockedOn("U0DANA0001");
       graph.upsertAgent({ id: "U0DANA0001", name: "Dana", platform: "slack", platformUserId: "U0DANA0001" });
-      const getUserName = vi.fn(() => "dana-directory");
+      const getUserName = vi.fn((_id: string) => "dana-directory");
       const state = stateWithOperator();
       state.messagingAdapter = { getUserName } as Partial<MessagingAdapter> as MessagingAdapter;
 
       const res = await createApp(state).request("/api/work-item/OPS-500/stream?limit=10");
       expect((await res.json()).unifiedStatus).toMatch(/^Waiting on Dana · \d+m$/);
-      expect(getUserName).not.toHaveBeenCalled();
+      expect(getUserName).not.toHaveBeenCalledWith("U0DANA0001");
     });
 
     it("falls through to the directory when the graph stored an ID as the name", async () => {
@@ -594,6 +594,18 @@ describe("timeline pagination", () => {
       db.db.prepare("UPDATE events SET action_required_from = ?").run(JSON.stringify(["U0DANA0001", "U0OPERATOR1"]));
       const state = stateWithOperator();
       state.messagingAdapter = { getUserName: () => "Dana" } as Partial<MessagingAdapter> as MessagingAdapter;
+
+      const res = await createApp(state).request("/api/work-item/OPS-500/stream?limit=10");
+      expect((await res.json()).unifiedStatus).toMatch(/^Waiting on you · \d+m$/);
+    });
+
+    it("recognises the operator named by their directory name, not their login", async () => {
+      seedBlockedOn("Alex Rivera");
+      const state = stateWithOperator();
+      state.operatorIdentities = new Map([["slack", { userId: "U0OPERATOR1", userName: "alex.rivera" }]]);
+      state.messagingAdapter = {
+        getUserName: (id: string) => (id === "U0OPERATOR1" ? "Alex Rivera" : null),
+      } as Partial<MessagingAdapter> as MessagingAdapter;
 
       const res = await createApp(state).request("/api/work-item/OPS-500/stream?limit=10");
       expect((await res.json()).unifiedStatus).toMatch(/^Waiting on you · \d+m$/);

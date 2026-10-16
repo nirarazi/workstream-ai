@@ -77,7 +77,7 @@ export function buildUnifiedStatus(
     // Check if operator is in actionRequiredFrom, by ID or, when the classifier wrote a name, by name
     const isOperator = [...operatorIdentities.values()].some((identity) =>
       latestBlockEvent.actionRequiredFrom!.some(
-        (actor) => actor === identity.userId || (!!identity.userName && actor.toLowerCase() === identity.userName.toLowerCase()),
+        (actor) => actor === identity.userId || (!!identity.userName && actor.trim().toLowerCase() === identity.userName.toLowerCase()),
       ),
     );
 

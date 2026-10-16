@@ -348,7 +348,13 @@ export function createApp(state: EngineState): Hono {
       if (name) actorNameMap.set(actorId, name);
     }
     const blockEvent = latestBlockEvent && { ...latestBlockEvent, actionRequiredFrom: latestBlockEvent.actionRequiredFrom && actorIds };
-    const unifiedStatus = buildUnifiedStatus(workItem, blockEvent, state.operatorIdentities, actorNameMap);
+    // The classifier may name the operator as people see them (a display name), not by their login
+    const operatorIdentities: OperatorIdentityMap = new Map(state.operatorIdentities);
+    for (const [platform, identity] of state.operatorIdentities ?? []) {
+      const shownAs = state.messagingAdapter?.getUserName?.(identity.userId);
+      if (shownAs && shownAs !== identity.userName) operatorIdentities.set(`${platform}:directory`, { ...identity, userName: shownAs });
+    }
+    const unifiedStatus = buildUnifiedStatus(workItem, blockEvent, operatorIdentities, actorNameMap);
     const timeline = buildTimeline(events, agentMap, agentAvatarMap, threadChannelMap, threadPlatformMap);
 
     let statusSummary: string | null = null;
