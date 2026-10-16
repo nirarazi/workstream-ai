@@ -1376,7 +1376,11 @@ export class ContextGraph {
     return rows.map(mapActionableRow);
   }
 
-  /** Done: completed items, most recently finished first (the latest of the last 200) */
+  /**
+   * Done: the 200 most recently finished items. Not merged ones, nor a conversation item replaced by a ticket
+   * created from it (its thread's primary item is now the ticket). The 200 are picked before the event lookup,
+   * since this list only grows.
+   */
   getCompletedItems(): ActionableItem[] {
     const rows = this.db.db
       .prepare(
@@ -1399,21 +1403,30 @@ export class ContextGraph {
         t.platform_meta AS t_platform_meta,
         t.platform AS t_platform, t.work_item_id AS t_work_item_id,
         t.last_activity AS t_last_activity, t.message_count AS t_message_count
-      FROM work_items wi
+      FROM (
+        SELECT * FROM work_items w
+        WHERE w.current_atc_status = 'completed'
+          AND w.merged_into IS NULL
+          AND NOT (w.id LIKE 'thread:%' AND EXISTS (
+            SELECT 1 FROM thread_work_items twi
+            WHERE twi.thread_id = substr(w.id, 8) AND twi.relation = 'primary' AND twi.work_item_id <> w.id
+          ))
+        -- Items finished before status times were kept fall back to their last update
+        ORDER BY COALESCE(w.status_at, w.updated_at) DESC
+        LIMIT 200
+      ) wi
       LEFT JOIN events e ON e.id = (
           SELECT e2.id FROM events e2
           WHERE (e2.work_item_id = wi.id
              OR e2.thread_id IN (SELECT thread_id FROM thread_work_items WHERE work_item_id = wi.id))
-            AND e2.agent_id IS NOT NULL -- the last message, not the operator's approve or close record
+            -- the last message (an agent's completion over MCP included), not the operator's approve or close record
+            AND NOT (e2.agent_id IS NULL AND e2.message_id LIKE 'operator-%')
           ORDER BY e2.timestamp DESC
           LIMIT 1
         )
       LEFT JOIN agents a ON e.agent_id = a.id
       LEFT JOIN threads t ON e.thread_id = t.id
-      WHERE wi.current_atc_status = 'completed'
-        AND wi.merged_into IS NULL
       ORDER BY COALESCE(wi.status_at, wi.updated_at) DESC
-      LIMIT 200
     `,
       )
       .all() as Array<Record<string, unknown>>;

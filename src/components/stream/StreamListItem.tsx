@@ -126,10 +126,12 @@ export default function StreamListItem({ item, selected, actionState, resolving,
             })()} ·
           </span>
         )}
-        {showCompletion && (workItem.statusAt ?? workItem.updatedAt) && (
+        {showCompletion && (
           <span className="mr-1 text-gray-500">
             {(() => {
-              const rel = formatRelativeTime(new Date(workItem.statusAt ?? workItem.updatedAt));
+              // Items finished before status times were kept have none: no time rather than a misleading one
+              if (!workItem.statusAt) return "Done";
+              const rel = formatRelativeTime(new Date(workItem.statusAt));
               return `Done ${rel === "now" ? "just now" : `${rel} ago`}`;
             })()} ·
           </span>

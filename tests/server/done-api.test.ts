@@ -72,6 +72,30 @@ describe("Done tab", () => {
     expect(item.agent?.name).toBe("Relay");
   });
 
+  it("leaves out a conversation item replaced by a ticket created from it", () => {
+    graph.upsertWorkItem({ id: "thread:T-1", source: "inferred", title: "Rollout", currentAtcStatus: "completed" });
+    graph.upsertWorkItem({ id: "OPS-9", source: "jira", title: "Rollout", currentAtcStatus: "completed", statusAt: at(1) });
+    graph.upsertThread({ id: "T-1", channelId: "C001", channelName: "fleet-ops", platform: "slack", workItemId: "OPS-9" });
+    graph.linkThreadWorkItem("T-1", "OPS-9", "primary");
+    // A conversation item that simply finished stays
+    graph.upsertWorkItem({ id: "thread:T-2", source: "inferred", title: "Cleanup", currentAtcStatus: "completed", statusAt: at(2) });
+    graph.upsertThread({ id: "T-2", channelId: "C001", channelName: "fleet-ops", platform: "slack", workItemId: "thread:T-2" });
+    graph.linkThreadWorkItem("T-2", "thread:T-2", "primary");
+
+    expect(graph.getCompletedItems().map((i) => i.workItem.id)).toEqual(["OPS-9", "thread:T-2"]);
+  });
+
+  it("shows an agent's completion summary sent over MCP", () => {
+    graph.upsertWorkItem({ id: "deploy-payments", source: "mcp", title: "Deploy payments", currentAtcStatus: "completed", statusAt: at(1) });
+    graph.upsertThread({ id: "mcp", channelId: "mcp", channelName: "mcp", platform: "mcp", workItemId: null });
+    graph.insertEvent({
+      threadId: "mcp", messageId: "6b1f0c2e-0000-4000-8000-000000000001", workItemId: "deploy-payments",
+      status: "completed", confidence: 1, reason: "Rolled out to all regions", rawText: "Rolled out to all regions", timestamp: at(1),
+    });
+
+    expect(graph.getCompletedItems()[0].latestEvent?.reason).toBe("Rolled out to all regions");
+  });
+
   it("is served at /api/stream/done", async () => {
     seed("OPS-1", "completed", 10);
     seed("OPS-2", "blocked_on_human", 10);

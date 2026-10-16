@@ -7,11 +7,11 @@ interface FilterTabsProps {
 }
 
 // Done keeps everything finished, so a count there would only grow: it has none
-const TABS: { id: StreamFilter; label: string; countKey: keyof FilterTabsProps["counts"] | null }[] = [
+const TABS: { id: StreamFilter; label: string; countKey?: keyof FilterTabsProps["counts"] }[] = [
   { id: "needs-me", label: "Needs me", countKey: "needsMe" },
   { id: "snoozed", label: "Snoozed", countKey: "snoozed" },
   { id: "all-active", label: "All active", countKey: "allActive" },
-  { id: "done", label: "Done", countKey: null },
+  { id: "done", label: "Done" },
   { id: "dismissed", label: "Dismissed", countKey: "dismissed" },
 ];
 
