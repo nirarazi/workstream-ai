@@ -1,6 +1,6 @@
 // tests/decisions/gate.test.ts — classifier.mode "decisions": the decision model gates status and inbox membership
 
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import { Classifier } from "../../core/classifier/index.js";
 import type { ModelProvider } from "../../core/classifier/providers/interface.js";
 import { classifyWithDecisions } from "../../core/decisions/classification.js";
@@ -9,7 +9,7 @@ import type { DecisionProvider } from "../../core/decisions/interface.js";
 import type { Config } from "../../core/config.js";
 import type { Classification } from "../../core/types.js";
 import { Database } from "../../core/graph/db.js";
-import { UsageTracker } from "../../core/usage/tracker.js";
+import { UsageTracker, estimateTokens, MIN_INPUT_TOKEN_OVERHEAD } from "../../core/usage/tracker.js";
 import { OpenAICompatibleProvider } from "../../core/classifier/providers/openai-compatible.js";
 
 function stubDecisions(status: Record<string, number>, targeted: number, fail = false): DecisionProvider {
@@ -133,6 +133,21 @@ describe("Classifier with a decision gate", () => {
 describe("DecisionGate: timed-out decision calls count toward the budget", () => {
   const timeout = () => Object.assign(new Error("The operation was aborted due to timeout"), { name: "TimeoutError" });
   const input = { message: "Need S3 creds", senderType: "agent" };
+  afterEach(() => vi.restoreAllMocks());
+
+  function trackedGate(decisions: Record<string, unknown> = {}) {
+    const db = new Database(":memory:");
+    const tracker = new UsageTracker({ name: "mock", classify: vi.fn() }, db, { dailyBudget: 5, inputCostPerMillion: 3, outputCostPerMillion: 15 });
+    const gate = createDecisionGate({
+      classifier: {
+        mode: "decisions",
+        provider: { baseUrl: "http://localhost:11434/v1", model: "llama" },
+        decisions: { provider: "llm", interruptThreshold: 0.5, ...decisions },
+      },
+    } as unknown as Config, tracker)!;
+    const rows = () => db.db.prepare("SELECT caller, token_source, cost FROM llm_usage").all() as Array<{ caller: string; token_source: string; cost: number | null }>;
+    return { gate, rows, db };
+  }
 
   it("counts an estimate for a call cut off at the timeout", async () => {
     const onUsage = vi.fn();
@@ -167,25 +182,57 @@ describe("DecisionGate: timed-out decision calls count toward the budget", () =>
   });
 
   it("records the estimate as estimated in the usage table", async () => {
-    const db = new Database(":memory:");
-    const tracker = new UsageTracker({ name: "mock", classify: vi.fn() }, db, { dailyBudget: 5, inputCostPerMillion: 3, outputCostPerMillion: 15 });
-    const gate = createDecisionGate({
-      classifier: {
-        mode: "decisions",
-        provider: { baseUrl: "http://localhost:11434/v1", model: "llama" },
-        decisions: { provider: "llm", interruptThreshold: 0.5, inputCostPerMillion: 1, outputCostPerMillion: 1 },
-      },
-    } as unknown as Config, tracker)!;
+    const { gate, rows, db } = trackedGate({ inputCostPerMillion: 1, outputCostPerMillion: 1 });
     vi.spyOn(OpenAICompatibleProvider.prototype, "completeWithUsage").mockRejectedValueOnce(timeout());
 
     await expect(gate.decide(input)).rejects.toThrow("timeout");
 
-    const rows = db.db.prepare("SELECT caller, token_source, cost FROM llm_usage").all() as Array<{ caller: string; token_source: string; cost: number }>;
-    expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({ caller: "decisions", token_source: "estimated" });
-    expect(rows[0].cost).toBeGreaterThan(0);
-    vi.restoreAllMocks();
+    expect(rows()).toHaveLength(1);
+    expect(rows()[0]).toMatchObject({ caller: "decisions", token_source: "estimated" });
+    expect(rows()[0].cost).toBeGreaterThan(0);
     db.close();
+  });
+
+  it("records one row per attempt the transport reports, not just one for the final timeout", async () => {
+    const { gate, rows, db } = trackedGate();
+    vi.spyOn(OpenAICompatibleProvider.prototype, "completeWithUsage").mockImplementationOnce(async (_m, _s, _f, options) => {
+      options?.onTimedOutAttempt?.();
+      options?.onTimedOutAttempt?.();
+      throw timeout();
+    });
+
+    await expect(gate.decide(input)).rejects.toThrow("timeout");
+
+    expect(rows().filter((r) => r.token_source === "estimated")).toHaveLength(2);
+    db.close();
+  });
+
+  it("prices an unpriced decision model the same as the classifier when they're the same model", async () => {
+    const { gate, rows, db } = trackedGate();
+    vi.spyOn(OpenAICompatibleProvider.prototype, "completeWithUsage").mockRejectedValueOnce(timeout());
+
+    await expect(gate.decide(input)).rejects.toThrow("timeout");
+
+    expect(rows()[0].cost).toBeGreaterThan(0);
+    db.close();
+  });
+
+  it("leaves a different, unpriced decision model unpriced", async () => {
+    const { gate, rows, db } = trackedGate({ model: "other-model" });
+    vi.spyOn(OpenAICompatibleProvider.prototype, "completeWithUsage").mockRejectedValueOnce(timeout());
+
+    await expect(gate.decide(input)).rejects.toThrow("timeout");
+
+    expect(rows()[0].cost).toBeNull();
+    db.close();
+  });
+
+  it("estimates from the questions sent, not just the message", async () => {
+    const onUsage = vi.fn();
+    const provider = { name: "stub", decide: vi.fn().mockRejectedValue(timeout()) } as DecisionProvider;
+    await expect(new DecisionGate(provider, 0.5, onUsage).decide(input)).rejects.toThrow();
+    // The status and targeting questions alone are several hundred characters
+    expect(onUsage.mock.calls[0][1]).toBeGreaterThan(estimateTokens(JSON.stringify(input)) + MIN_INPUT_TOKEN_OVERHEAD);
   });
 });
 

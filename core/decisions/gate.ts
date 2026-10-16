@@ -11,6 +11,8 @@ import type { Classification, EntryType, StatusCategory } from "../types.js";
 import { estimateTokens, MIN_INPUT_TOKEN_OVERHEAD, MIN_OUTPUT_TOKEN_OVERHEAD, type UsageTracker } from "../usage/tracker.js";
 import type { DecisionProvider } from "./interface.js";
 import {
+  buildClassificationQuestions,
+  buildState,
   classifyWithDecisions,
   type DecisionClassification,
   type DecisionClassificationInput,
@@ -50,7 +52,10 @@ export class DecisionGate {
     let timedOut = 0;
     const recordTimeouts = () => {
       if (timedOut === 0) return;
-      const inputTokens = estimateTokens(JSON.stringify(input)) + MIN_INPUT_TOKEN_OVERHEAD;
+      // What's sent: the state and the questions (the question set is what an LLM's prompt is built from)
+      const { workItem, ...base } = buildClassificationQuestions(input);
+      const sent = buildState(input) + JSON.stringify(workItem ? { ...base, workItem } : base);
+      const inputTokens = estimateTokens(sent) + MIN_INPUT_TOKEN_OVERHEAD;
       for (let i = 0; i < timedOut; i++) this.onUsage?.(this.provider.name, inputTokens, MIN_OUTPUT_TOKEN_OVERHEAD, true);
     };
     let result: DecisionClassification;
@@ -129,9 +134,13 @@ export function createDecisionGate(config: Config, usageTracker?: UsageTracker):
     d.inputCostPerMillion != null && d.outputCostPerMillion != null
       ? { input: d.inputCostPerMillion, output: d.outputCostPerMillion }
       : DEFAULT_PRICES[model];
+  // Unpriced usage never counts toward the budget. The same model on the classifier's endpoint
+  // costs what the classifier pays, so use its prices (read per call: Settings can change them).
+  const sameAsClassifier = d.provider === "llm" && model === config.classifier.provider.model;
   const onUsage = usageTracker
     ? (_name: string, inputTokens: number, outputTokens: number, estimated?: boolean) => {
-        const cost = prices ? (inputTokens * prices.input + outputTokens * prices.output) / 1_000_000 : null;
+        const p = prices ?? (sameAsClassifier ? usageTracker.getPrices() : null);
+        const cost = p ? (inputTokens * p.input + outputTokens * p.output) / 1_000_000 : null;
         usageTracker.recordExternalUsage("decisions", model, inputTokens, outputTokens, cost, estimated ? "estimated" : "actual");
       }
     : undefined;

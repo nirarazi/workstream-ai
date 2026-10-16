@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import type { UsageRecord, DailyUsage, BudgetStatus, UsageConfig } from "../../core/usage/types.js";
 import { Database } from "../../core/graph/db.js";
 import { UsageTracker, BudgetExhaustedError } from "../../core/usage/tracker.js";
@@ -299,6 +299,8 @@ describe("Classifier with UsageTracker", () => {
 });
 
 describe("UsageTracker.completionCall: timeouts", () => {
+  afterEach(() => vi.restoreAllMocks());
+
   it("counts a sidekick or summary call cut off at its timeout, since it was usually billed", async () => {
     const db = new Database(":memory:");
     const tracker = new UsageTracker(mockProvider({} as ClassificationResult), db, DEFAULT_CONFIG);

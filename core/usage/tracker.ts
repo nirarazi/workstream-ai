@@ -188,7 +188,7 @@ export class UsageTracker implements ModelProvider {
     } catch {
       // If we can't parse the response, estimate from request body
       const bodyStr = typeof options.body === "string" ? options.body : "";
-      this.recordUsage(caller, estimateTokens(bodyStr), 50, "estimated");
+      this.recordUsage(caller, estimateTokens(bodyStr) + MIN_INPUT_TOKEN_OVERHEAD, MIN_OUTPUT_TOKEN_OVERHEAD, "estimated");
     }
 
     return response;
@@ -228,6 +228,12 @@ export class UsageTracker implements ModelProvider {
       cost: totals.cost,
       byCaller,
     };
+  }
+
+  /** The configured per-million-token prices, or null when cost isn't tracked */
+  getPrices(): { input: number; output: number } | null {
+    const { inputCostPerMillion: input, outputCostPerMillion: output } = this.config;
+    return input != null && output != null ? { input, output } : null;
   }
 
   /** Check if daily budget is exhausted */

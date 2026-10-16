@@ -100,8 +100,11 @@ describe("LLMDecisionProvider", () => {
 
     await provider.decide("state", { refund: QUESTIONS.refund }, { onTimedOutAttempt });
 
-    expect(onTimedOutAttempt).toHaveBeenCalledTimes(1);
-    completeWithUsage.mockRestore();
+    try {
+      expect(onTimedOutAttempt).toHaveBeenCalledTimes(1);
+    } finally {
+      completeWithUsage.mockRestore();
+    }
   });
 });
 

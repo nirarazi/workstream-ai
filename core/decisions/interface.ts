@@ -10,6 +10,8 @@
 //
 // Questions are evaluated independently. Keep each one atomic and combine answers in code.
 
+import type { ClassifyOptions } from "../classifier/providers/interface.js";
+
 export type ChoiceQuestion = {
   type: "choice";
   instructions: string;
@@ -75,10 +77,8 @@ export interface DecisionResult<Qs extends QuestionSet> {
   model: string;
 }
 
-export interface DecideOptions {
-  /** Called for each attempt cut off at the provider's timeout, which is usually billed */
-  onTimedOutAttempt?: () => void;
-}
+/** Same hooks as the classifier's providers take, so an LLM transport can be handed them as is */
+export type DecideOptions = ClassifyOptions;
 
 export interface DecisionProvider {
   readonly name: string;
