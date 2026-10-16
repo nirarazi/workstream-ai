@@ -130,16 +130,17 @@ export function createDecisionGate(config: Config, usageTracker?: UsageTracker):
   }
 
   const model = d.model ?? (d.provider === "openai" ? "gpt-6-luna" : d.provider === "typesafe" ? "typesafe/jev-1.13" : config.classifier.provider.model);
-  const prices =
+  const configured =
     d.inputCostPerMillion != null && d.outputCostPerMillion != null
       ? { input: d.inputCostPerMillion, output: d.outputCostPerMillion }
-      : DEFAULT_PRICES[model];
+      : undefined;
   // Unpriced usage never counts toward the budget. The same model on the classifier's endpoint
-  // costs what the classifier pays, so use its prices (read per call: Settings can change them).
+  // costs what the classifier pays, so the operator's prices for it come before built-in defaults
+  // (read per call: Settings can change them).
   const sameAsClassifier = d.provider === "llm" && model === config.classifier.provider.model;
   const onUsage = usageTracker
     ? (_name: string, inputTokens: number, outputTokens: number, estimated?: boolean) => {
-        const p = prices ?? (sameAsClassifier ? usageTracker.getPrices() : null);
+        const p = configured ?? (sameAsClassifier ? usageTracker.getPrices() : null) ?? DEFAULT_PRICES[model];
         const cost = p ? (inputTokens * p.input + outputTokens * p.output) / 1_000_000 : null;
         usageTracker.recordExternalUsage("decisions", model, inputTokens, outputTokens, cost, estimated ? "estimated" : "actual");
       }
