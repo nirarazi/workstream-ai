@@ -13,7 +13,7 @@ import { DefaultExtractor, knownTicketPrefixes } from "./graph/extractors/defaul
 import { WorkItemLinker } from "./graph/linker.js";
 import { createMessagingAdapter, createTaskAdapter, getMessagingAdapterSetupInfo, getTaskAdapterSetupInfo } from "./adapters/registry.js";
 import { Pipeline } from "./pipeline.js";
-import type { MessagingAdapter } from "./adapters/messaging/interface.js";
+import type { MessagingAdapter, PostedMessage } from "./adapters/messaging/interface.js";
 import type { TaskAdapter } from "./adapters/tasks/interface.js";
 import { createRateLimiter, type RateLimiter } from "./rate-limiter.js";
 import { Summarizer } from "./summarizer/index.js";
@@ -536,21 +536,22 @@ export function createApp(state: EngineState): Hono {
     try {
       // Case 1: Reply to existing thread (original behavior)
       if (body.threadId && body.channelId) {
-        await messaging.replyToThread(body.threadId, body.channelId, body.message);
+        const posted = await messaging.replyToThread(body.threadId, body.channelId, body.message);
         if (body.workItemId) {
           const threads = state.graph.getThreadsForWorkItem(body.workItemId);
           const thread = threads.find((t) => t.id === body.threadId);
           if (thread) {
+            // Under the posted message's own ID, so reading it back from the platform doesn't log it again
             state.graph.insertEvent({
               threadId: body.threadId,
-              messageId: `operator-reply-${Date.now()}`,
+              messageId: posted ? posted.messageId : `operator-reply-${Date.now()}`,
               workItemId: body.workItemId,
               agentId: null,
               status: "in_progress",
               confidence: 1.0,
               reason: "Operator reply",
               rawText: body.message,
-              timestamp: new Date().toISOString(),
+              timestamp: posted ? posted.timestamp : new Date().toISOString(),
               entryType: "decision",
               targetedAtOperator: false, // the operator's own reply never waits on the operator
             });
@@ -1034,10 +1035,12 @@ export function createApp(state: EngineState): Hono {
         }
       }
 
-      // Record the operator's action as an event in the timeline
-      // (dismiss and noise already inserted their own events above)
+      // Record the operator's action as an event in the timeline (dismiss and noise already inserted their own
+      // events above). With a message, it's posted first and recorded under the posted message's own ID, so
+      // reading it back from the platform doesn't log it a second time.
       const actionThread = findThreadForWorkItem(body.workItemId);
-      if (body.action !== "dismiss" && body.action !== "noise") {
+      const recordAction = (posted: PostedMessage | void) => {
+        if (body.action === "dismiss" || body.action === "noise") return;
         const actionStatus = body.action === "approve" || body.action === "close" ? "completed" : "in_progress";
         const actionLabels: Record<string, string> = {
           approve: "Operator approved",
@@ -1047,29 +1050,39 @@ export function createApp(state: EngineState): Hono {
         };
         state.graph.insertEvent({
           threadId: actionThread?.id ?? null,
-          messageId: `operator-action-${Date.now()}`,
+          messageId: posted ? posted.messageId : `operator-action-${Date.now()}`,
           workItemId: body.workItemId,
           agentId: null,
           status: actionStatus,
           confidence: 1.0,
           reason: actionLabels[body.action] ?? `Operator action: ${body.action}`,
           rawText: body.message ?? null,
-          timestamp: new Date().toISOString(),
+          timestamp: posted ? posted.timestamp : new Date().toISOString(),
           entryType: "decision",
           targetedAtOperator: false,
         });
-      }
+      };
 
       // If there's a message and a messaging adapter, post it to the related thread
       let delivered = false;
       if (body.message && state.messagingAdapter) {
         if (actionThread) {
-          await state.messagingAdapter.replyToThread(actionThread.id, actionThread.channelId, body.message);
+          let posted: PostedMessage | void;
+          try {
+            posted = await state.messagingAdapter.replyToThread(actionThread.id, actionThread.channelId, body.message);
+          } catch (err) {
+            recordAction(); // the action itself happened; only the message didn't go out
+            throw err;
+          }
+          recordAction(posted);
           delivered = true;
         } else {
+          recordAction();
           log.warn("No threads found for work item — message not sent", body.workItemId);
           return c.json({ ok: false, error: "No thread found to post message to" }, 404);
         }
+      } else {
+        recordAction();
       }
 
       return c.json({ ok: true, delivered });

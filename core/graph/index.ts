@@ -1427,7 +1427,7 @@ export class ContextGraph {
           WHERE (e2.work_item_id = wi.id
              OR e2.thread_id IN (SELECT thread_id FROM thread_work_items WHERE work_item_id = wi.id))
             -- the last message (an agent's completion over MCP included), not the operator's approve or close record
-            AND NOT (e2.agent_id IS NULL AND e2.message_id LIKE 'operator-%')
+            AND NOT (e2.agent_id IS NULL AND e2.entry_type = 'decision')
           ORDER BY e2.timestamp DESC
           LIMIT 1
         )

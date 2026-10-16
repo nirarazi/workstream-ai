@@ -225,3 +225,87 @@ describe("dismiss and noise actions", () => {
     expect(wi?.dismissedAt).not.toBeNull();
   });
 });
+
+describe("the operator's message is logged once", () => {
+  const POSTED = { messageId: "1791000000.000100", timestamp: "2026-10-14T04:09:20.000Z" };
+  let db: Database;
+  let graph: ContextGraph;
+
+  beforeEach(() => {
+    db = new Database(":memory:");
+    graph = new ContextGraph(db);
+    graph.upsertWorkItem({ id: "OPS-200", source: "jira", title: "Test item", currentAtcStatus: "blocked_on_human" });
+    graph.upsertThread({ id: "T001", channelId: "C001", channelName: "fleet-ops", platform: "slack", workItemId: "OPS-200" });
+    graph.linkThreadWorkItem("T001", "OPS-200", "primary");
+  });
+
+  afterEach(() => db.close());
+
+  const eventsFor = (messageId: string) =>
+    db.db.prepare("SELECT reason, timestamp FROM events WHERE message_id = ?").all(messageId) as Array<{ reason: string; timestamp: string }>;
+
+  it("records an action under the posted message, so reading it back adds nothing", async () => {
+    const state = makeState(graph, db);
+    state.messagingAdapter.replyToThread.mockResolvedValue(POSTED);
+
+    const res = await createApp(state).request("/api/action", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ workItemId: "OPS-200", action: "redirect", message: "What is the decision needed from me?" }),
+    });
+    expect(res.status).toBe(200);
+    expect(eventsFor(POSTED.messageId)).toEqual([{ reason: "Operator unblocked", timestamp: POSTED.timestamp }]);
+
+    // The pipeline then reads the same message back from the platform
+    const classify = vi.fn();
+    const message = {
+      id: POSTED.messageId, threadId: "T001", channelId: "C001", channelName: "fleet-ops", userId: "U0OPERATOR1", userName: "Alex",
+      text: "What is the decision needed from me?", timestamp: POSTED.timestamp, platform: "slack",
+    };
+    const adapter = {
+      name: "fake",
+      readThreads: vi.fn(async () => [{ id: "T001", channelId: "C001", channelName: "fleet-ops", platform: "slack", workItemId: null, lastActivity: message.timestamp, messageCount: 1, messages: [message] }]),
+      getThreadMessages: vi.fn(async () => []),
+    } as any;
+    const { Pipeline } = await import("../../core/pipeline.js");
+    const { WorkItemLinker } = await import("../../core/graph/linker.js");
+    const pipeline = new Pipeline(adapter, { classify } as any, graph, new WorkItemLinker(graph, []), undefined, {
+      messaging: { pollInterval: 3600, channels: [] }, lookback: { maxThreadsPerPoll: 10, maxActiveThreadRepolls: 0 },
+    } as any);
+    await pipeline.processOnce();
+
+    expect(classify).not.toHaveBeenCalled();
+    expect(eventsFor(POSTED.messageId)).toHaveLength(1);
+  });
+
+  it("records a reply under the posted message", async () => {
+    const state = makeState(graph, db);
+    state.messagingAdapter.replyToThread.mockResolvedValue(POSTED);
+
+    const res = await createApp(state).request("/api/reply", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ threadId: "T001", channelId: "C001", message: "Thanks", workItemId: "OPS-200" }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(eventsFor(POSTED.messageId)).toEqual([{ reason: "Operator reply", timestamp: POSTED.timestamp }]);
+  });
+
+  it("still records the action when its message fails to post", async () => {
+    const state = makeState(graph, db);
+    state.messagingAdapter.replyToThread.mockRejectedValue(new Error("Slack is down"));
+
+    const res = await createApp(state).request("/api/action", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ workItemId: "OPS-200", action: "approve", message: "Ship it" }),
+    });
+
+    expect(res.status).toBe(500);
+    const rows = db.db.prepare("SELECT message_id, reason FROM events WHERE reason = 'Operator approved'").all() as Array<{ message_id: string }>;
+    expect(rows).toHaveLength(1);
+    expect(rows[0].message_id).toMatch(/^operator-action-/);
+  });
+});
+

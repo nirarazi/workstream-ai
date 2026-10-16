@@ -731,6 +731,15 @@ describe("SlackAdapter", () => {
         as_user: true,
       });
     });
+
+    it("returns the posted message's ID and time", async () => {
+      mockChatPostMessage.mockResolvedValue({ ok: true, ts: "1700000099.000200" });
+
+      expect(await adapter.replyToThread("1700000001.000100", "C001", "On it")).toEqual({
+        messageId: "1700000099.000200",
+        timestamp: new Date(1700000099000).toISOString(),
+      });
+    });
   });
 
   // -- streamMessages --
