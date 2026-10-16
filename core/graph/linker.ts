@@ -6,6 +6,14 @@ import type { Extractor } from "./extractors/interface.js";
 
 const log = createLogger("graph:linker");
 
+/**
+ * A message naming at least this many work items is a digest (a daily summary, a sprint audit). It's kept in each
+ * item's timeline, but none of them becomes the thread's own, and the pipeline checks what it says against what the
+ * app already believes rather than letting it set their status or put them in Needs me: its summary is the agent's
+ * view, and a single "blocked" for the whole message isn't each item's.
+ */
+export const DIGEST_MIN_ITEMS = 3;
+
 export class WorkItemLinker {
   private extractors: Extractor[];
   private graph: ContextGraph;
@@ -17,7 +25,7 @@ export class WorkItemLinker {
 
   /**
    * Extract work item IDs from message text, ensure each exists in the graph,
-   * write junction rows for all extracted IDs (first = primary, rest = mentioned),
+   * write junction rows for all extracted IDs (first = primary, rest = mentioned; all mentioned in a digest),
    * and keep threads.work_item_id in sync for backwards compatibility.
    * Returns the list of extracted work item IDs.
    */
@@ -32,6 +40,7 @@ export class WorkItemLinker {
     }
 
     const workItemIds = Array.from(allIds);
+    const digest = workItemIds.length >= DIGEST_MIN_ITEMS;
 
     for (const id of workItemIds) {
       this.graph.upsertWorkItem({ id, source: "extracted" });
@@ -40,12 +49,12 @@ export class WorkItemLinker {
 
     // Write junction rows for all extracted IDs
     for (let i = 0; i < workItemIds.length; i++) {
-      const relation = i === 0 ? "primary" : "mentioned";
+      const relation = i === 0 && !digest ? "primary" : "mentioned";
       this.graph.linkThreadWorkItem(threadId, workItemIds[i], relation);
     }
 
     // Keep threads.work_item_id in sync (backwards compatibility)
-    if (workItemIds.length > 0) {
+    if (workItemIds.length > 0 && !digest) {
       const thread = this.graph.getThreadById(threadId);
       if (thread && !thread.workItemId) {
         this.graph.upsertThread({

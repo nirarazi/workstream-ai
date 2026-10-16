@@ -125,6 +125,7 @@ function toEvent(row: EventRow): Event {
     targetedAtOperator: Boolean(row.targeted_at_operator ?? 1),
     actionRequiredFrom,
     nextAction: row.next_action ?? null,
+    digest: Boolean(row.digest),
   };
 }
 
@@ -665,6 +666,59 @@ export class ContextGraph {
    * and create `mentioned` junction rows for any that are missing.
    * Skips IDs that already have a junction row for that thread.
    */
+  /**
+   * Records what a digest said about one of the work items it names, and whether that matches the app's view:
+   * the same kind of state (needs someone, done, or neither). Unresolved disagreements are for a judge to settle.
+   */
+  recordDigestCheck(check: {
+    eventId: string;
+    workItemId: string;
+    digestStatus: StatusCategory;
+    digestTargeted: boolean;
+    itemStatus: StatusCategory | null;
+    at: string;
+  }): void {
+    const kind = (s: string) =>
+      s === "blocked_on_human" || s === "needs_decision" ? "needs" : s === "completed" ? "done" : "other";
+    const agrees = check.itemStatus === null ? null : kind(check.digestStatus) === kind(check.itemStatus) ? 1 : 0;
+    this.db.db.prepare(`
+      INSERT OR IGNORE INTO digest_checks (event_id, work_item_id, digest_status, digest_targeted, item_status, agrees, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(check.eventId, check.workItemId, check.digestStatus, check.digestTargeted ? 1 : 0, check.itemStatus, agrees, check.at);
+  }
+
+  /** Digest checks that disagree with the app and aren't settled yet, oldest first */
+  getOpenDigestDisagreements(limit = 50): Array<{ eventId: string; workItemId: string; digestStatus: string; itemStatus: string | null }> {
+    return (this.db.db.prepare(`
+      SELECT event_id AS eventId, work_item_id AS workItemId, digest_status AS digestStatus, item_status AS itemStatus
+      FROM digest_checks WHERE agrees = 0 AND resolved_at IS NULL ORDER BY created_at LIMIT ?
+    `).all(limit)) as Array<{ eventId: string; workItemId: string; digestStatus: string; itemStatus: string | null }>;
+  }
+
+  /**
+   * Marks stored events whose text names at least `minItems` work items as digests, reading the IDs with the
+   * extractors. Only marks: the pipeline also counts IDs the model found, which the text alone may not show.
+   * Returns how many were marked.
+   */
+  backfillDigests(extractors: Extractor[], minItems: number): number {
+    const events = this.db.db.prepare(
+      "SELECT id, raw_text FROM events WHERE digest = 0 AND raw_text != '' AND message_id NOT LIKE 'operator-%'"
+    ).all() as Array<{ id: string; raw_text: string }>;
+    const mark = this.db.db.prepare("UPDATE events SET digest = 1 WHERE id = ?");
+    let marked = 0;
+    this.transaction(() => {
+      for (const event of events) {
+        const ids = new Set<string>();
+        for (const extractor of extractors) for (const id of extractor.extractWorkItemIds(event.raw_text)) ids.add(id);
+        if (ids.size >= minItems) {
+          mark.run(event.id);
+          marked++;
+        }
+      }
+    });
+    return marked;
+  }
+
   backfillJunctionFromRawText(extractors: Extractor[]): number {
     const events = this.db.db.prepare(
       "SELECT id, thread_id, work_item_id, raw_text FROM events WHERE raw_text != ''"
@@ -718,13 +772,14 @@ export class ContextGraph {
     targetedAtOperator?: boolean;
     actionRequiredFrom?: string[] | null;
     nextAction?: string | null;
+    digest?: boolean;
   }): Event {
     const id = randomUUID();
     const now = new Date().toISOString();
 
     const stmt = this.db.db.prepare(`
-      INSERT OR IGNORE INTO events (id, thread_id, message_id, work_item_id, agent_id, status, confidence, reason, raw_text, timestamp, created_at, entry_type, targeted_at_operator, action_required_from, next_action)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT OR IGNORE INTO events (id, thread_id, message_id, work_item_id, agent_id, status, confidence, reason, raw_text, timestamp, created_at, entry_type, targeted_at_operator, action_required_from, next_action, digest)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     const result = stmt.run(
       id,
@@ -742,6 +797,7 @@ export class ContextGraph {
       (event.targetedAtOperator ?? true) ? 1 : 0,
       event.actionRequiredFrom ? JSON.stringify(event.actionRequiredFrom) : null,
       event.nextAction ?? null,
+      event.digest ? 1 : 0,
     );
 
     if (result.changes === 0) {
@@ -1247,6 +1303,7 @@ export class ContextGraph {
           WHERE (e2.work_item_id = wi.id
              OR e2.thread_id IN (SELECT thread_id FROM thread_work_items WHERE work_item_id = wi.id))
             AND e2.targeted_at_operator = 1
+            AND e2.digest = 0 -- a digest informs the item, it doesn't put it in front of the operator
           ORDER BY e2.timestamp DESC
           LIMIT 1
         )
@@ -1261,6 +1318,7 @@ export class ContextGraph {
           WHERE (e4.work_item_id = wi.id
              OR e4.thread_id IN (SELECT thread_id FROM thread_work_items WHERE work_item_id = wi.id))
             AND e4.targeted_at_operator = 0
+            AND e4.digest = 0
             AND e4.status IN ('blocked_on_human', 'needs_decision')
             AND e4.confidence >= ?
             AND e4.timestamp > e.timestamp

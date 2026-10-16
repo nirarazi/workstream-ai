@@ -8,7 +8,9 @@ import type { MessagingAdapter } from "./adapters/messaging/interface.js";
 import type { TaskAdapter } from "./adapters/tasks/interface.js";
 import type { Classifier } from "./classifier/index.js";
 import type { ContextGraph } from "./graph/index.js";
-import type { WorkItemLinker } from "./graph/linker.js";
+import { DIGEST_MIN_ITEMS, type WorkItemLinker } from "./graph/linker.js";
+
+export { DIGEST_MIN_ITEMS };
 import { knownTicketPrefixes, looksLikeTicketKey } from "./graph/extractors/default.js";
 
 const log = createLogger("pipeline");
@@ -943,9 +945,14 @@ export class Pipeline {
         isBot: message.senderType === "agent" ? true : message.senderType === "human" ? false : null,
       });
 
+      // A digest makes none of the items it names the thread's own: they're all mentioned
+      const digest = [...allWorkItemIds].filter((id) => !id.startsWith("thread:")).length >= DIGEST_MIN_ITEMS;
+
       // Step 4: Upsert thread in graph — preserve manually linked work items
       const isManuallyLinked = existingThread?.manuallyLinked === true;
-      const primaryWorkItemId = allWorkItemIds.size > 0 ? [...allWorkItemIds][0] : null;
+      const primaryWorkItemId = digest
+        ? inheritedWorkItemId
+        : allWorkItemIds.size > 0 ? [...allWorkItemIds][0] : null;
 
       this.graph.upsertThread({
         id: thread.id,
@@ -962,7 +969,7 @@ export class Pipeline {
       });
 
       // Step 5: Insert event with classification
-      this.graph.insertEvent({
+      const event = this.graph.insertEvent({
         threadId: thread.id,
         messageId: message.id,
         workItemId: primaryWorkItemId,
@@ -976,6 +983,7 @@ export class Pipeline {
         targetedAtOperator: classification.targetedAtOperator,
         actionRequiredFrom: classification.actionRequiredFrom,
         nextAction: classification.nextAction,
+        digest,
       });
 
       // Step 6: Update work item status and write junction rows
@@ -993,6 +1001,21 @@ export class Pipeline {
         const existing = this.graph.getWorkItemById(workItemId);
         if (existing) {
           const itemClassification = validatedBreakdownMap.get(workItemId);
+
+          // A digest doesn't decide: what it says about each item is compared with the app's view instead
+          if (digest) {
+            if (itemClassification) {
+              this.graph.recordDigestCheck({
+                eventId: event.id,
+                workItemId,
+                digestStatus: itemClassification.status,
+                digestTargeted: itemClassification.targetedAtOperator,
+                itemStatus: existing.currentAtcStatus,
+                at: message.timestamp,
+              });
+            }
+            continue;
+          }
 
           // Only the primary work item inherits the thread-level classification.
           // Mentioned items must have an explicit breakdown entry — otherwise we

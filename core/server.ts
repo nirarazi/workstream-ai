@@ -12,7 +12,7 @@ import { UsageTracker } from "./usage/tracker.js";
 import { DefaultExtractor, knownTicketPrefixes } from "./graph/extractors/default.js";
 import { WorkItemLinker } from "./graph/linker.js";
 import { createMessagingAdapter, createTaskAdapter, getMessagingAdapterSetupInfo, getTaskAdapterSetupInfo } from "./adapters/registry.js";
-import { Pipeline } from "./pipeline.js";
+import { DIGEST_MIN_ITEMS, Pipeline } from "./pipeline.js";
 import type { MessagingAdapter, PostedMessage } from "./adapters/messaging/interface.js";
 import type { TaskAdapter } from "./adapters/tasks/interface.js";
 import { createRateLimiter, type RateLimiter } from "./rate-limiter.js";
@@ -1677,6 +1677,9 @@ async function main(): Promise<void> {
 
   // Backfill junction rows from existing events' raw_text
   graph.backfillJunctionFromRawText([extractor]);
+  // Messages stored before digests were told apart: mark them, so they stop putting items in Needs me
+  const digestsMarked = graph.backfillDigests([extractor], DIGEST_MIN_ITEMS);
+  if (digestsMarked > 0) log.info(`Marked ${digestsMarked} earlier message(s) naming ${DIGEST_MIN_ITEMS}+ work items as digests`);
 
   // Initialize engine state
   const state: EngineState = {

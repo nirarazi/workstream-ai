@@ -64,6 +64,7 @@ export interface EventRow {
   targeted_at_operator: number;
   action_required_from: string | null;
   next_action: string | null;
+  digest?: number;
 }
 
 export interface EnrichmentRow {
