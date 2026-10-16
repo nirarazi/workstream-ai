@@ -551,6 +551,10 @@ export function createApp(state: EngineState): Hono {
         // The reply went out: a failure to record it mustn't report failure, or a retry would post it again
         try {
           if (posted) state.graph.noteThreadActivity(body.threadId, posted.timestamp);
+        } catch (err) {
+          log.error("Posted the reply but couldn't note it on its thread", err instanceof Error ? err.message : String(err));
+        }
+        try {
           if (body.workItemId) {
             const threads = state.graph.getThreadsForWorkItem(body.workItemId);
             const thread = threads.find((t) => t.id === body.threadId);
