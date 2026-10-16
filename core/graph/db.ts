@@ -115,6 +115,18 @@ CREATE TABLE IF NOT EXISTS event_targets (
 );
 CREATE INDEX IF NOT EXISTS idx_event_targets_work_item ON event_targets(work_item_id);
 
+-- Work items a message is about besides its thread's own: the operator's message about items it names counts for them
+CREATE TABLE IF NOT EXISTS event_subjects (
+  event_id     TEXT NOT NULL REFERENCES events(id),
+  work_item_id TEXT NOT NULL REFERENCES work_items(id),
+  -- The message's own line for this item (status, and who it waits on), where it gave one
+  status       TEXT,
+  action_required_from TEXT,
+  confidence   REAL,
+  PRIMARY KEY (event_id, work_item_id)
+);
+CREATE INDEX IF NOT EXISTS idx_event_subjects_work_item ON event_subjects(work_item_id);
+
 -- What a digest (a message naming several work items) says about each, against what the app already believes
 CREATE TABLE IF NOT EXISTS digest_checks (
   event_id       TEXT NOT NULL REFERENCES events(id),
@@ -331,6 +343,12 @@ export class Database {
     // The judge's queue: open disagreements, oldest first
     this.db.exec(`CREATE INDEX IF NOT EXISTS idx_digest_checks_open ON digest_checks(created_at)
       WHERE agrees = 0 AND resolved_at IS NULL AND judged_at IS NULL`);
+
+    // event_subjects' line columns (a table created by an earlier build of this change lacks them)
+    const subjectCols = this.db.pragma("table_info(event_subjects)") as Array<{ name: string }>;
+    for (const [column, type] of [["status", "TEXT"], ["action_required_from", "TEXT"], ["confidence", "REAL"]]) {
+      if (!subjectCols.some((c) => c.name === column)) this.db.exec(`ALTER TABLE event_subjects ADD COLUMN ${column} ${type}`);
+    }
 
     // Add is_bot column to agents table
     const agentColsForBot = this.db.pragma("table_info(agents)") as Array<{ name: string }>;

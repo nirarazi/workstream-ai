@@ -79,6 +79,8 @@ export interface Message {
   timestamp: string;
   platform: string;
   senderType?: "agent" | "human" | "notification" | "unknown";
+  /** Posted by an app or integration, even under a person's account (e.g. one given the operator's token) */
+  postedByApp?: boolean;
 }
 
 /** What a message is a reply to: the thread's work item and the messages before it. */

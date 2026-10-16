@@ -24,6 +24,8 @@ interface SlackMessage {
   text?: string;
   user?: string;
   bot_id?: string;
+  /** Set when an app posted it, also under a user's token */
+  app_id?: string;
   bot_profile?: {
     name?: string;
     icons?: { image_48?: string };
@@ -606,6 +608,7 @@ export class SlackAdapter implements MessagingAdapter {
         platform: "slack",
         senderType: userInfo ? (userInfo.isBot ? "agent" as const : "human" as const)
           : (msg.bot_id ? "agent" as const : "unknown" as const),
+        postedByApp: Boolean(msg.bot_id || msg.app_id),
       };
     });
   }
@@ -898,6 +901,7 @@ export class SlackAdapter implements MessagingAdapter {
         platform: "slack",
         senderType: userInfo ? (userInfo.isBot ? "agent" as const : "human" as const)
           : (msg.bot_id ? "agent" as const : "unknown" as const),
+        postedByApp: Boolean(msg.bot_id || msg.app_id),
       };
     });
 

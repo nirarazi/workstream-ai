@@ -43,6 +43,21 @@ const RETRY_MAX_MS = 30 * 60 * 1000;
 /** Classified threads that started within this long stay in the history window, so late replies to them are read */
 const REPLY_WINDOW_MS = 24 * 60 * 60 * 1000;
 /**
+ * The lines of a message its author wrote: without quoted lines ("> ...", which Slack sends as "&gt; ...") and without
+ * a forwarded block and anything after it (its summary), which carry other people's words and the ticket IDs in them.
+ */
+export function operatorsOwnLines(text: string): string {
+  const own: string[] = [];
+  for (const line of text.split("\n")) {
+    const trimmed = line.trimStart();
+    if (/^(>|&gt;)\s*Forwarded from/i.test(trimmed)) break; // the forwarded block, and a summary after it
+    if (trimmed.startsWith(">") || trimmed.startsWith("&gt;")) continue;
+    own.push(line);
+  }
+  return own.join("\n");
+}
+
+/**
  * Whether a message on a completed work item brings it back: a blocker or a decision does (it needs the operator
  * again), and so does another human saying work resumed. An agent reporting progress after completion doesn't, nor
  * does the operator's own message (e.g. the note sent with Approve, which comes back as in_progress).
@@ -614,6 +629,13 @@ export class Pipeline {
     return this.allowsPullRequests() ? [...prefixes, "PR #"] : prefixes;
   }
 
+  /** What an operator's statement means for an item's status: "blocked" not on someone else isn't waiting on them */
+  private operatorsStatus(status: StatusCategory, actionRequiredFrom: string[] | null): StatusCategory {
+    const operatorIds = new Set([...(this.operatorIdentities?.values() ?? [])].map((id) => id.userId));
+    const namesSomeoneElse = (actionRequiredFrom ?? []).some((id) => !operatorIds.has(id));
+    return (status === "blocked_on_human" || status === "needs_decision") && !namesSomeoneElse ? "in_progress" : status;
+  }
+
   /**
    * The operator's own message is never something the operator has to act on: they just acted, so the
    * next move is someone else's. Without this, "any news on this?" came back blocked and targeted, and
@@ -621,11 +643,8 @@ export class Pipeline {
    */
   private fromOperator(message: Message, classification: Classification): Classification {
     if (!this.isOperator(message)) return classification;
-    const operatorIds = new Set([...(this.operatorIdentities?.values() ?? [])].map((id) => id.userId));
     // "@Dana please approve X" from the operator is still blocked — on Dana. Keep that status; just untarget it.
-    const namesSomeoneElse = (classification.actionRequiredFrom ?? []).some((id) => !operatorIds.has(id));
-    const waitingOnOperator =
-      (classification.status === "blocked_on_human" || classification.status === "needs_decision") && !namesSomeoneElse;
+    const waitingOnOperator = this.operatorsStatus(classification.status, classification.actionRequiredFrom) !== classification.status;
     return {
       ...classification,
       targetedAtOperator: false,
@@ -1025,6 +1044,12 @@ export class Pipeline {
           .map((b) => [b.workItemId, b]),
       );
 
+      // The operator's own message is their word on the items it's about: its thread's own item, and those named in
+      // their own lines (not ones the model added, nor in text they quote or forward). Not when an app posted it under
+      // their account.
+      const fromTheOperator = this.isOperator(message);
+      const operatorsWordApplies = fromTheOperator && !message.postedByApp;
+      const namedHere = operatorsWordApplies ? new Set(this.linker.extractIds(operatorsOwnLines(message.text))) : new Set<string>();
       for (const workItemId of allWorkItemIds) {
         // Write junction row (primary for the first/inherited ID, mentioned for the rest)
         const relation = workItemId === primaryWorkItemId ? "primary" : "mentioned";
@@ -1034,10 +1059,29 @@ export class Pipeline {
         if (existing) {
           const itemClassification = validatedBreakdownMap.get(workItemId);
           // The message's own line for this item puts it in front of the operator: it counts for the item even where
-          // the item is only mentioned, digest or not
-          const escalates = Boolean(itemClassification?.targetedAtOperator)
+          // the item is only mentioned, digest or not (never the operator's own message: they just acted)
+          const escalates = !fromTheOperator && Boolean(itemClassification?.targetedAtOperator)
             && (itemClassification!.status === "blocked_on_human" || itemClassification!.status === "needs_decision");
           if (escalates) this.graph.addEventTarget(event.id, workItemId);
+          // Their word on an item: one they named, or the thread's own when they named it or named none (the item the
+          // thread already belonged to, never one the model picked for a new thread). With no line
+          // of its own, only when it's the one item they named, so one status doesn't spread over several; and never
+          // noise, which says nothing about the item.
+          const theirItem = workItemId === primaryWorkItemId
+            ? (namedHere.size === 0 ? workItemId === ownItemId : namedHere.has(workItemId))
+            : namedHere.has(workItemId);
+          const theirStatus = itemClassification
+            ? this.operatorsStatus(itemClassification.status, itemClassification.actionRequiredFrom)
+            : classification.status;
+          const operatorsWord = operatorsWordApplies && theirItem
+            && (Boolean(itemClassification) || namedHere.size <= 1)
+            && theirStatus !== "noise";
+          // Their message counts for the item wherever it's posted, with their line for it, so it can hand it off
+          if (operatorsWord && (itemClassification || workItemId !== primaryWorkItemId)) {
+            this.graph.addEventSubject(event.id, workItemId, itemClassification
+              ? { status: theirStatus, actionRequiredFrom: itemClassification.actionRequiredFrom, confidence: itemClassification.confidence }
+              : undefined);
+          }
 
           // A digest doesn't decide the items it names (its thread's own item, if any, is handled as usual, and so is an
           // item its line says needs the operator): what it says about each is compared with the app's view instead,
@@ -1077,11 +1121,12 @@ export class Pipeline {
           // skip the status update.  This prevents a planning/summary thread's
           // top-level status (e.g. "needs_decision") from bleeding into every
           // ticket that happened to be listed in the message.
-          if (!itemClassification && relation === "mentioned") {
+          if (!itemClassification && relation === "mentioned" && !operatorsWord) {
             continue;
           }
 
-          const itemStatus = itemClassification?.status ?? classification.status;
+          // The operator's line for an item is their word too: not waiting on them unless it names someone else
+          const itemStatus = fromTheOperator ? theirStatus : itemClassification?.status ?? classification.status;
           const itemConfidence = itemClassification?.confidence ?? classification.confidence;
           const itemTitle = itemClassification?.title ?? classification.title;
 
@@ -1089,9 +1134,10 @@ export class Pipeline {
           const newer = !this.isOlderThanStatus(existing, message);
           // Done stays done, except for a blocker or decision (back to the inbox), or a human saying work resumed.
           // Agent chatter after completion ("thanks, merged") doesn't reopen it, however confident.
+          // The operator's word decides however sure the model was of an earlier message
           const shouldUpdate = existing.currentAtcStatus === "completed"
-            ? newer && reopens(itemStatus, message, this.isOperator(message))
-            : (!existing.currentConfidence || itemConfidence >= existing.currentConfidence) && newer;
+            ? newer && reopens(itemStatus, message, fromTheOperator)
+            : (operatorsWord || !existing.currentConfidence || itemConfidence >= existing.currentConfidence) && newer;
 
           if (shouldUpdate) {
             this.graph.upsertWorkItem({
