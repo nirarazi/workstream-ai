@@ -33,6 +33,8 @@ export default function StreamView({
   const [allActiveItems, setAllActiveItems] = useState<ActionableItem[]>([]);
   const [dismissedItems, setDismissedItems] = useState<ActionableItem[]>([]);
   const [doneItems, setDoneItems] = useState<ActionableItem[]>([]);
+  // All finished items: the list itself stops at the latest 200
+  const [doneTotal, setDoneTotal] = useState(0);
   const [search, setSearch] = useState("");
   const [selectedWorkItemId, setSelectedWorkItemId] = useState<string | null>(null);
   const [actionStates, setActionStates] = useState<Map<string, ActionState>>(new Map());
@@ -68,7 +70,10 @@ export default function StreamView({
       setNeedsMeItems(inbox.items);
       setAllActiveItems(allActive.items);
       if (dismissed) setDismissedItems(dismissed.items);
-      if (done) setDoneItems(done.items);
+      if (done) {
+        setDoneItems(done.items);
+        setDoneTotal(done.total ?? done.items.length);
+      }
       setError(null);
       setLastSyncAt(new Date());
       setSyncError(false);
@@ -124,6 +129,7 @@ export default function StreamView({
     needsMe: needsMeItems.length,
     snoozed: snoozedItems.length,
     allActive: allActiveItems.length,
+    done: doneTotal,
     dismissed: dismissedItems.length,
   };
 

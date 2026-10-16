@@ -181,6 +181,18 @@ function sameSet(a: Set<string>, b: Set<string>): boolean {
   return true;
 }
 
+/**
+ * A work item that belongs in Done (as `w`): completed, not merged, and not a conversation item replaced by a
+ * ticket created from it. Creating a ticket points the thread itself at the ticket; a ticket merely mentioned in it doesn't.
+ */
+const COMPLETED_ITEM = `
+  w.current_atc_status = 'completed'
+  AND w.merged_into IS NULL
+  AND NOT (w.id LIKE 'thread:%' AND EXISTS (
+    SELECT 1 FROM threads th
+    WHERE th.id = substr(w.id, 8) AND th.work_item_id IS NOT NULL AND th.work_item_id <> w.id
+  ))`;
+
 export class ContextGraph {
   private db: Database;
 
@@ -1405,13 +1417,7 @@ export class ContextGraph {
         t.last_activity AS t_last_activity, t.message_count AS t_message_count
       FROM (
         SELECT * FROM work_items w
-        WHERE w.current_atc_status = 'completed'
-          AND w.merged_into IS NULL
-          -- Creating a ticket points the thread itself at the ticket; a ticket merely mentioned in it doesn't
-          AND NOT (w.id LIKE 'thread:%' AND EXISTS (
-            SELECT 1 FROM threads th
-            WHERE th.id = substr(w.id, 8) AND th.work_item_id IS NOT NULL AND th.work_item_id <> w.id
-          ))
+        WHERE ${COMPLETED_ITEM}
         -- Items finished before status times were kept fall back to their last update
         ORDER BY COALESCE(w.status_at, w.updated_at) DESC
         LIMIT 200
@@ -1433,6 +1439,12 @@ export class ContextGraph {
       .all() as Array<Record<string, unknown>>;
 
     return rows.map(mapActionableRow);
+  }
+
+  /** How many items Done holds in all, though it lists only the latest 200 */
+  countCompletedItems(): number {
+    const row = this.db.db.prepare(`SELECT COUNT(*) AS n FROM work_items w WHERE ${COMPLETED_ITEM}`).get() as { n: number };
+    return row.n;
   }
 
   // --- Channel Context Query (for continuation detection) ---

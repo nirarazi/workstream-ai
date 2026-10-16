@@ -423,7 +423,7 @@ export async function fetchDismissed(): Promise<{ items: ActionableItem[] }> {
   return apiFetch("/api/stream/dismissed");
 }
 
-export async function fetchDone(): Promise<{ items: ActionableItem[] }> {
+export async function fetchDone(): Promise<{ items: ActionableItem[]; total: number }> {
   return apiFetch("/api/stream/done");
 }
 

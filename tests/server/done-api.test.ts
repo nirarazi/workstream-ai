@@ -107,6 +107,20 @@ describe("Done tab", () => {
     expect(graph.getCompletedItems()[0].latestEvent?.reason).toBe("Rolled out to all regions");
   });
 
+  it("lists the latest 200 but counts every finished item", async () => {
+    for (let i = 0; i < 205; i++) {
+      graph.upsertWorkItem({ id: `OPS-${i}`, source: "jira", title: `Item ${i}`, currentAtcStatus: "completed", statusAt: at(i) });
+    }
+    seed("OPS-900", "in_progress", 1);
+
+    const body = await (await createApp(makeState(graph, db)).request("/api/stream/done")).json();
+
+    expect(body.items).toHaveLength(200);
+    expect(body.items[0].workItem.id).toBe("OPS-0");
+    expect(body.total).toBe(205);
+    expect(graph.countCompletedItems()).toBe(205);
+  });
+
   it("is served at /api/stream/done", async () => {
     seed("OPS-1", "completed", 10);
     seed("OPS-2", "blocked_on_human", 10);
