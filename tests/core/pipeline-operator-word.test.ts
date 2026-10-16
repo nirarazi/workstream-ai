@@ -42,6 +42,15 @@ function setup(text: string, answer: Classification, extra: { postedByApp?: bool
   return { graph, pipeline };
 }
 
+/** A top-level operator message, in a new thread, naming no ticket; the model returns OPS-2 anyway */
+function setupNewThread() {
+  const { graph, pipeline } = setup("done, thanks", answer({ status: "completed", confidence: 0.4, workItemIds: ["OPS-2"] }));
+  const message = { id: "m-new", threadId: "T-NEW", channelId: "C1", channelName: "fleet-ops", userId: OPERATOR, userName: "Alex", text: "done, thanks", timestamp: "2026-10-16T12:00:00.000Z", platform: "slack", senderType: "human" as const };
+  const adapter = (pipeline as any).messagingAdapter ?? (pipeline as any).adapter;
+  adapter.readThreads.mockResolvedValue([{ id: "T-NEW", channelId: "C1", channelName: "fleet-ops", platform: "slack", workItemId: null, lastActivity: message.timestamp, messageCount: 1, messages: [message] }]);
+  return { graph, pipeline, adapter };
+}
+
 const answer = (overrides: Partial<Classification>): Classification => ({
   status: "in_progress", entryType: "progress", confidence: 0.81, reason: "operator's update", workItemIds: ["OPS-2"],
   title: "Update", targetedAtOperator: false, actionRequiredFrom: [], nextAction: null, ...overrides,
@@ -174,6 +183,15 @@ describe("Pipeline: the operator's word", () => {
     await pipeline.processOnce();
 
     expect(graph.getActionableItems().map((i) => i.workItem.id)).toContain("OPS-2");
+  });
+
+  it("doesn't give their word to an item the model picks for a new thread", async () => {
+    const { graph, pipeline, adapter } = setupNewThread();
+
+    await pipeline.processOnce();
+
+    expect(graph.getWorkItemById("OPS-2")!.currentAtcStatus).toBe("blocked_on_human");
+    expect(adapter).toBeDefined();
   });
 
   it("doesn't let an older message of theirs, classified late, undo a newer status", async () => {

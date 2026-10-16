@@ -1063,10 +1063,13 @@ export class Pipeline {
           const escalates = !fromTheOperator && Boolean(itemClassification?.targetedAtOperator)
             && (itemClassification!.status === "blocked_on_human" || itemClassification!.status === "needs_decision");
           if (escalates) this.graph.addEventTarget(event.id, workItemId);
-          // Their word on an item: one they named (or the thread's own, when they named none or named it). With no line
+          // Their word on an item: one they named, or the thread's own when they named it or named none (the item the
+          // thread already belonged to, never one the model picked for a new thread). With no line
           // of its own, only when it's the one item they named, so one status doesn't spread over several; and never
           // noise, which says nothing about the item.
-          const theirItem = workItemId === primaryWorkItemId ? namedHere.size === 0 || namedHere.has(workItemId) : namedHere.has(workItemId);
+          const theirItem = workItemId === primaryWorkItemId
+            ? (namedHere.size === 0 ? workItemId === ownItemId : namedHere.has(workItemId))
+            : namedHere.has(workItemId);
           const theirStatus = itemClassification
             ? this.operatorsStatus(itemClassification.status, itemClassification.actionRequiredFrom)
             : classification.status;
