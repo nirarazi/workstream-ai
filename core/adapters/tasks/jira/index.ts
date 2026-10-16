@@ -12,9 +12,12 @@ const log = createLogger("jira-adapter");
 /** How long a fetched project list is used before it's fetched again, and the wait after a failed fetch */
 const PROJECT_KEYS_TTL_MS = 60 * 60 * 1000;
 const PROJECT_KEYS_RETRY_MS = 5 * 60 * 1000;
-/** Pages of 50 projects read at most; a larger site keeps the first 1,000 */
+/** Pages of 50 projects read at most. A site with more isn't used as a prefix list: a partial list would reject real tickets. */
 const MAX_PROJECT_PAGES = 20;
+/** Jira project keys: a letter, then letters, digits or underscores (10 characters by default; capped here so a key can't bloat the prompt) */
+const PROJECT_KEY = /^[A-Z][A-Z0-9_]{0,19}$/i;
 
+/** Plain http is allowed only to these: names like foo.localhost aren't resolved to this machine everywhere */
 const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
 /**
@@ -28,8 +31,7 @@ export function checkJiraBaseUrl(raw: string): string {
   } catch {
     throw new Error("Jira base URL isn't a valid URL");
   }
-  const loopback = LOOPBACK_HOSTS.has(url.hostname) || url.hostname.endsWith(".localhost");
-  if (url.protocol !== "https:" && !(url.protocol === "http:" && loopback)) {
+  if (url.protocol !== "https:" && !(url.protocol === "http:" && LOOPBACK_HOSTS.has(url.hostname))) {
     throw new Error("Jira base URL must start with https:// (http:// only for localhost)");
   }
   if (url.username || url.password) throw new Error("Jira base URL must not contain a user name or password");
@@ -177,11 +179,12 @@ export class JiraAdapter implements TaskAdapter {
     };
   }
 
+  /** Throws when the base URL isn't safe to send the token to, so Settings can refuse it before saving */
   prepareCredentials(fields: Record<string, string>): Record<string, string> {
     const authToken = Buffer.from(`${fields.email}:${fields.token}`).toString("base64");
     return {
       token: authToken,
-      baseUrl: fields.baseUrl,
+      baseUrl: checkJiraBaseUrl(fields.baseUrl ?? ""),
     };
   }
 
@@ -193,6 +196,8 @@ export class JiraAdapter implements TaskAdapter {
   private projectPrefixes: string[] = [];
   private projectKeysDueAt = 0;
   private projectKeysLoading: Promise<void> | null = null;
+  /** Bumped on every connect, so a project list fetched for an earlier connection is dropped */
+  private connection = 0;
 
   setRateLimiter(limiter: RateLimiter): void {
     this.rateLimiter = limiter;
@@ -239,6 +244,7 @@ export class JiraAdapter implements TaskAdapter {
   }
 
   async connect(credentials: Credentials, signal?: AbortSignal): Promise<void> {
+    this.connected = false; // until these credentials are verified
     const baseUrl = credentials.baseUrl as string | undefined;
     if (!baseUrl || typeof baseUrl !== "string") {
       throw new Error("Jira credentials must include baseUrl");
@@ -250,6 +256,8 @@ export class JiraAdapter implements TaskAdapter {
     this.baseUrl = checkJiraBaseUrl(baseUrl);
     this.projectPrefixes = [];
     this.projectKeysDueAt = 0;
+    this.projectKeysLoading = null;
+    this.connection++;
     this.authToken = credentials.token;
 
     log.info("Verifying Jira connection...", this.baseUrl);
@@ -371,43 +379,51 @@ export class JiraAdapter implements TaskAdapter {
 
   /**
    * The site's project keys as ticket prefixes ("OPS-"). Answers from the last fetched list and,
-   * when that is due, fetches it again in the background, so the first call after connecting
-   * returns an empty list (callers then fall back to configured prefixes).
+   * when that is due, fetches it again in the background, so a call before the first fetch lands
+   * returns an empty list (callers then fall back to configured prefixes). Only projects the
+   * token's user can browse are listed.
    */
   getValidIdPrefixes(): string[] {
     if (this.connected && !this.projectKeysLoading && Date.now() >= this.projectKeysDueAt) {
-      const baseUrl = this.baseUrl;
+      const connection = this.connection;
+      const current = () => connection === this.connection; // not replaced by a newer connect meanwhile
       this.projectKeysLoading = this.fetchProjectKeys()
         .then((keys) => {
-          if (baseUrl !== this.baseUrl) return; // reconnected to another site meanwhile
+          if (!current()) return;
           this.projectPrefixes = keys.map((key) => `${key.toUpperCase()}-`);
           this.projectKeysDueAt = Date.now() + PROJECT_KEYS_TTL_MS;
           log.info(`Loaded ${keys.length} Jira project keys`);
         })
         .catch((err) => {
+          if (!current()) return;
           this.projectKeysDueAt = Date.now() + PROJECT_KEYS_RETRY_MS;
           log.warn(`Couldn't list Jira projects: ${err instanceof Error ? err.message : String(err)}`);
         })
         .finally(() => {
-          this.projectKeysLoading = null;
+          if (current()) this.projectKeysLoading = null;
         });
     }
-    return this.projectPrefixes;
+    return [...this.projectPrefixes];
   }
 
+  /** Every project key on the site; an empty list when there are too many to read (see MAX_PROJECT_PAGES) */
   private async fetchProjectKeys(): Promise<string[]> {
     const keys: string[] = [];
+    let startAt = 0;
     for (let page = 0; page < MAX_PROJECT_PAGES; page++) {
-      const params = new URLSearchParams({ startAt: String(page * 50), maxResults: "50" });
+      const params = new URLSearchParams({ startAt: String(startAt), maxResults: "50" });
       const response = await this.request(`/rest/api/3/project/search?${params.toString()}`);
       if (!response.ok) throw new Error(`project search failed (${response.status})`);
       const data = (await response.json()) as { values?: Array<{ key?: unknown }>; isLast?: boolean };
-      for (const project of data.values ?? []) {
-        if (typeof project.key === "string" && /^[A-Z][A-Z0-9_]+$/i.test(project.key)) keys.push(project.key);
+      const values = data.values ?? [];
+      for (const project of values) {
+        if (typeof project.key === "string" && PROJECT_KEY.test(project.key)) keys.push(project.key);
       }
-      if (data.isLast !== false || (data.values ?? []).length === 0) break;
+      if (data.isLast !== false || values.length === 0) return keys;
+      startAt += values.length;
     }
-    return keys;
+    log.warn(`Jira has more than ${MAX_PROJECT_PAGES * 50} projects: not using them as ticket prefixes`);
+    return [];
   }
 
   async searchWorkItems(query: string): Promise<WorkItemDetail[]> {

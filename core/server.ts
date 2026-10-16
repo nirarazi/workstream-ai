@@ -1230,10 +1230,14 @@ export function createApp(state: EngineState): Hono {
           }
         }
 
-        // Prepare credentials (e.g. Jira base64 encoding)
-        const prepared = adapter.prepareCredentials
-          ? adapter.prepareCredentials(fields)
-          : fields;
+        // Prepare credentials (e.g. Jira base64 encoding); an adapter throws on a value it can't use, such as
+        // a Jira base URL that isn't https, and nothing is saved
+        let prepared: Record<string, string>;
+        try {
+          prepared = adapter.prepareCredentials ? adapter.prepareCredentials(fields) : fields;
+        } catch (err) {
+          return c.json({ error: err instanceof Error ? err.message : String(err) }, 400);
+        }
 
         // Write the computed auth token env var if adapter produces one
         // For Jira: the base64 token goes to WORKSTREAM_JIRA_TOKEN
@@ -1249,7 +1253,7 @@ export function createApp(state: EngineState): Hono {
           localConfig.taskAdapter = {
             ...existingTask,
             enabled: true,
-            baseUrl: fields.baseUrl,
+            baseUrl: prepared.baseUrl ?? fields.baseUrl,
           };
         }
       }
@@ -1415,6 +1419,7 @@ export function createApp(state: EngineState): Hono {
           : body.task.fields;
         await untilDeadlineOrSuperseded((signal) => adapter.connect(creds as Record<string, string> & { token: string }, signal), CONNECT_DEADLINE_MS, `${adapter.name} connect`, superseded);
         state.taskAdapter = adapter;
+        adapter.getValidIdPrefixes?.(); // start loading the tracker's prefixes before the next poll needs them
         reconnecting.delete("task");
         const taskIdentity = adapter.getAuthenticatedUser?.();
         if (taskIdentity) {
@@ -1640,7 +1645,8 @@ async function main(): Promise<void> {
   const classifier = new Classifier(usageTracker, prompt.system, fewShot, undefined, operatorRole, null, buildOperatorContext(config), hasRemit(config));
   classifier.setRateLimiter(rateLimiters.llm);
   classifier.setDecisionGate(createDecisionGate(config, usageTracker));
-  // Set once the engine state exists: from then on the extractor also knows the tracker's project keys
+  // Late-bound: the junction backfill below runs the extractor before the engine state exists (with the
+  // configured prefixes only); once it does, the extractor also knows the tracker's project keys
   let engine: EngineState | null = null;
   const extractor = new DefaultExtractor({
     ticketPatterns: config.extractors.ticketPatterns,
@@ -1648,6 +1654,7 @@ async function main(): Promise<void> {
     ticketPrefixes: () => engine
       ? knownTicketPrefixes(engine.config.taskAdapter.ticketPrefixes, engine.taskAdapter)
       : config.taskAdapter.ticketPrefixes,
+    isKnownId: (id) => graph.getWorkItemById(id) !== null,
   });
   const linker = new WorkItemLinker(graph, [extractor]);
 
@@ -1719,6 +1726,7 @@ async function main(): Promise<void> {
         baseUrl: process.env.WORKSTREAM_JIRA_BASE_URL ?? config.taskAdapter.baseUrl ?? "",
       });
       state.taskAdapter = adapter;
+      adapter.getValidIdPrefixes?.(); // start loading the tracker's prefixes before the first poll
       const taskIdentity = adapter.getAuthenticatedUser?.();
       if (taskIdentity) {
         state.operatorIdentities.set(adapter.name, taskIdentity);

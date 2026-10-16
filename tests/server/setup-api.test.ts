@@ -310,6 +310,31 @@ describe("POST /api/setup preserves what the form doesn't manage", () => {
     expect(yaml).not.toContain("pasted-by-hand"); // the token belongs in .env
   });
 
+  it("refuses a Jira base URL the token can't safely go to, before writing anything", async () => {
+    await import("../../core/adapters/tasks/jira/index.js");
+    const writes: string[] = [];
+    vi.doMock("node:fs", async (importOriginal) => {
+      const real = await importOriginal<typeof import("node:fs")>();
+      return { ...real, existsSync: () => false, writeFileSync: (p: string) => { writes.push(String(p)); }, mkdirSync: () => undefined, chmodSync: () => undefined };
+    });
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const state = makeState();
+    try {
+      const res = await createApp(state).request("/api/setup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ task: { adapter: "jira", fields: { email: "dana@example.com", token: "test-token", baseUrl: "http://jira.example.com" } } }),
+      });
+      expect(res.status).toBe(400);
+      expect((await res.json()).error).toMatch(/https/);
+    } finally {
+      state.db.close();
+      fetchSpy.mockRestore();
+    }
+    expect(writes).toEqual([]);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
   it("rejects an auto-dismiss period that isn't 1 to 3650 whole days", async () => {
     const writes: string[] = [];
     vi.doMock("node:fs", async (importOriginal) => {
