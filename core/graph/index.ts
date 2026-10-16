@@ -189,13 +189,17 @@ function sameSet(a: Set<string>, b: Set<string>): boolean {
  * operator. A message in a thread that merely mentions the item, or a digest naming it, isn't.
  */
 function aboutItem(e: string, item: string, viaOwnLine = true): string {
-  return `((${e}.work_item_id = ${item} AND ${e}.digest < 2)
-    OR (${e}.digest = 0 AND ${e}.thread_id IN (SELECT thread_id FROM thread_work_items WHERE work_item_id = ${item} AND relation = 'primary'))${
+  // As a set of event IDs, so each branch is an index lookup (an OR with a correlated EXISTS scans every event).
+  // `e` and `item` must be SQL identifiers (table aliases and columns), never values.
+  return `${e}.id IN (
+    SELECT ab.id FROM events ab WHERE ab.work_item_id = ${item} AND ab.digest < 2
+    UNION SELECT ab2.id FROM thread_work_items twa JOIN events ab2 ON ab2.thread_id = twa.thread_id
+      WHERE twa.work_item_id = ${item} AND twa.relation = 'primary' AND ab2.digest = 0${
     viaOwnLine ? `
-    OR EXISTS (SELECT 1 FROM event_targets et WHERE et.event_id = ${e}.id AND et.work_item_id = ${item})` : ""})`;
+    UNION SELECT et.event_id FROM event_targets et WHERE et.work_item_id = ${item}` : ""})`;
 }
 
-/** SQL: event `e` is aimed at the operator, as a whole or by its own line for work item `item` */
+/** SQL: event `e` is aimed at the operator, as a whole or by its own line for work item `item` (identifiers only) */
 function forOperator(e: string, item: string): string {
   return `(${e}.targeted_at_operator = 1
     OR EXISTS (SELECT 1 FROM event_targets eto WHERE eto.event_id = ${e}.id AND eto.work_item_id = ${item}))`;
@@ -573,17 +577,28 @@ export class ContextGraph {
     return rows.map(toThread);
   }
 
+  /** Makes a thread the given item's own; its other items become mentions, since a thread's messages count for its own */
   linkThread(threadId: string, workItemId: string): void {
-    this.db.db.prepare(
-      "UPDATE threads SET work_item_id = ?, manually_linked = 1 WHERE id = ?"
-    ).run(workItemId, threadId);
+    this.transaction(() => {
+      this.db.db.prepare(
+        "UPDATE threads SET work_item_id = ?, manually_linked = 1 WHERE id = ?"
+      ).run(workItemId, threadId);
+      this.db.db.prepare(
+        "UPDATE thread_work_items SET relation = 'mentioned' WHERE thread_id = ? AND work_item_id <> ?"
+      ).run(threadId, workItemId);
+      this.linkThreadWorkItem(threadId, workItemId, "primary");
+    });
     log.debug("Manually linked thread", threadId, "to", workItemId);
   }
 
+  /** The thread stops being any item's own: its items stay linked as mentions */
   unlinkThread(threadId: string): void {
-    this.db.db.prepare(
-      "UPDATE threads SET work_item_id = NULL, manually_linked = 0 WHERE id = ?"
-    ).run(threadId);
+    this.transaction(() => {
+      this.db.db.prepare(
+        "UPDATE threads SET work_item_id = NULL, manually_linked = 0 WHERE id = ?"
+      ).run(threadId);
+      this.db.db.prepare("UPDATE thread_work_items SET relation = 'mentioned' WHERE thread_id = ?").run(threadId);
+    });
     log.debug("Unlinked thread", threadId);
   }
 

@@ -337,4 +337,22 @@ describe("Pipeline: digests", () => {
     expect(graph.getActionableItems().map((i) => i.workItem.id)).toEqual(["OPS-1"]);
     expect(graph.expireInactiveItems(14)).toBe(1);
   });
+
+  it("counts a relinked thread's messages for its new item, not its old one", () => {
+    db = new Database(":memory:");
+    const graph = new ContextGraph(db);
+    graph.upsertAgent({ id: "U-atlas", name: "Atlas", platform: "slack", platformUserId: "U-atlas" });
+    for (const id of ["OPS-1", "OPS-5"]) graph.upsertWorkItem({ id, source: "jira", title: id, currentAtcStatus: "blocked_on_human" });
+    graph.upsertThread({ id: "T-1", channelId: "C1", channelName: "fleet-ops", platform: "slack", workItemId: "OPS-1" });
+    graph.linkThreadWorkItem("T-1", "OPS-1", "primary");
+    graph.insertEvent({ threadId: "T-1", messageId: "x", workItemId: null, agentId: "U-atlas", status: "blocked_on_human", confidence: 0.9, entryType: "block", targetedAtOperator: true, timestamp: new Date().toISOString() });
+    const needsMe = () => graph.getActionableItems().map((i) => i.workItem.id);
+    expect(needsMe()).toEqual(["OPS-1"]);
+
+    graph.linkThread("T-1", "OPS-5");
+    expect(needsMe()).toEqual(["OPS-5"]);
+
+    graph.unlinkThread("T-1");
+    expect(needsMe()).toEqual([]);
+  });
 });
