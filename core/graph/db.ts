@@ -325,6 +325,9 @@ export class Database {
     }
     // What later digests said about an item
     this.db.exec("CREATE INDEX IF NOT EXISTS idx_digest_checks_item ON digest_checks(work_item_id, created_at)");
+    // The operator's queue: what the judge left unsure
+    this.db.exec(`CREATE INDEX IF NOT EXISTS idx_digest_checks_unsure ON digest_checks(created_at)
+      WHERE judge_verdict = 'unsure' AND resolved_at IS NULL`);
     // The judge's queue: open disagreements, oldest first
     this.db.exec(`CREATE INDEX IF NOT EXISTS idx_digest_checks_open ON digest_checks(created_at)
       WHERE agrees = 0 AND resolved_at IS NULL AND judged_at IS NULL`);
