@@ -121,6 +121,8 @@ CREATE TABLE IF NOT EXISTS digest_checks (
   work_item_id   TEXT NOT NULL REFERENCES work_items(id),
   digest_status  TEXT NOT NULL,
   digest_targeted INTEGER NOT NULL DEFAULT 0,
+  -- 1 when the claim is the digest's own line for the item, 0 when it's the whole message's status
+  from_line      INTEGER NOT NULL DEFAULT 1,
   item_status    TEXT,
   -- 1 agrees, 0 disagrees, NULL when the app had no status for the item yet
   agrees         INTEGER,
@@ -306,12 +308,18 @@ export class Database {
 
     // Add the judge's columns to digest_checks (created by an earlier build without them)
     const checkCols = this.db.pragma("table_info(digest_checks)") as Array<{ name: string }>;
+    if (!checkCols.some((c) => c.name === "from_line")) {
+      this.db.exec("ALTER TABLE digest_checks ADD COLUMN from_line INTEGER NOT NULL DEFAULT 1");
+      log.info("Migration: added from_line to digest_checks");
+    }
     for (const column of ["judge_verdict", "judge_reason", "judged_at"]) {
       if (!checkCols.some((c) => c.name === column)) {
         this.db.exec(`ALTER TABLE digest_checks ADD COLUMN ${column} TEXT`);
         log.info(`Migration: added ${column} to digest_checks`);
       }
     }
+    // What later digests said about an item
+    this.db.exec("CREATE INDEX IF NOT EXISTS idx_digest_checks_item ON digest_checks(work_item_id, created_at)");
     // The judge's queue: open disagreements, oldest first
     this.db.exec(`CREATE INDEX IF NOT EXISTS idx_digest_checks_open ON digest_checks(created_at)
       WHERE agrees = 0 AND resolved_at IS NULL AND judged_at IS NULL`);

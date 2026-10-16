@@ -143,10 +143,6 @@ function operatorNames(identities: OperatorIdentityMap | undefined, configuredNa
   return [...new Set([...names, ...names.map((n) => n.trim().split(/[\s.]+/)[0])])];
 }
 
-/**
- * The posted message as the adapter reported it, if it's usable as an event key: a real platform message ID. A blank
- * or missing one would make every later action in the thread collide with it, so it's treated as not reported.
- */
 /** The digest judge, asking the configured model (read per call, so a settings change applies at once) */
 function digestJudgeFor(state: EngineState): DigestJudge {
   return new DigestJudge(state.graph, (userPrompt, systemPrompt) => {
@@ -155,6 +151,11 @@ function digestJudgeFor(state: EngineState): DigestJudge {
       .ask(userPrompt, systemPrompt, "digest-judge");
   });
 }
+
+/**
+ * The posted message as the adapter reported it, if it's usable as an event key: a real platform message ID. A blank
+ * or missing one would make every later action in the thread collide with it, so it's treated as not reported.
+ */
 
 function usablePosted(posted: PostedMessage | void): PostedMessage | undefined {
   if (!posted || typeof posted.messageId !== "string" || !posted.messageId.trim()) return undefined;

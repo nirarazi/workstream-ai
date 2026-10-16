@@ -365,4 +365,15 @@ describe("Pipeline: digests", () => {
 
     expect(judge.judgeSome).toHaveBeenCalledTimes(1);
   });
+
+  it("runs the judge one run at a time", async () => {
+    const { pipeline } = setup(DIGEST_TEXT, DIGEST_ANSWER);
+    const judge = { judgeSome: vi.fn(() => new Promise<{ settled: number; asked: number }>(() => {})) };
+    pipeline.setDigestJudge(judge as any);
+
+    await pipeline.processOnce();
+    await pipeline.processOnce();
+
+    expect(judge.judgeSome).toHaveBeenCalledTimes(1);
+  });
 });

@@ -200,8 +200,8 @@ export interface DigestDisagreement {
   createdAt: string;
   digestText: string;
   threadId: string;
-  /** A later digest has said something about the same item since */
-  laterDigest: boolean;
+  /** The digest's own line for the item, not the whole message's status */
+  fromLine: boolean;
 }
 
 /**
@@ -725,17 +725,34 @@ export class ContextGraph {
     digestTargeted: boolean;
     itemStatus: StatusCategory | null;
     at: string;
+    /** The digest's own line for the item (false: the whole message's status, where it gave none for the item) */
+    fromLine?: boolean;
   }): void {
     const agrees = check.itemStatus === null ? null : statusKind(check.digestStatus) === statusKind(check.itemStatus) ? 1 : 0;
-    // The same claim about the item, still waiting to be judged, isn't queued again (a digest posted daily)
-    if (agrees === 0 && this.db.db.prepare(`
-      SELECT 1 FROM digest_checks WHERE work_item_id = ? AND digest_status = ? AND agrees = 0
-        AND resolved_at IS NULL AND judged_at IS NULL
-    `).get(check.workItemId, check.digestStatus)) return;
+    if (agrees === 0) {
+      // The same claim about the item, still waiting to be judged, isn't queued again (a digest posted daily); one
+      // that now says the item needs the operator makes the waiting one say so
+      const waiting = this.db.db.prepare(`
+        SELECT event_id FROM digest_checks WHERE work_item_id = ? AND digest_status = ? AND agrees = 0
+          AND resolved_at IS NULL AND judged_at IS NULL
+      `).get(check.workItemId, check.digestStatus) as { event_id: string } | undefined;
+      if (waiting) {
+        if (check.digestTargeted) {
+          this.db.db.prepare("UPDATE digest_checks SET digest_targeted = 1 WHERE event_id = ? AND work_item_id = ?").run(waiting.event_id, check.workItemId);
+        }
+        return;
+      }
+      // Nor is a claim already judged against the item, or left for the operator, while the item stands as it did
+      if (this.db.db.prepare(`
+        SELECT 1 FROM digest_checks WHERE work_item_id = ? AND digest_status = ? AND item_status IS ? AND agrees = 0
+          AND (resolution = 'app' OR judge_verdict = 'unsure')
+      `).get(check.workItemId, check.digestStatus, check.itemStatus)) return;
+    }
     this.db.db.prepare(`
-      INSERT OR IGNORE INTO digest_checks (event_id, work_item_id, digest_status, digest_targeted, item_status, agrees, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run(check.eventId, check.workItemId, check.digestStatus, check.digestTargeted ? 1 : 0, check.itemStatus, agrees, check.at);
+      INSERT OR IGNORE INTO digest_checks (event_id, work_item_id, digest_status, digest_targeted, item_status, agrees, created_at, from_line)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(check.eventId, check.workItemId, check.digestStatus, check.digestTargeted ? 1 : 0, check.itemStatus, agrees, check.at,
+      check.fromLine === false ? 0 : 1);
   }
 
   /** Records that a message's own line for a work item puts it in front of the operator (see aboutItem) */
@@ -747,9 +764,8 @@ export class ContextGraph {
   getOpenDigestDisagreements(limit = 50): DigestDisagreement[] {
     return (this.db.db.prepare(`
       SELECT dc.event_id AS eventId, dc.work_item_id AS workItemId, dc.digest_status AS digestStatus,
-        dc.digest_targeted AS digestTargeted, dc.item_status AS itemStatus, dc.created_at AS createdAt,
-        e.raw_text AS digestText, e.thread_id AS threadId,
-        EXISTS (SELECT 1 FROM digest_checks later WHERE later.work_item_id = dc.work_item_id AND later.created_at > dc.created_at) AS laterDigest
+        dc.digest_targeted AS digestTargeted, dc.item_status AS itemStatus, dc.created_at AS createdAt, dc.from_line AS fromLine,
+        e.raw_text AS digestText, e.thread_id AS threadId
       FROM (
         -- At most a few per sender, so one agent's digests can't keep the judge from everyone else's
         SELECT c.*, ROW_NUMBER() OVER (PARTITION BY COALESCE(ev.agent_id, '') ORDER BY c.created_at) AS per_sender
@@ -757,9 +773,20 @@ export class ContextGraph {
         WHERE c.agrees = 0 AND c.resolved_at IS NULL AND c.judged_at IS NULL
       ) dc JOIN events e ON e.id = dc.event_id
       WHERE dc.per_sender <= ?
-      ORDER BY dc.created_at LIMIT ?
-    `).all(DIGEST_CHECKS_PER_SENDER, limit) as Array<Omit<DigestDisagreement, "digestTargeted" | "laterDigest"> & { digestTargeted: number; laterDigest: number }>)
-      .map((r) => ({ ...r, digestTargeted: r.digestTargeted === 1, laterDigest: r.laterDigest === 1 }));
+      -- Round-robin: each sender's oldest first, so the model's few calls a run go to different senders
+      ORDER BY dc.per_sender, dc.created_at LIMIT ?
+    `).all(DIGEST_CHECKS_PER_SENDER, limit) as Array<Omit<DigestDisagreement, "digestTargeted" | "fromLine"> & { digestTargeted: number; fromLine: number }>)
+      .map((r) => ({ ...r, digestTargeted: r.digestTargeted === 1, fromLine: r.fromLine === 1 }));
+  }
+
+  /** Whether the same sender's digest has said something about the item since `at` (whatever it said) */
+  hasLaterDigestCheck(workItemId: string, at: string, eventId: string): boolean {
+    return this.db.db.prepare(`
+      SELECT 1 FROM digest_checks dc JOIN events e ON e.id = dc.event_id
+      WHERE dc.work_item_id = ? AND dc.created_at > ?
+        AND e.agent_id IS (SELECT agent_id FROM events WHERE id = ?)
+      LIMIT 1
+    `).get(workItemId, at, eventId) !== undefined;
   }
 
   /** Settles a digest check: `app` (the app's view stands), `digest` (adopted), or why it no longer needs judging */

@@ -24,6 +24,8 @@ export const JUDGE_CALLS_PER_RUN = 3;
 const CHECKS_PER_RUN = 20;
 /** A check whose model call fails this many times is left for the operator, so it can't hold up the others */
 const MAX_FAILED_CALLS = 3;
+/** Failures count against a check only while the model is answering other calls, so an outage leaves checks alone */
+const MODEL_ANSWERING_MS = 10 * 60 * 1000;
 /** Don't repeat the "couldn't judge" warning more often than this (the model may be unset or down for a while) */
 const WARN_EVERY_MS = 10 * 60 * 1000;
 const MAX_OWN_MESSAGES = 6;
@@ -43,10 +45,10 @@ Reply with JSON only: {"verdict": "app" | "digest" | "unsure", "reason": "<one s
 - "digest": the item's own messages support the digest, or the digest reports something newer they don't contradict.
 - "unsure": the messages don't settle it.`;
 
-/** Keeps data from closing the tag it's wrapped in */
+/** Untrusted text as data: no angle brackets (so it can't open or close a tag, in any spelling), clipped */
 function asData(text: string, max: number): string {
   const clipped = text.length > max ? `${text.slice(0, max)}…` : text;
-  return clipped.replace(/<\/?(digest|messages)>/gi, "[$1]");
+  return clipped.replace(/[<＜]/g, "‹").replace(/[>＞]/g, "›");
 }
 
 export function buildJudgePrompt(
@@ -57,7 +59,8 @@ export function buildJudgePrompt(
   const messages = own.length > 0
     ? own.map((m) => `[${m.timestamp}] ${asData(m.text, MAX_MESSAGE_CHARS)}`).join("\n")
     : "(none: the app's view came from an earlier digest, or the item has no messages of its own)";
-  return `Work item: ${d.workItemId}${item.title ? ` — ${asData(item.title, 200)}` : ""}
+  // On one line, so a title can't add header lines of its own
+  return `Work item: ${d.workItemId}${item.title ? ` — ${asData(item.title.replace(/\s+/g, " "), 200)}` : ""}
 App's view: ${item.currentAtcStatus ?? "unknown"}
 Digest says: ${d.digestStatus}${d.digestTargeted ? " (needs the operator)" : ""}, at ${d.createdAt}
 
@@ -70,9 +73,9 @@ ${messages}
 </messages>`;
 }
 
-/** The model's verdict, or null when its reply holds none */
+/** The model's verdict, or null when its reply holds none. The last one counts: an earlier one may be quoted data. */
 export function parseVerdict(reply: string): { verdict: "app" | "digest" | "unsure"; reason: string } | null {
-  for (const candidate of reply.match(/\{[^{}]*\}/g) ?? []) {
+  for (const candidate of (reply.match(/\{[^{}]*\}/g) ?? []).reverse()) {
     try {
       const parsed = JSON.parse(candidate) as { verdict?: unknown; reason?: unknown };
       if (parsed.verdict === "app" || parsed.verdict === "digest" || parsed.verdict === "unsure") {
@@ -88,6 +91,7 @@ export function parseVerdict(reply: string): { verdict: "app" | "digest" | "unsu
 export class DigestJudge {
   private readonly failedCalls = new Map<string, number>();
   private lastWarnAt = -Infinity;
+  private lastAnsweredAt = -Infinity;
 
   constructor(
     private readonly graph: ContextGraph,
@@ -114,12 +118,14 @@ export class DigestJudge {
       try {
         reply = await this.complete(buildJudgePrompt(d, item, own), JUDGE_SYSTEM_PROMPT);
       } catch (err) {
+        if (stopped()) break; // settings changed mid-call (e.g. new credentials): write nothing
         // Down, or the budget is spent: settle what's free and try the model again next run
         modelDown = true;
         this.noteFailedCall(d, err);
         continue;
       }
       if (stopped()) break; // settings changed mid-call: write nothing
+      this.lastAnsweredAt = Date.now();
       this.failedCalls.delete(checkKey(d));
       // The operator may have acted on the item, or a message about it arrived, during the call
       if (this.settleForFree(d)) {
@@ -137,7 +143,7 @@ export class DigestJudge {
     const item = this.graph.getWorkItemById(d.workItemId);
     if (!item || item.mergedInto) {
       this.graph.resolveDigestCheck(d.eventId, d.workItemId, "gone");
-    } else if ((item.statusAt && item.statusAt > d.createdAt) || d.laterDigest) {
+    } else if ((item.statusAt && item.statusAt > d.createdAt) || this.graph.hasLaterDigestCheck(d.workItemId, d.createdAt, d.eventId)) {
       // A message about the item (or the operator) since, or a newer digest's word on it: this one is out of date
       this.graph.resolveDigestCheck(d.eventId, d.workItemId, "superseded");
     } else if (item.currentAtcStatus && statusKind(item.currentAtcStatus) === statusKind(d.digestStatus)) {
@@ -158,8 +164,9 @@ export class DigestJudge {
       this.graph.resolveDigestCheck(d.eventId, d.workItemId, "app", verdict);
       return true;
     }
-    // The judge only adds attention: it takes a digest's word that the item needs the operator, nothing else
-    if (statusKind(d.digestStatus) !== "needs") {
+    // The judge only adds attention: it takes a digest's word that the item needs the operator, nothing else, and
+    // only from the digest's own line for the item (not the whole message's status, which may be about another)
+    if (statusKind(d.digestStatus) !== "needs" || !d.fromLine) {
       this.graph.markDigestCheckUnsure(d.eventId, d.workItemId, `Judge sided with the digest: ${verdict.reason}`);
       return false;
     }
@@ -182,13 +189,16 @@ export class DigestJudge {
   }
 
   private noteFailedCall(d: DigestDisagreement, err: unknown): void {
-    const key = checkKey(d);
-    const failures = (this.failedCalls.get(key) ?? 0) + 1;
-    if (failures >= MAX_FAILED_CALLS) {
-      this.failedCalls.delete(key);
-      this.graph.markDigestCheckUnsure(d.eventId, d.workItemId, "The model couldn't be asked about it");
-    } else {
-      this.failedCalls.set(key, failures);
+    // Only while the model answers other calls is a failure this check's doing; otherwise it's an outage
+    if (Date.now() - this.lastAnsweredAt < MODEL_ANSWERING_MS) {
+      const key = checkKey(d);
+      const failures = (this.failedCalls.get(key) ?? 0) + 1;
+      if (failures >= MAX_FAILED_CALLS) {
+        this.failedCalls.delete(key);
+        this.graph.markDigestCheckUnsure(d.eventId, d.workItemId, "The model couldn't be asked about it");
+      } else {
+        this.failedCalls.set(key, failures);
+      }
     }
     if (Date.now() - this.lastWarnAt >= WARN_EVERY_MS) {
       this.lastWarnAt = Date.now();

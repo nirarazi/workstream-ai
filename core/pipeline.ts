@@ -1066,6 +1066,7 @@ export class Pipeline {
                 digestTargeted: itemClassification?.targetedAtOperator ?? classification.targetedAtOperator,
                 itemStatus: existing.currentAtcStatus,
                 at: message.timestamp,
+                fromLine: Boolean(itemClassification),
               });
             }
             continue;
