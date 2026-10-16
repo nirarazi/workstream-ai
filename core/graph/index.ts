@@ -441,6 +441,13 @@ export class ContextGraph {
     return this.db.db.transaction(fn).immediate() as T;
   }
 
+  /** Moves a thread's last activity forward to `at` (ISO), e.g. when the operator posts in it; never backwards */
+  noteThreadActivity(threadId: string, at: string): void {
+    this.db.db
+      .prepare("UPDATE threads SET last_activity = ? WHERE id = ? AND (last_activity IS NULL OR last_activity < ?)")
+      .run(at, threadId, at);
+  }
+
   /** Mark a completed work item as brought back by a message at `at`, or clear the mark (null) when it's closed. */
   setReopened(workItemId: string, at: string | null): void {
     this.db.db.prepare("UPDATE work_items SET reopened_at = ? WHERE id = ?").run(at, workItemId);
@@ -574,7 +581,8 @@ export class ContextGraph {
         FROM threads t
         JOIN events e ON e.thread_id = t.id
         WHERE t.last_activity >= ?
-          -- operator actions are stamped with the click time, not a message's: they'd hide replies not read yet
+          -- operator records that weren't posted to the platform carry the click time, not a message's: they'd hide
+          -- replies not read yet (one that was posted is recorded under its message's own ID and time, and counts)
           AND e.message_id NOT LIKE 'operator-%'
         GROUP BY e.thread_id
       `)
@@ -1427,7 +1435,7 @@ export class ContextGraph {
           WHERE (e2.work_item_id = wi.id
              OR e2.thread_id IN (SELECT thread_id FROM thread_work_items WHERE work_item_id = wi.id))
             -- the last message (an agent's completion over MCP included), not the operator's approve or close record
-            AND NOT (e2.agent_id IS NULL AND e2.message_id LIKE 'operator-%')
+            AND NOT (e2.agent_id IS NULL AND e2.entry_type = 'decision')
           ORDER BY e2.timestamp DESC
           LIMIT 1
         )

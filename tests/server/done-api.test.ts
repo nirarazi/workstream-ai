@@ -63,7 +63,8 @@ describe("Done tab", () => {
   it("shows the last message, not the operator's close record", () => {
     seed("OPS-1", "completed", 10);
     graph.insertEvent({
-      threadId: "T-OPS-1", messageId: "operator-action-1", workItemId: "OPS-1", agentId: null,
+      // An action with a message is recorded under the posted message's own ID
+      threadId: "T-OPS-1", messageId: "1791000000.000100", workItemId: "OPS-1", agentId: null,
       status: "completed", confidence: 1, reason: "Operator closed", rawText: "", timestamp: at(1),
       entryType: "decision", targetedAtOperator: false,
     });

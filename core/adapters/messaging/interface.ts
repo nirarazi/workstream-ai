@@ -24,6 +24,14 @@ export interface ReadThreadsOptions {
   pollIntervalMs?: number;
 }
 
+/** A message the adapter posted: its platform ID and time, so it's recognized when it's read back */
+export interface PostedMessage {
+  /** The platform's own ID for the message, the same one reading it back gives it */
+  messageId: string;
+  /** ISO timestamp */
+  timestamp: string;
+}
+
 export interface MessagingAdapter {
   name: string;
   displayName: string;
@@ -44,7 +52,8 @@ export interface MessagingAdapter {
     perChannelSince?: Map<string, Date>,
     options?: ReadThreadsOptions,
   ): Promise<Thread[]>;
-  replyToThread(threadId: string, channelId: string, message: string): Promise<void>;
+  /** Returns the posted message when the platform reports it (void for adapters that can't) */
+  replyToThread(threadId: string, channelId: string, message: string): Promise<PostedMessage | void>;
   /** Post a new top-level message in a channel (not a reply) */
   postMessage(channelId: string, message: string): Promise<{ threadId: string }>;
   /** Open/get a DM channel with a user and post a message */

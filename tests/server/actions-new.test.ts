@@ -225,3 +225,187 @@ describe("dismiss and noise actions", () => {
     expect(wi?.dismissedAt).not.toBeNull();
   });
 });
+
+describe("the operator's message is logged once", () => {
+  const POSTED = { messageId: "1791000000.000100", timestamp: "2026-10-14T04:09:20.000Z" };
+  let db: Database;
+  let graph: ContextGraph;
+
+  beforeEach(() => {
+    db = new Database(":memory:");
+    graph = new ContextGraph(db);
+    graph.upsertWorkItem({ id: "OPS-200", source: "jira", title: "Test item", currentAtcStatus: "blocked_on_human" });
+    graph.upsertThread({ id: "T001", channelId: "C001", channelName: "fleet-ops", platform: "slack", workItemId: "OPS-200" });
+    graph.linkThreadWorkItem("T001", "OPS-200", "primary");
+  });
+
+  afterEach(() => db.close());
+
+  const eventsFor = (messageId: string) =>
+    db.db.prepare("SELECT reason, timestamp FROM events WHERE message_id = ?").all(messageId) as Array<{ reason: string; timestamp: string }>;
+
+  it("records an action under the posted message, so reading it back adds nothing", async () => {
+    const state = makeState(graph, db);
+    state.messagingAdapter.replyToThread.mockResolvedValue(POSTED);
+
+    const res = await createApp(state).request("/api/action", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ workItemId: "OPS-200", action: "redirect", message: "What is the decision needed from me?" }),
+    });
+    expect(res.status).toBe(200);
+    expect(eventsFor(POSTED.messageId)).toEqual([{ reason: "Operator unblocked", timestamp: POSTED.timestamp }]);
+
+    // The pipeline then reads the same message back from the platform
+    const classify = vi.fn();
+    const message = {
+      id: POSTED.messageId, threadId: "T001", channelId: "C001", channelName: "fleet-ops", userId: "U0OPERATOR1", userName: "Alex",
+      text: "What is the decision needed from me?", timestamp: POSTED.timestamp, platform: "slack",
+    };
+    const adapter = {
+      name: "fake",
+      readThreads: vi.fn(async () => [{ id: "T001", channelId: "C001", channelName: "fleet-ops", platform: "slack", workItemId: null, lastActivity: message.timestamp, messageCount: 1, messages: [message] }]),
+      getThreadMessages: vi.fn(async () => []),
+    } as any;
+    const { Pipeline } = await import("../../core/pipeline.js");
+    const { WorkItemLinker } = await import("../../core/graph/linker.js");
+    const pipeline = new Pipeline(adapter, { classify } as any, graph, new WorkItemLinker(graph, []), undefined, {
+      messaging: { pollInterval: 3600, channels: [] }, lookback: { maxThreadsPerPoll: 10, maxActiveThreadRepolls: 0 },
+    } as any);
+    await pipeline.processOnce();
+
+    expect(classify).not.toHaveBeenCalled();
+    expect(eventsFor(POSTED.messageId)).toHaveLength(1);
+  });
+
+  it("records a reply under the posted message", async () => {
+    const state = makeState(graph, db);
+    state.messagingAdapter.replyToThread.mockResolvedValue(POSTED);
+
+    const res = await createApp(state).request("/api/reply", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ threadId: "T001", channelId: "C001", message: "Thanks", workItemId: "OPS-200" }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(eventsFor(POSTED.messageId)).toEqual([{ reason: "Operator reply", timestamp: POSTED.timestamp }]);
+  });
+
+  for (const action of ["dismiss", "noise"] as const) {
+    it(`records ${action} with its message under the posted message`, async () => {
+      const state = makeState(graph, db);
+      state.messagingAdapter.replyToThread.mockResolvedValue(POSTED);
+
+      const res = await createApp(state).request("/api/action", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ workItemId: "OPS-200", action, message: "Not for me" }),
+      });
+
+      expect(res.status).toBe(200);
+      expect(eventsFor(POSTED.messageId)).toEqual([{
+        reason: action === "dismiss" ? "Operator dismissed from stream" : "Operator classified as noise",
+        timestamp: POSTED.timestamp,
+      }]);
+    });
+  }
+
+  it("keeps the thread in the late-reply window when the operator posts in an old thread", async () => {
+    const old = new Date(Date.now() - 2.5 * 24 * 60 * 60 * 1000).toISOString();
+    graph.upsertThread({ id: "T001", channelId: "C001", channelName: "fleet-ops", platform: "slack", workItemId: "OPS-200", lastActivity: old });
+    const now = new Date().toISOString();
+    const state = makeState(graph, db);
+    state.messagingAdapter.replyToThread.mockResolvedValue({ messageId: "1791000000.000300", timestamp: now });
+
+    await createApp(state).request("/api/reply", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ threadId: "T001", channelId: "C001", message: "Any news?", workItemId: "OPS-200" }),
+    });
+
+    expect(graph.getThreadById("T001")!.lastActivity).toBe(now);
+    const windowStart = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    expect(graph.getKnownThreads(windowStart).has("T001")).toBe(true);
+  });
+
+  it("reports success once the message went out, even if recording it fails", async () => {
+    const state = makeState(graph, db);
+    state.messagingAdapter.replyToThread.mockResolvedValue(POSTED);
+    const insert = vi.spyOn(graph, "insertEvent").mockImplementation(() => { throw new Error("database is locked"); });
+
+    const res = await createApp(state).request("/api/action", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ workItemId: "OPS-200", action: "approve", message: "Ship it" }),
+    });
+
+    insert.mockRestore();
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ ok: true, delivered: true });
+  });
+
+  it("reports a reply as sent once it went out, even if recording it fails", async () => {
+    const state = makeState(graph, db);
+    state.messagingAdapter.replyToThread.mockResolvedValue(POSTED);
+    const insert = vi.spyOn(graph, "insertEvent").mockImplementation(() => { throw new Error("database is locked"); });
+
+    const res = await createApp(state).request("/api/reply", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ threadId: "T001", channelId: "C001", message: "Thanks", workItemId: "OPS-200" }),
+    });
+
+    insert.mockRestore();
+    expect(res.status).toBe(200);
+  });
+
+  it("stores an adapter's posted time as ISO", async () => {
+    const state = makeState(graph, db);
+    state.messagingAdapter.replyToThread.mockResolvedValue({ messageId: "1791000000.000400", timestamp: "Fri, 16 Oct 2026 04:09:20 GMT" });
+
+    await createApp(state).request("/api/reply", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ threadId: "T001", channelId: "C001", message: "Thanks", workItemId: "OPS-200" }),
+    });
+
+    expect(eventsFor("1791000000.000400")[0].timestamp).toBe("2026-10-16T04:09:20.000Z");
+    expect(graph.getThreadById("T001")!.lastActivity).toBe("2026-10-16T04:09:20.000Z");
+  });
+
+  it("ignores a blank message ID from the adapter, so actions don't collide", async () => {
+    const state = makeState(graph, db);
+    state.messagingAdapter.replyToThread.mockResolvedValue({ messageId: "", timestamp: POSTED.timestamp });
+    const act = (message: string) => createApp(state).request("/api/action", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ workItemId: "OPS-200", action: "redirect", message }),
+    });
+
+    await act("first");
+    await new Promise((r) => setTimeout(r, 2));
+    await act("second");
+
+    const rows = db.db.prepare("SELECT message_id, raw_text FROM events WHERE reason = 'Operator unblocked' ORDER BY raw_text").all() as Array<{ message_id: string; raw_text: string }>;
+    expect(rows.map((r) => r.raw_text)).toEqual(["first", "second"]);
+    for (const r of rows) expect(r.message_id).toMatch(/^operator-action-/);
+  });
+
+  it("still records the action when its message fails to post", async () => {
+    const state = makeState(graph, db);
+    state.messagingAdapter.replyToThread.mockRejectedValue(new Error("Slack is down"));
+
+    const res = await createApp(state).request("/api/action", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ workItemId: "OPS-200", action: "approve", message: "Ship it" }),
+    });
+
+    expect(res.status).toBe(500);
+    const rows = db.db.prepare("SELECT message_id, reason FROM events WHERE reason = 'Operator approved'").all() as Array<{ message_id: string }>;
+    expect(rows).toHaveLength(1);
+    expect(rows[0].message_id).toMatch(/^operator-action-/);
+  });
+});
+

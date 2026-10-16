@@ -1,7 +1,7 @@
 // core/adapters/messaging/slack/index.ts — Slack messaging adapter
 
 import { WebClient } from "@slack/web-api";
-import type { MessagingAdapter, ReadThreadsOptions } from "../interface.js";
+import type { MessagingAdapter, PostedMessage, ReadThreadsOptions } from "../interface.js";
 import type { AdapterSetupInfo } from "../../setup.js";
 import type { Credentials, Thread, Message } from "../../../types.js";
 import type { ContextGraph } from "../../../graph/index.js";
@@ -482,10 +482,10 @@ export class SlackAdapter implements MessagingAdapter {
     return threads;
   }
 
-  async replyToThread(threadId: string, channelId: string, message: string): Promise<void> {
+  async replyToThread(threadId: string, channelId: string, message: string): Promise<PostedMessage | void> {
     this.ensureConnected();
 
-    await withRateLimitRetry(
+    const result = await withRateLimitRetry(
       () =>
         this.client!.chat.postMessage({
           channel: channelId,
@@ -498,6 +498,8 @@ export class SlackAdapter implements MessagingAdapter {
     );
 
     log.info(`Replied to thread ${threadId} in channel ${channelId}`);
+    const ts = (result as { ts?: string }).ts;
+    return ts ? { messageId: ts, timestamp: slackTsToISO(ts) } : undefined;
   }
 
   async postMessage(channelId: string, message: string): Promise<{ threadId: string }> {
