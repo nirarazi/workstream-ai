@@ -650,6 +650,9 @@ export function createApp(state: EngineState): Hono {
     if (!body.threadId) {
       return c.json({ error: "Missing threadId" }, 400);
     }
+    if (!state.graph.getThreadById(body.threadId)) {
+      return c.json({ error: "Thread not found" }, 404);
+    }
     state.graph.linkThread(body.threadId, id);
     return c.json({ ok: true });
   });
@@ -663,6 +666,10 @@ export function createApp(state: EngineState): Hono {
     const body = await c.req.json<{ threadId: string }>();
     if (!body.threadId) {
       return c.json({ error: "Missing threadId" }, 400);
+    }
+    // Only from the item it belongs to: unlinking decides which item the thread's messages count for
+    if (state.graph.getThreadById(body.threadId)?.workItemId !== id) {
+      return c.json({ error: "Thread isn't linked to this work item" }, 404);
     }
     state.graph.unlinkThread(body.threadId);
     return c.json({ ok: true });
