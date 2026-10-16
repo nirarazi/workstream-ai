@@ -568,6 +568,10 @@ export class SlackAdapter implements MessagingAdapter {
   }
 
   /** Return the authenticated operator's identity */
+  getUserName(userId: string): string | null {
+    return this.userInfoMap.get(userId)?.name ?? null;
+  }
+
   getAuthenticatedUser(): { userId: string; userName: string } | null {
     return this.authedUser;
   }

@@ -308,7 +308,7 @@ describe("Stream", () => {
       expect(result).toMatch(/^Blocked · \d+m$/);
     });
 
-    it("uses raw user ID when name cannot be resolved", () => {
+    it("doesn't show a user ID it can't resolve", () => {
       const workItem: WorkItem = {
         id: "OPS-100", source: "jira", title: "Test",
         externalStatus: null, assignee: null, url: null,
@@ -322,7 +322,7 @@ describe("Stream", () => {
         timestamp: new Date(Date.now() - 15 * 60000).toISOString(),
         createdAt: new Date().toISOString(), entryType: "block",
         targetedAtOperator: false,
-        actionRequiredFrom: ["U_UNKNOWN"],
+        actionRequiredFrom: ["U0UNKNOWN1"],
         nextAction: null,
       };
       const operatorIdentities: OperatorIdentityMap = new Map([
@@ -330,7 +330,36 @@ describe("Stream", () => {
       ]);
       const agentMap = new Map<string, string>();
       const result = buildUnifiedStatus(workItem, blockEvent, operatorIdentities, agentMap);
-      expect(result).toMatch(/Waiting on U_UNKNOWN · \d+m/);
+      expect(result).toMatch(/^Waiting on someone else · \d+m$/);
+      expect(buildUnifiedStatus(
+        { ...workItem, currentAtcStatus: "needs_decision" },
+        { ...blockEvent, status: "needs_decision", actionRequiredFrom: ["1712345678.123456"] },
+        operatorIdentities, agentMap,
+      )).toMatch(/^Needs someone else's decision · \d+m$/);
+    });
+
+    it("names the first action taker it can show, and keeps a plain name as is", () => {
+      const workItem: WorkItem = {
+        id: "OPS-100", source: "jira", title: "Test",
+        externalStatus: null, assignee: null, url: null,
+        currentAtcStatus: "blocked_on_human", currentConfidence: 0.9,
+        snoozedUntil: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+      };
+      const blockEvent: Event = {
+        id: "e1", threadId: "t1", messageId: "m1", workItemId: "OPS-100",
+        agentId: "a1", status: "blocked_on_human", confidence: 0.9,
+        reason: "Needs review", rawText: "Please review",
+        timestamp: new Date(Date.now() - 15 * 60000).toISOString(),
+        createdAt: new Date().toISOString(), entryType: "block",
+        targetedAtOperator: false,
+        actionRequiredFrom: ["U0UNKNOWN9", "Dana"],
+        nextAction: null,
+      };
+      const operatorIdentities: OperatorIdentityMap = new Map([
+        ["slack", { userId: "U_OPERATOR", userName: "Alex" }],
+      ]);
+      expect(buildUnifiedStatus(workItem, blockEvent, operatorIdentities, new Map()))
+        .toMatch(/^Waiting on Dana · \d+m$/);
     });
   });
 
@@ -463,5 +492,46 @@ describe("timeline pagination", () => {
 
     expect(mentionedEntry).toBeDefined();
     expect(mentionedEntry.relation).toBe("mentioned");
+  });
+
+  describe("waiting-on names in the stream endpoint", () => {
+    function seedBlockedOn(actorId: string): void {
+      graph.upsertWorkItem({ id: "OPS-500", source: "jira", title: "Pricing check", currentAtcStatus: "blocked_on_human" });
+      graph.upsertThread({ id: "T-500", channelId: "C005", channelName: "fleet-ops", platform: "slack", workItemId: "OPS-500" });
+      graph.linkThreadWorkItem("T-500", "OPS-500", "primary");
+      graph.upsertAgent({ id: "agent-1", name: "Relay", platform: "slack", platformUserId: "U001" });
+      graph.insertEvent({
+        threadId: "T-500", messageId: "msg-block", workItemId: "OPS-500",
+        agentId: "agent-1", status: "blocked_on_human", confidence: 0.9,
+        reason: "Waiting for a human", rawText: "Can someone check the pricing?",
+        timestamp: new Date(Date.now() - 5 * 60000).toISOString(),
+        entryType: "block", targetedAtOperator: false, actionRequiredFrom: [actorId],
+      });
+    }
+
+    function stateWithOperator(): EngineState {
+      const state = makeState(graph, db);
+      state.operatorIdentities = new Map([["slack", { userId: "U0OPERATOR1", userName: "Alex" }]]);
+      return state;
+    }
+
+    it("names someone the graph knows who never posted on the item", async () => {
+      seedBlockedOn("U0DANA0001");
+      graph.upsertAgent({ id: "U0DANA0001", name: "Dana", platform: "slack", platformUserId: "U0DANA0001" });
+
+      const res = await createApp(stateWithOperator()).request("/api/work-item/OPS-500/stream?limit=10");
+      expect((await res.json()).unifiedStatus).toMatch(/^Waiting on Dana · \d+m$/);
+    });
+
+    it("names someone only the messaging platform knows", async () => {
+      seedBlockedOn("U0DANA0001");
+      const state = stateWithOperator();
+      state.messagingAdapter = {
+        getUserName: (id: string) => (id === "U0DANA0001" ? "Dana" : null),
+      } as any;
+
+      const res = await createApp(state).request("/api/work-item/OPS-500/stream?limit=10");
+      expect((await res.json()).unifiedStatus).toMatch(/^Waiting on Dana · \d+m$/);
+    });
   });
 });

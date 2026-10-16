@@ -335,7 +335,15 @@ export function createApp(state: EngineState): Hono {
       .filter((e) => e.status === "blocked_on_human" || e.status === "needs_decision")
       .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())[0] ?? null;
 
-    const unifiedStatus = buildUnifiedStatus(workItem, latestBlockEvent, state.operatorIdentities, agentMap);
+    // Whoever the item waits on may never have posted in its threads: look them up among
+    // everyone the graph has seen, then in the messaging platform's user directory.
+    const actorNameMap = new Map(agentMap);
+    for (const actorId of latestBlockEvent?.actionRequiredFrom ?? []) {
+      if (actorNameMap.has(actorId)) continue;
+      const name = state.graph.getAgentById(actorId)?.name ?? state.messagingAdapter?.getUserName?.(actorId);
+      if (name) actorNameMap.set(actorId, name);
+    }
+    const unifiedStatus = buildUnifiedStatus(workItem, latestBlockEvent, state.operatorIdentities, actorNameMap);
     const timeline = buildTimeline(events, agentMap, agentAvatarMap, threadChannelMap, threadPlatformMap);
 
     let statusSummary: string | null = null;

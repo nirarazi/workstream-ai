@@ -63,6 +63,9 @@ export interface MessagingAdapter {
   /** Serialize a user ID into the platform's native mention format (e.g. <@U123> for Slack) */
   serializeMention?(userId: string): string;
 
+  /** Display name of a user from the adapter's already-loaded directory, without a network call. Null if unknown. */
+  getUserName?(userId: string): string | null;
+
   /** Return the authenticated user's identity (the operator). Null if not connected or not supported. */
   getAuthenticatedUser?(): { userId: string; userName: string } | null;
 

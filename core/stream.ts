@@ -34,6 +34,11 @@ export interface StreamData {
   nextAction: string | null;
 }
 
+/** A platform user ID or similar token (e.g. U0OPERATOR1, 1712345678.123456), not a readable name. */
+function looksLikeOpaqueId(value: string): boolean {
+  return /\d/.test(value) && /^[A-Z0-9_.:-]+$/.test(value);
+}
+
 export function buildUnifiedStatus(
   workItem: WorkItem,
   latestBlockEvent: Event | null,
@@ -62,12 +67,16 @@ export function buildUnifiedStatus(
     if (isOperator) {
       label = status === "needs_decision" ? "Needs your decision" : "Waiting on you";
     } else {
-      // Resolve first action taker to a display name
-      const firstActorId = latestBlockEvent.actionRequiredFrom[0];
-      const actorName = agentNameMap?.get(firstActorId) ?? firstActorId;
-      label = status === "needs_decision"
-        ? `Needs ${actorName}'s decision`
-        : `Waiting on ${actorName}`;
+      // Name the first action taker we can show. The classifier returns platform IDs, but
+      // sometimes a plain name; an ID we can't resolve isn't worth showing.
+      const actorName = latestBlockEvent.actionRequiredFrom
+        .map((id) => agentNameMap?.get(id) ?? (looksLikeOpaqueId(id) ? null : id))
+        .find((name): name is string => !!name);
+      if (status === "needs_decision") {
+        label = actorName ? `Needs ${actorName}'s decision` : "Needs someone else's decision";
+      } else {
+        label = actorName ? `Waiting on ${actorName}` : "Waiting on someone else";
+      }
     }
   } else {
     // Fallback to neutral labels when actionRequiredFrom is not available
