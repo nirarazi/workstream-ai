@@ -244,7 +244,11 @@ export class Pipeline {
         globalSince,
         channels.length > 0 ? channels : undefined,
         perChannelSince.size > 0 ? perChannelSince : undefined,
-        { knownThreads, replyWindowStart: lateReplyWindowStart },
+        {
+          knownThreads,
+          replyWindowStart: lateReplyWindowStart,
+          pollIntervalMs: (this.config?.messaging?.pollInterval ?? DEFAULT_POLL_INTERVAL) * 1000,
+        },
       );
     } catch (err) {
       log.error("Failed to read threads from messaging adapter", err);

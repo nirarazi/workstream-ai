@@ -335,6 +335,81 @@ describe("SlackAdapter", () => {
       });
     });
 
+    describe("reads fitted to the poll interval", () => {
+      const since = new Date("2026-10-10T00:00:00Z");
+      const at = (time: string) => vi.setSystemTime(new Date(`2026-10-13T${time}Z`));
+      const readChannels = () => mockConversationsHistory.mock.calls.map((c) => c[0].channel as string);
+      const listChannels = (list: string[]) =>
+        mockConversationsList.mockResolvedValue({ channels: list.map((id) => ({ id, name: id })), response_metadata: { next_cursor: "" } });
+      const named = (prefix: string, n: number) => Array.from({ length: n }, (_, i) => `${prefix}${String(i).padStart(2, "0")}`);
+      const busySince = (list: string[]) => new Map(list.map((id) => [id, new Date("2026-10-13T11:00:00Z")]));
+      const every30s = { pollIntervalMs: 30_000 }; // 50 history calls a minute: 25 a poll
+
+      beforeEach(() => {
+        vi.useFakeTimers({ toFake: ["Date"] });
+        mockConversationsHistory.mockResolvedValue({ messages: [], response_metadata: { next_cursor: "" } });
+      });
+      afterEach(() => vi.useRealTimers());
+
+      it("lets busy channels take turns when more are active than fit, so every one is read every other poll", async () => {
+        const busy = named("CA", 30);
+        listChannels(busy);
+        const cursors = busySince(busy);
+
+        const polls: string[][] = [];
+        for (const time of ["12:00:00", "12:00:30", "12:01:00"]) {
+          mockConversationsHistory.mockClear();
+          at(time);
+          await adapter.readThreads(since, undefined, cursors, every30s);
+          polls.push(readChannels());
+        }
+
+        for (const poll of polls) expect(poll).toHaveLength(20); // 25, less the reads kept for quiet channels
+        expect(new Set([...polls[0], ...polls[1]])).toEqual(new Set(busy));
+        expect(polls[1]).toEqual(expect.arrayContaining(busy.slice(20))); // the ones left out come first
+      });
+
+      it("still reads some quiet channels when busy ones would fill the poll", async () => {
+        const busy = named("CA", 30);
+        const quiet = named("CQ", 10);
+        listChannels(quiet);
+        at("12:00:00");
+        await adapter.readThreads(since, undefined, undefined, every30s);
+        listChannels([...busy, ...quiet]);
+
+        mockConversationsHistory.mockClear();
+        at("12:06:00"); // every quiet channel is due
+        await adapter.readThreads(since, undefined, busySince(busy), every30s);
+
+        expect(readChannels().filter((id) => id.startsWith("CQ"))).toHaveLength(5);
+        expect(readChannels()).toHaveLength(25);
+      });
+
+      it("reads more quiet channels per poll when few are busy", async () => {
+        const quiet = named("CQ", 20);
+        listChannels(quiet);
+        at("12:00:00");
+        await adapter.readThreads(since, undefined, undefined, every30s);
+        listChannels(["CBUSY", ...quiet]);
+
+        mockConversationsHistory.mockClear();
+        at("12:06:00");
+        await adapter.readThreads(since, undefined, busySince(["CBUSY"]), every30s);
+
+        expect(readChannels()).toHaveLength(21); // all 20 due, not just the 15 an unknown interval allows
+      });
+
+      it("allows proportionally more reads for a longer interval", async () => {
+        const busy = named("CA", 60);
+        listChannels(busy);
+        at("12:00:00");
+
+        await adapter.readThreads(since, undefined, busySince(busy), { pollIntervalMs: 60_000 });
+
+        expect(readChannels()).toHaveLength(45); // 50 a minute, less 5 for quiet channels
+      });
+    });
+
     describe("late replies to known threads", () => {
       const ts = (iso: string) => String(Date.parse(iso) / 1000);
       const now = "2026-10-13T12:00:00Z";

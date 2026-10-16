@@ -17,6 +17,11 @@ export interface ReadThreadsOptions {
   knownThreads?: Map<string, KnownThread>;
   /** How far back (thread start) to look for late replies to known threads. */
   replyWindowStart?: Date;
+  /**
+   * How often readThreads is called. An adapter whose platform limits reads may spread them over several
+   * polls so each one fits in this time.
+   */
+  pollIntervalMs?: number;
 }
 
 export interface MessagingAdapter {

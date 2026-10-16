@@ -8,7 +8,7 @@ import type { ContextGraph } from "../../../graph/index.js";
 import type { Database } from "../../../graph/db.js";
 import { createLogger } from "../../../logger.js";
 import { registerMessagingAdapter } from "../../registry.js";
-import { SlackRateLimiter } from "./rate-limiter.js";
+import { SlackRateLimiter, perMinuteLimit } from "./rate-limiter.js";
 
 const log = createLogger("slack-adapter");
 
@@ -145,9 +145,18 @@ const QUIET_AFTER_MS = 24 * 60 * 60 * 1000;
 const QUIET_POLL_MS = 5 * 60 * 1000;
 /**
  * Quiet (and unreadable) channels read in one poll, most overdue first. Without a cap they all fall due in the same poll
- * (they were all first read together), and ~100 history calls at ~50/min hold that poll for minutes.
+ * (they were all first read together), and ~100 history calls at ~50/min hold that poll for minutes. This is the cap
+ * when the poll interval isn't known; when it is, see readBudget.
  */
 const QUIET_READS_PER_POLL = 15;
+/**
+ * With a known poll interval, a poll reads at most as many channels as conversations.history allows in that time.
+ * Active channels get the budget first, least recently read first, but always leave this many reads for quiet ones,
+ * so a flood of busy conversations can't stop quiet channels (and DMs) from being read.
+ */
+const MIN_QUIET_READS_PER_POLL = 5;
+/** The smallest budget used, however short the interval: below it, polls run long rather than read almost nothing */
+const MIN_READS_PER_POLL = 10;
 /**
  * In the quiet queue, a 1:1 DM counts as this much more overdue than it is: a message there is the likeliest to be
  * for the operator, so it's read first when many channels are due. One quiet interval at most, so a DM only goes
@@ -271,7 +280,7 @@ export class SlackAdapter implements MessagingAdapter {
    * channels not read for QUIET_POLL_MS, and unreadable ones not tried for UNREADABLE_RETRY_MS (so they can't crowd
    * out readable ones, yet a channel that's rejoined is still found).
    */
-  private slowChannelsDue(channelIds: string[], now: number): Set<string> {
+  private slowChannelsDue(channelIds: string[], now: number, cap: number): Set<string> {
     const due: Array<{ id: string; order: number }> = [];
     for (const id of channelIds) {
       const lastRead = this.channelLastRead.get(id);
@@ -282,7 +291,22 @@ export class SlackAdapter implements MessagingAdapter {
       due.push({ id, order: lastRead - headStart });
     }
     due.sort((a, b) => a.order - b.order);
-    return new Set(due.slice(0, QUIET_READS_PER_POLL).map((c) => c.id));
+    return new Set(due.slice(0, cap).map((c) => c.id));
+  }
+
+  /** Channel reads that fit in one poll interval at Slack's conversations.history limit; null when the interval isn't known */
+  private readBudget(pollIntervalMs: number | undefined): number | null {
+    if (!pollIntervalMs || pollIntervalMs <= 0) return null;
+    const perPoll = Math.floor((perMinuteLimit("conversations.history") * pollIntervalMs) / 60_000);
+    return Math.max(MIN_READS_PER_POLL, perPoll);
+  }
+
+  /** The channels read every poll that fit in this poll, least recently read first (never-read ones first of all) */
+  private activeChannelsDue(channelIds: string[], now: number, cap: number): Set<string> {
+    const active = channelIds.filter((id) => !this.isReadSlowly(id, now));
+    if (active.length <= cap) return new Set(active);
+    active.sort((a, b) => (this.channelLastRead.get(a) ?? -Infinity) - (this.channelLastRead.get(b) ?? -Infinity));
+    return new Set(active.slice(0, cap));
   }
 
   /** Channels read every poll whose turn it is to be read back to the reply window, least recently first. */
@@ -317,7 +341,11 @@ export class SlackAdapter implements MessagingAdapter {
       if (channelSince) this.noteActivity(channelId, channelSince.getTime());
     }
     const pollStart = Date.now();
-    const slowDue = this.slowChannelsDue(channelIds, pollStart);
+    // With a known interval, active channels take turns when there are more than fit, and quiet ones get what's left
+    const budget = this.readBudget(options?.pollIntervalMs);
+    const activeDue = budget === null ? null : this.activeChannelsDue(channelIds, pollStart, budget - MIN_QUIET_READS_PER_POLL);
+    const quietCap = budget === null ? QUIET_READS_PER_POLL : Math.max(MIN_QUIET_READS_PER_POLL, budget - activeDue!.size);
+    const slowDue = this.slowChannelsDue(channelIds, pollStart, quietCap);
     const known = options?.knownThreads;
     // Nothing known yet (a fresh install): reading back the window can't find anything
     const windowStart = known?.size && options?.replyWindowStart ? options.replyWindowStart.getTime() / 1000 : null;
@@ -334,8 +362,8 @@ export class SlackAdapter implements MessagingAdapter {
         // Use per-channel cursor if available, otherwise fall back to global
         const channelSince = perChannelSince?.get(channelId);
 
-        if (this.isReadSlowly(channelId, pollStart) && !slowDue.has(channelId)) continue;
         const slow = this.isReadSlowly(channelId, pollStart);
+        if (slow ? !slowDue.has(channelId) : activeDue !== null && !activeDue.has(channelId)) continue;
         lastReadBefore.set(channelId, this.channelLastRead.get(channelId));
         this.channelLastRead.set(channelId, Date.now());
         const cursor = channelSince ? channelSince.getTime() / 1000 : since.getTime() / 1000;
