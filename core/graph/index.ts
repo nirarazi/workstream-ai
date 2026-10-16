@@ -281,6 +281,11 @@ export class ContextGraph {
     return this.getAgentById(id)!;
   }
 
+  /** Renames an agent without marking it seen (a name learned later isn't activity) */
+  renameAgent(id: string, name: string): void {
+    this.db.db.prepare("UPDATE agents SET name = ? WHERE id = ?").run(name, id);
+  }
+
   getAgentById(id: string): Agent | null {
     const row = this.db.db.prepare("SELECT * FROM agents WHERE id = ?").get(id) as
       | AgentRow

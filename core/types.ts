@@ -87,7 +87,7 @@ export interface Message {
 export interface ThreadContext {
   workItem?: { id: string; title: string; status?: string | null };
   /** Earlier messages in the same thread, oldest first. */
-  messages: Array<{ senderName: string; text: string }>;
+  messages: Array<{ senderName: string; text: string; senderType?: string }>;
 }
 
 export interface Thread {

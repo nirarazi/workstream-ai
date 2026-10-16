@@ -21,6 +21,7 @@ const METHOD_LIMITS: Record<string, number> = {
   "conversations.replies": 50,
   "chat.postMessage": 100,
   "users.list": 20,
+  "bots.info": 50,
   "auth.test": 100,      // Tier 4
 };
 

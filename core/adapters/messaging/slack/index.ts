@@ -182,12 +182,26 @@ const UNREADABLE_RETRY_MS = 30 * 60 * 1000;
 const WIDE_READ_MS = 5 * 60 * 1000;
 const WIDE_READS_PER_POLL = 5;
 
+/** bots.info errors that won't change by asking again */
+const BOT_LOOKUP_FINAL_ERRORS = new Set(["bot_not_found", "missing_scope", "invalid_arguments", "not_allowed_token_type"]);
+/** After any other failure, a bot is looked up again this much later */
+const BOT_LOOKUP_RETRY_MS = 15 * 60 * 1000;
+
+/** A display name fit for prompts and labels: one line, no brackets or bars, at most 64 characters */
+function cleanName(name: string): string {
+  return name.replace(/[\[\]|]/g, "").replace(/\s+/g, " ").trim().slice(0, 64);
+}
+
 export class SlackAdapter implements MessagingAdapter {
   /** Channels that error on read (deleted, archived, left) — logged once, then retried every UNREADABLE_RETRY_MS. */
   private readonly unreadableChannels = new Set<string>();
   /** When each conversation first showed up in the list: a never-read one's place in the active queue */
   private readonly channelFirstSeen = new Map<string, number>();
   private lastDeferredLog = -Infinity;
+  /** Bots' names from bots.info, by bot ID (null: Slack has none for it), so each bot is looked up once */
+  private readonly botNames = new Map<string, string | null>();
+  /** Bots whose lookup failed for a passing reason, and when to try again */
+  private readonly botRetryAt = new Map<string, number>();
   /** Latest message time seen per channel (epoch ms), and when each channel was last read. */
   private readonly channelLastActivity = new Map<string, number>();
   private readonly channelLastRead = new Map<string, number>();
@@ -449,10 +463,12 @@ export class SlackAdapter implements MessagingAdapter {
           if (msg.reply_count && msg.reply_count > 0 && msg.thread_ts) {
             // A parent message with replies: fetch the full thread, unless nothing's been added since it was processed
             const replyMessages = hasNewReply ? await this.fetchThreadReplies(channelId, msg.thread_ts) : [msg];
+            await this.learnBotNames(replyMessages);
             const thread = this.buildThread(channelId, channelName, msg.thread_ts, replyMessages);
             threads.push(thread);
           } else if (isParent) {
             // Standalone message (no replies, not a reply itself)
+            await this.learnBotNames([msg]);
             const thread = this.buildThread(channelId, channelName, msg.ts, [msg]);
             threads.push(thread);
           }
@@ -586,13 +602,13 @@ export class SlackAdapter implements MessagingAdapter {
     const channelName = channelInfo?.name ?? channelId;
 
     const slackMessages = await this.fetchThreadReplies(channelId, threadId);
+    await this.learnBotNames(slackMessages);
 
     return slackMessages.map((msg) => {
       const userInfo = this.userInfoMap.get(msg.user ?? "")
         ?? (msg.bot_id ? this.userInfoMap.get(msg.bot_id) : undefined);
 
       // For bot messages, use bot_profile as additional fallback
-      const botName = msg.bot_profile?.name;
       const botAvatar = msg.bot_profile?.icons?.image_48;
 
       return {
@@ -601,7 +617,7 @@ export class SlackAdapter implements MessagingAdapter {
         channelId,
         channelName,
         userId: msg.user ?? msg.bot_id ?? "",
-        userName: userInfo?.name ?? botName ?? msg.user ?? "unknown",
+        userName: userInfo?.name ?? this.botNameOf(msg) ?? msg.user ?? msg.bot_id ?? "unknown",
         userAvatarUrl: userInfo?.avatar || botAvatar || undefined,
         text: this.resolveSlackMentions(msg.text ?? ""),
         timestamp: msg.ts ? slackTsToISO(msg.ts) : "",
@@ -668,6 +684,17 @@ export class SlackAdapter implements MessagingAdapter {
     const users = await this.getUsers();
     let backfilled = 0;
     for (const agent of agents) {
+      // A bot stored as "unknown" (or under its ID) before bots were looked up gets its name now
+      // (Slack bot IDs start with B; people's with U or W)
+      if (agent.platform === "slack" && (agent.name === "unknown" || agent.name === agent.platformUserId) && agent.platformUserId.startsWith("B")) {
+        await this.learnBotName(agent.platformUserId);
+        const botName = cleanName(this.botNames.get(agent.platformUserId) ?? "");
+        if (botName) {
+          graph.renameAgent(agent.id, botName);
+          backfilled++;
+          continue;
+        }
+      }
       const slackName = users.get(agent.platformUserId);
       const avatar = this.getUserAvatar(agent.platformUserId);
       const needsName = agent.name === agent.platformUserId && slackName;
@@ -874,6 +901,47 @@ export class SlackAdapter implements MessagingAdapter {
     } while (cursor);
   }
 
+  /**
+   * A bot's name for its message: its profile on the message, or bots.info's. Not the name a webhook posted under,
+   * which whoever posts chooses per message (it could be the operator's or an agent's). Cleaned for use in prompts.
+   */
+  private botNameOf(msg: SlackMessage): string | undefined {
+    const name = msg.bot_profile?.name || (msg.bot_id ? this.botNames.get(msg.bot_id) ?? undefined : undefined);
+    return (name && cleanName(name)) || undefined; // nothing left after cleaning: no name
+  }
+
+  /**
+   * Looks up the bots in these messages whose name the messages don't carry (no profile on the message), so their
+   * messages aren't from "unknown". Each bot once; after a passing failure, again later (see learnBotName).
+   */
+  private async learnBotNames(messages: SlackMessage[]): Promise<void> {
+    for (const msg of messages) {
+      const botId = msg.bot_id;
+      if (!botId || this.userInfoMap.has(msg.user ?? "") || msg.bot_profile?.name) continue;
+      await this.learnBotName(botId);
+    }
+  }
+
+  /** Looks a bot's name up unless it's known, or a passing failure says to wait */
+  private async learnBotName(botId: string): Promise<void> {
+    if (this.botNames.has(botId) || (this.botRetryAt.get(botId) ?? 0) > Date.now()) return;
+    try {
+      const result = await withRateLimitRetry(
+        () => this.client!.bots.info({ bot: botId }),
+        "bots.info",
+        this.limiter,
+      );
+      this.botNames.set(botId, (result as { bot?: { name?: string } }).bot?.name || null);
+      this.botRetryAt.delete(botId);
+    } catch (err) {
+      const code = (err as { data?: { error?: string } }).data?.error;
+      // Slack has no such bot, or won't say: nothing to wait for. Anything else may pass: try again later
+      if (code && BOT_LOOKUP_FINAL_ERRORS.has(code)) this.botNames.set(botId, null);
+      else this.botRetryAt.set(botId, Date.now() + BOT_LOOKUP_RETRY_MS);
+      log.warn(`Couldn't look up bot ${botId}`, err instanceof Error ? err.message : String(err));
+    }
+  }
+
   private buildThread(
     channelId: string,
     channelName: string,
@@ -885,7 +953,6 @@ export class SlackAdapter implements MessagingAdapter {
         ?? (msg.bot_id ? this.userInfoMap.get(msg.bot_id) : undefined);
 
       // For bot messages, use bot_profile as additional fallback
-      const botName = msg.bot_profile?.name;
       const botAvatar = msg.bot_profile?.icons?.image_48;
 
       return {
@@ -894,7 +961,7 @@ export class SlackAdapter implements MessagingAdapter {
         channelId,
         channelName,
         userId: msg.user ?? msg.bot_id ?? "",
-        userName: userInfo?.name ?? botName ?? msg.user ?? "unknown",
+        userName: userInfo?.name ?? this.botNameOf(msg) ?? msg.user ?? msg.bot_id ?? "unknown",
         userAvatarUrl: userInfo?.avatar || botAvatar || undefined,
         text: this.resolveSlackMentions(msg.text ?? ""),
         timestamp: msg.ts ? slackTsToISO(msg.ts) : "",

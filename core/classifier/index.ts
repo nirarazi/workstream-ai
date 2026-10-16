@@ -101,7 +101,8 @@ export function formatThreadContext(ctx: ThreadContext): string {
     lines.push("Earlier messages in the thread, oldest first:");
     for (const m of ctx.messages) {
       const text = m.text.replace(/\s+/g, " ").trim();
-      lines.push(`- [${m.senderName}] "${text.length > THREAD_CONTEXT_CHARS ? text.slice(0, THREAD_CONTEXT_CHARS) + "…" : text}"`);
+      // With the sender's type, as the message itself has it, so a name alone can't pass a bot for a person
+      lines.push(`- [${m.senderName}${m.senderType && m.senderType !== "unknown" ? ` (${m.senderType})` : ""}] "${text.length > THREAD_CONTEXT_CHARS ? text.slice(0, THREAD_CONTEXT_CHARS) + "…" : text}"`);
     }
   }
   lines.push("", "Use this to understand what the new message refers to (\"approved\", \"go ahead\", \"same error\"), but classify only the new message.");

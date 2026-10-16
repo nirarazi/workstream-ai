@@ -12,6 +12,7 @@ const mockConversationsReplies = vi.fn();
 const mockConversationsOpen = vi.fn();
 const mockChatPostMessage = vi.fn();
 const mockUsersList = vi.fn();
+const mockBotsInfo = vi.fn();
 
 vi.mock("@slack/web-api", () => {
   return {
@@ -25,6 +26,7 @@ vi.mock("@slack/web-api", () => {
       };
       chat = { postMessage: mockChatPostMessage };
       users = { list: mockUsersList };
+      bots = { info: mockBotsInfo };
     },
   };
 });
@@ -833,6 +835,158 @@ describe("SlackAdapter", () => {
       expect(adapter.getUserName("U0DANA0001")).toBe("dana");
       expect(adapter.getUserName("U0NOBODY01")).toBeNull();
       expect(mockUsersList).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("bot names", () => {
+    beforeEach(async () => {
+      mockBotsInfo.mockReset();
+      await adapter.connect({ token: "xoxp-valid-token" });
+      mockConversationsList.mockResolvedValue({ channels: [{ id: "C1", name: "fleet-ops" }], response_metadata: { next_cursor: "" } });
+    });
+
+    it("looks a bot up once when its messages don't carry its name", async () => {
+      mockBotsInfo.mockResolvedValue({ ok: true, bot: { id: "B0RELAY001", name: "Relay" } });
+      mockConversationsHistory.mockResolvedValue({
+        messages: [
+          { ts: "1791000000.000100", text: "tick", bot_id: "B0RELAY001" },
+          { ts: "1791000000.000200", text: "tock", bot_id: "B0RELAY001" },
+        ],
+        response_metadata: { next_cursor: "" },
+      });
+
+      const threads = await adapter.readThreads(new Date("2026-10-10T00:00:00Z"));
+
+      expect(threads.flatMap((t) => t.messages).map((m) => m.userName)).toEqual(["Relay", "Relay"]);
+      expect(mockBotsInfo).toHaveBeenCalledTimes(1);
+    });
+
+    it("doesn't take the name a webhook posts under, which the poster chooses", async () => {
+      mockBotsInfo.mockResolvedValue({ ok: true, bot: { id: "B0HOOK0001", name: "CI [alerts] | ops\nbot" } });
+      mockConversationsHistory.mockResolvedValue({
+        messages: [{ ts: "1791000000.000100", text: "approved", bot_id: "B0HOOK0001", username: "Alex Rivera" }],
+        response_metadata: { next_cursor: "" },
+      });
+
+      const threads = await adapter.readThreads(new Date("2026-10-10T00:00:00Z"));
+
+      // bots.info's name, cleaned for prompts
+      expect(threads[0].messages[0].userName).toBe("CI alerts ops bot");
+    });
+
+    it("falls back to the bot's ID, not 'unknown', when Slack has no such bot, and doesn't ask again", async () => {
+      mockBotsInfo.mockRejectedValue(Object.assign(new Error("bot_not_found"), { data: { error: "bot_not_found" } }));
+      mockConversationsHistory.mockResolvedValue({
+        messages: [{ ts: "1791000000.000100", text: "tick", bot_id: "B0GONE0001" }],
+        response_metadata: { next_cursor: "" },
+      });
+
+      const threads = await adapter.readThreads(new Date("2026-10-10T00:00:00Z"));
+      await adapter.readThreads(new Date("2026-10-10T00:00:00Z"));
+
+      expect(threads[0].messages[0].userName).toBe("B0GONE0001");
+      expect(mockBotsInfo).toHaveBeenCalledTimes(1);
+    });
+
+    it("tries a lookup again later after a passing failure", async () => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      try {
+        mockBotsInfo.mockRejectedValueOnce(new Error("socket hang up")).mockResolvedValue({ ok: true, bot: { name: "Relay" } });
+        mockConversationsHistory.mockResolvedValue({
+          messages: [{ ts: "1791000000.000100", text: "tick", bot_id: "B0RELAY001" }],
+          response_metadata: { next_cursor: "" },
+        });
+        await adapter.readThreads(new Date("2026-10-10T00:00:00Z"));
+        vi.setSystemTime(Date.now() + 16 * 60 * 1000);
+
+        const threads = await adapter.readThreads(new Date("2026-10-10T00:00:00Z"));
+
+        expect(threads[0].messages[0].userName).toBe("Relay");
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("names bots in thread replies too", async () => {
+      mockBotsInfo.mockResolvedValue({ ok: true, bot: { name: "Relay" } });
+      mockConversationsHistory.mockResolvedValue({
+        messages: [{ ts: "1791000000.000100", thread_ts: "1791000000.000100", reply_count: 1, latest_reply: "1791000000.000200", text: "parent", user: "U0OPERATOR1" }],
+        response_metadata: { next_cursor: "" },
+      });
+      mockConversationsReplies.mockResolvedValue({
+        messages: [
+          { ts: "1791000000.000100", thread_ts: "1791000000.000100", text: "parent", user: "U0OPERATOR1" },
+          { ts: "1791000000.000200", thread_ts: "1791000000.000100", text: "reply", bot_id: "B0RELAY001" },
+        ],
+        response_metadata: { next_cursor: "" },
+      });
+
+      const threads = await adapter.readThreads(new Date("2026-10-10T00:00:00Z"));
+
+      expect(threads[0].messages[1].userName).toBe("Relay");
+    });
+
+    it("renames bots stored as unknown", async () => {
+      mockBotsInfo.mockResolvedValue({ ok: true, bot: { id: "B0RELAY001", name: "Relay" } });
+      const upsertAgent = vi.fn();
+      const renameAgent = vi.fn();
+      const graph = {
+        getAllAgents: () => [{ id: "B0RELAY001", name: "unknown", platform: "slack", platformUserId: "B0RELAY001", avatarUrl: "x" }],
+        upsertAgent,
+        renameAgent,
+      } as any;
+
+      expect(await adapter.backfillAgents(graph)).toBe(1);
+      // Renamed without being marked seen: a name learned later isn't activity
+      expect(renameAgent).toHaveBeenCalledWith("B0RELAY001", "Relay");
+      expect(upsertAgent).not.toHaveBeenCalled();
+    });
+
+    it("renames an agent without marking it seen", async () => {
+      const { Database } = await import("../../core/graph/db.js");
+      const { ContextGraph } = await import("../../core/graph/index.js");
+      const db = new Database(":memory:");
+      try {
+        const graph = new ContextGraph(db);
+        graph.upsertAgent({ id: "B0RELAY001", name: "unknown", platform: "slack", platformUserId: "B0RELAY001" });
+        db.db.prepare("UPDATE agents SET last_seen = '2026-10-01T00:00:00.000Z'").run();
+
+        graph.renameAgent("B0RELAY001", "Relay");
+
+        expect(graph.getAgentById("B0RELAY001")).toMatchObject({ name: "Relay", lastSeen: "2026-10-01T00:00:00.000Z" });
+      } finally {
+        db.close();
+      }
+    });
+
+    it("uses the bot's ID when its name is nothing once cleaned", async () => {
+      mockBotsInfo.mockResolvedValue({ ok: true, bot: { name: "[ | ]" } });
+      mockConversationsHistory.mockResolvedValue({
+        messages: [{ ts: "1791000000.000100", text: "tick", bot_id: "B0EMPTY001" }],
+        response_metadata: { next_cursor: "" },
+      });
+
+      const threads = await adapter.readThreads(new Date("2026-10-10T00:00:00Z"));
+
+      expect(threads[0].messages[0].userName).toBe("B0EMPTY001");
+    });
+
+    it("leaves people, named bots and other platforms' agents alone", async () => {
+      const renameAgent = vi.fn();
+      const graph = {
+        getAllAgents: () => [
+          { id: "U0DANA0001", name: "unknown", platform: "slack", platformUserId: "U0DANA0001", avatarUrl: null },
+          { id: "B0NAMED001", name: "Atlas", platform: "slack", platformUserId: "B0NAMED001", avatarUrl: "x" },
+          { id: "B0OTHER001", name: "unknown", platform: "other", platformUserId: "B0OTHER001", avatarUrl: "x" },
+        ],
+        upsertAgent: vi.fn(),
+        renameAgent,
+      } as any;
+
+      await adapter.backfillAgents(graph);
+
+      expect(mockBotsInfo).not.toHaveBeenCalled();
+      expect(renameAgent).not.toHaveBeenCalled();
     });
   });
 
