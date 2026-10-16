@@ -115,6 +115,14 @@ CREATE TABLE IF NOT EXISTS event_targets (
 );
 CREATE INDEX IF NOT EXISTS idx_event_targets_work_item ON event_targets(work_item_id);
 
+-- Work items a message is about besides its thread's own: the operator's message about items it names counts for them
+CREATE TABLE IF NOT EXISTS event_subjects (
+  event_id     TEXT NOT NULL REFERENCES events(id),
+  work_item_id TEXT NOT NULL REFERENCES work_items(id),
+  PRIMARY KEY (event_id, work_item_id)
+);
+CREATE INDEX IF NOT EXISTS idx_event_subjects_work_item ON event_subjects(work_item_id);
+
 -- What a digest (a message naming several work items) says about each, against what the app already believes
 CREATE TABLE IF NOT EXISTS digest_checks (
   event_id       TEXT NOT NULL REFERENCES events(id),

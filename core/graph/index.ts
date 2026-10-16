@@ -207,8 +207,9 @@ export interface DigestDisagreement {
 /**
  * SQL: event `e` is about work item `item`, so it can decide where the item stands for the operator. That's a message
  * whose subject is the item (its work_item_id; not a digest marked by the backfill, whose subject came from the old
- * rule), any non-digest message in the item's own thread, or one whose own line for the item puts it in front of the
- * operator. A message in a thread that merely mentions the item, or a digest naming it, isn't.
+ * rule), any non-digest message in the item's own thread, the operator's message naming it (event_subjects), or one
+ * whose own line for the item puts it in front of the operator. A message in a thread that merely mentions the item,
+ * or a digest naming it, isn't.
  */
 function aboutItem(e: string, item: string, viaOwnLine = true): string {
   // As a set of event IDs, so each branch is an index lookup (an OR with a correlated EXISTS scans every event).
@@ -216,7 +217,8 @@ function aboutItem(e: string, item: string, viaOwnLine = true): string {
   return `${e}.id IN (
     SELECT ab.id FROM events ab WHERE ab.work_item_id = ${item} AND ab.digest < 2
     UNION SELECT ab2.id FROM thread_work_items twa JOIN events ab2 ON ab2.thread_id = twa.thread_id
-      WHERE twa.work_item_id = ${item} AND twa.relation = 'primary' AND ab2.digest = 0${
+      WHERE twa.work_item_id = ${item} AND twa.relation = 'primary' AND ab2.digest = 0
+    UNION SELECT es.event_id FROM event_subjects es WHERE es.work_item_id = ${item}${
     viaOwnLine ? `
     UNION SELECT et.event_id FROM event_targets et WHERE et.work_item_id = ${item}` : ""})`;
 }
@@ -771,6 +773,11 @@ export class ContextGraph {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `).run(check.eventId, check.workItemId, check.digestStatus, check.digestTargeted ? 1 : 0, check.itemStatus, agrees, check.at,
       check.fromLine === false ? 0 : 1);
+  }
+
+  /** Records that a message is about a work item besides its thread's own (see aboutItem) */
+  addEventSubject(eventId: string, workItemId: string): void {
+    this.db.db.prepare("INSERT OR IGNORE INTO event_subjects (event_id, work_item_id) VALUES (?, ?)").run(eventId, workItemId);
   }
 
   /** Records that a message's own line for a work item puts it in front of the operator (see aboutItem) */
