@@ -431,8 +431,9 @@ export function createApp(state: EngineState): Hono {
 
   // --- GET /api/stream/done ---
   app.get("/api/stream/done", (c) => {
+    // The list stops at the latest 200; the tab's count is all of them
     const items = state.graph.getCompletedItems();
-    return c.json({ items });
+    return c.json({ items, total: state.graph.countCompletedItems() });
   });
 
   // --- GET /api/stream/dismissed ---

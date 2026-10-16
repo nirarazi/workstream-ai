@@ -57,6 +57,7 @@ describe("Done tab", () => {
     db.db.prepare("UPDATE work_items SET merged_into = 'OPS-1' WHERE id = 'OPS-2'").run();
 
     expect(graph.getCompletedItems().map((i) => i.workItem.id)).toEqual(["OPS-1"]);
+    expect(graph.countCompletedItems()).toBe(1);
   });
 
   it("shows the last message, not the operator's close record", () => {
@@ -83,6 +84,7 @@ describe("Done tab", () => {
     graph.linkThreadWorkItem("T-2", "thread:T-2", "primary");
 
     expect(graph.getCompletedItems().map((i) => i.workItem.id)).toEqual(["OPS-9", "thread:T-2"]);
+    expect(graph.countCompletedItems()).toBe(2);
   });
 
   it("keeps a finished conversation that merely mentions a ticket", () => {
@@ -105,6 +107,20 @@ describe("Done tab", () => {
     });
 
     expect(graph.getCompletedItems()[0].latestEvent?.reason).toBe("Rolled out to all regions");
+  });
+
+  it("lists the latest 200 but counts every finished item", async () => {
+    for (let i = 0; i < 205; i++) {
+      graph.upsertWorkItem({ id: `OPS-${i}`, source: "jira", title: `Item ${i}`, currentAtcStatus: "completed", statusAt: at(i) });
+    }
+    seed("OPS-900", "in_progress", 1);
+
+    const body = await (await createApp(makeState(graph, db)).request("/api/stream/done")).json();
+
+    expect(body.items).toHaveLength(200);
+    expect(body.items[0].workItem.id).toBe("OPS-0");
+    expect(body.total).toBe(205);
+    expect(graph.countCompletedItems()).toBe(205);
   });
 
   it("is served at /api/stream/done", async () => {
