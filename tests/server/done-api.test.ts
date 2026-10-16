@@ -57,6 +57,7 @@ describe("Done tab", () => {
     db.db.prepare("UPDATE work_items SET merged_into = 'OPS-1' WHERE id = 'OPS-2'").run();
 
     expect(graph.getCompletedItems().map((i) => i.workItem.id)).toEqual(["OPS-1"]);
+    expect(graph.countCompletedItems()).toBe(1);
   });
 
   it("shows the last message, not the operator's close record", () => {
@@ -83,6 +84,7 @@ describe("Done tab", () => {
     graph.linkThreadWorkItem("T-2", "thread:T-2", "primary");
 
     expect(graph.getCompletedItems().map((i) => i.workItem.id)).toEqual(["OPS-9", "thread:T-2"]);
+    expect(graph.countCompletedItems()).toBe(2);
   });
 
   it("keeps a finished conversation that merely mentions a ticket", () => {

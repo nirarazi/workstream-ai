@@ -423,7 +423,8 @@ export async function fetchDismissed(): Promise<{ items: ActionableItem[] }> {
   return apiFetch("/api/stream/dismissed");
 }
 
-export async function fetchDone(): Promise<{ items: ActionableItem[]; total: number }> {
+/** `total` counts every finished item (the list stops at 200); an older engine doesn't send it */
+export async function fetchDone(): Promise<{ items: ActionableItem[]; total?: number }> {
   return apiFetch("/api/stream/done");
 }
 
