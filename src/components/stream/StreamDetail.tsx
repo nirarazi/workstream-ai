@@ -42,7 +42,7 @@ export default function StreamDetail({
   const [replySent, setReplySent] = useState(false);
   const [confirmation, setConfirmation] = useState<{ action: string; channelName: string } | null>(null);
   const [showDoneCelebration, setShowDoneCelebration] = useState(false);
-  const [inputFlash, setInputFlash] = useState(false);
+  const [inputFlash] = useState(false);
   const replyInputRef = useRef<MentionInputHandle>(null);
 
   // Fetch stream data on mount / workItemId change
@@ -237,7 +237,6 @@ export default function StreamDetail({
         hasOlder={data.hasOlder}
         platformMeta={platformMeta}
         mentionables={mentionables}
-        workItemId={workItemId}
         onLoadOlder={handleLoadOlder}
       />
 

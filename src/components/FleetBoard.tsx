@@ -20,10 +20,10 @@ const ANOMALY_ICONS: Record<string, { icon: string; color: string }> = {
   duplicate_work: { icon: "\uD83D\uDD17", color: "text-purple-400" },
 };
 
-export default function FleetBoard({ platformMeta }: FleetBoardProps): JSX.Element {
+export default function FleetBoard(_props: FleetBoardProps): JSX.Element {
   const [items, setItems] = useState<FleetItem[]>([]);
   const [agents, setAgents] = useState<Agent[]>([]);
-  const [userMap, setUserMap] = useState<Map<string, string>>(new Map());
+  const [, setUserMap] = useState<Map<string, string>>(new Map());
   const [mentionables, setMentionables] = useState<Mentionable[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);

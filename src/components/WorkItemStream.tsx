@@ -129,7 +129,7 @@ export default function WorkItemStream({
           <button onClick={onClose} className="text-gray-500 hover:text-gray-300 cursor-pointer text-lg">&#x2715;</button>
         </div>
         <StatusSnapshot data={data} />
-        <Timeline entries={data.timeline} />
+        <Timeline entries={data.timeline} hasOlder={false} onLoadOlder={() => {}} />
         <SuggestedActions data={data} onActioned={handleActioned} getReplyText={getReplyText} onActionComplete={handleActionComplete} />
         <div className="sticky bottom-0 bg-gray-950 border-t border-gray-800 px-5 py-3">
           <MentionInput

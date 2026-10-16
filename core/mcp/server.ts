@@ -6,13 +6,6 @@ import { randomUUID } from "node:crypto";
 import type { ContextGraph } from "../graph/index.js";
 import type { StatusCategory } from "../types.js";
 
-const VALID_STATUSES: StatusCategory[] = [
-  "completed",
-  "in_progress",
-  "blocked_on_human",
-  "needs_decision",
-];
-
 const MCP_THREAD_ID = "mcp-direct";
 const MCP_SOURCE = "mcp";
 

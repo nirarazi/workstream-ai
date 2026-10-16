@@ -115,6 +115,7 @@ npm run dev:web       # engine on 127.0.0.1:9847 and UI on http://localhost:5173
 npm run tauri dev
 
 npm test              # full test suite (Vitest); npm run test:watch to rerun on change
+npm run typecheck     # TypeScript check of the engine, UI and Vite config
 npm run start:web     # build the UI and serve it from the engine
 npm run mcp           # MCP server on stdio
 npm run classify      # classify a message given as arguments or on stdin (calls the configured model)

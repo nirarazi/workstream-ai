@@ -604,7 +604,7 @@ export class SlackAdapter implements MessagingAdapter {
         text: this.resolveSlackMentions(msg.text ?? ""),
         timestamp: msg.ts ? slackTsToISO(msg.ts) : "",
         platform: "slack",
-        senderType: userInfo ? (userInfo.isBot ? "agent" : "human") as const
+        senderType: userInfo ? (userInfo.isBot ? "agent" as const : "human" as const)
           : (msg.bot_id ? "agent" as const : "unknown" as const),
       };
     });
@@ -702,7 +702,9 @@ export class SlackAdapter implements MessagingAdapter {
 
   // --- Private helpers ---
 
-  private ensureConnected(): asserts this is { client: WebClient } {
+  // Not an `asserts this is {...}`: with `client` private, that narrows `this` to `never`, which stops every
+  // method calling it from being type-checked. Callers use `this.client!`.
+  private ensureConnected(): void {
     if (!this.client) {
       throw new Error("Slack adapter not connected. Call connect() first.");
     }
@@ -894,7 +896,7 @@ export class SlackAdapter implements MessagingAdapter {
         text: this.resolveSlackMentions(msg.text ?? ""),
         timestamp: msg.ts ? slackTsToISO(msg.ts) : "",
         platform: "slack",
-        senderType: userInfo ? (userInfo.isBot ? "agent" : "human") as const
+        senderType: userInfo ? (userInfo.isBot ? "agent" as const : "human" as const)
           : (msg.bot_id ? "agent" as const : "unknown" as const),
       };
     });
