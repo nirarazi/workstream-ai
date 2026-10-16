@@ -364,9 +364,9 @@ describe("SlackAdapter", () => {
           polls.push(readChannels());
         }
 
-        for (const poll of polls) expect(poll).toHaveLength(20); // 25, less the reads kept for quiet channels
+        for (const poll of polls) expect(poll).toHaveLength(25); // no quiet channel is due, so none are set aside
         expect(new Set([...polls[0], ...polls[1]])).toEqual(new Set(busy));
-        expect(polls[1]).toEqual(expect.arrayContaining(busy.slice(20))); // the ones left out come first
+        expect(polls[1]).toEqual(expect.arrayContaining(busy.slice(25))); // the ones left out come first
       });
 
       it("still reads some quiet channels when busy ones would fill the poll", async () => {
@@ -406,7 +406,50 @@ describe("SlackAdapter", () => {
 
         await adapter.readThreads(since, undefined, busySince(busy), { pollIntervalMs: 60_000 });
 
-        expect(readChannels()).toHaveLength(45); // 50 a minute, less 5 for quiet channels
+        expect(readChannels()).toHaveLength(50); // 50 a minute
+      });
+
+      it("doesn't let a flood of new conversations crowd out the ones already being read", async () => {
+        const busy = named("CA", 24);
+        const dm = "DAGENT";
+        let fresh = 0;
+        const flood = () => Array.from({ length: 20 }, () => `GNEW${fresh++}`);
+        const known = [...busy, dm];
+        const cursors = busySince([...known]);
+        mockConversationsList.mockImplementation(async () => ({
+          channels: [...known.map((id) => ({ id, name: id, is_im: id === dm })), ...flood().map((id) => ({ id, name: id, is_mpim: true }))],
+          response_metadata: { next_cursor: "" },
+        }));
+
+        let dmReads = 0;
+        // A minute apart, so the test's frozen clock never has the rate limiter wait
+        const times = ["12:00:00", "12:01:00", "12:02:00", "12:03:00", "12:04:00", "12:05:00"];
+        for (const time of times) {
+          mockConversationsHistory.mockClear();
+          at(time);
+          await adapter.readThreads(since, undefined, cursors, every30s);
+          if (readChannels().includes(dm)) dmReads++;
+          for (const id of readChannels().filter((c) => c.startsWith("GNEW"))) cursors.set(id, new Date("2026-10-13T11:00:00Z"));
+        }
+
+        expect(dmReads).toBeGreaterThanOrEqual(times.length / 2);
+        mockConversationsList.mockReset();
+      });
+
+      it("spends late-reply reads only on channels this poll reads", async () => {
+        const busy = named("CA", 60);
+        listChannels(busy);
+        const windowStart = new Date("2026-10-13T00:00:00Z");
+        const wideOldest = String(windowStart.getTime() / 1000);
+        const knownThreads = new Map([["1791000000.000001", { latestAt: "2026-10-13T01:00:00.000Z", messageCount: 1 }]]);
+        const options = { ...every30s, knownThreads, replyWindowStart: windowStart };
+
+        for (const time of ["12:00:00", "12:01:00"]) { // the second poll reads a different 25 channels
+          mockConversationsHistory.mockClear();
+          at(time);
+          await adapter.readThreads(since, undefined, busySince(busy), options);
+          expect(mockConversationsHistory.mock.calls.filter((c) => c[0].oldest === wideOldest)).toHaveLength(5);
+        }
       });
     });
 

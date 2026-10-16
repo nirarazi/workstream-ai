@@ -138,8 +138,8 @@ const CHANNEL_GONE_ERRORS = new Set(["channel_not_found", "not_in_channel", "is_
 /**
  * conversations.history allows ~50 calls/min, so reading every channel each poll takes minutes in a
  * workspace with 100+ channels. A channel with no message in QUIET_AFTER_MS is read at most every
- * QUIET_POLL_MS instead of every poll, and less often when more than QUIET_READS_PER_POLL fall due at once;
- * its first new message puts it back on the fast path.
+ * QUIET_POLL_MS instead of every poll, and less often when more fall due at once than the poll has
+ * reads for (see readBudget); its first new message puts it back on the fast path.
  */
 const QUIET_AFTER_MS = 24 * 60 * 60 * 1000;
 const QUIET_POLL_MS = 5 * 60 * 1000;
@@ -151,10 +151,16 @@ const QUIET_POLL_MS = 5 * 60 * 1000;
 const QUIET_READS_PER_POLL = 15;
 /**
  * With a known poll interval, a poll reads at most as many channels as conversations.history allows in that time.
- * Active channels get the budget first, least recently read first, but always leave this many reads for quiet ones,
- * so a flood of busy conversations can't stop quiet channels (and DMs) from being read.
+ * Active channels get the budget first, but leave up to this many reads for quiet ones that are due, so a flood of
+ * busy conversations can't stop quiet channels (and DMs) from being read. Active channels take turns by when they
+ * were last read; one never read counts from when it first appeared, so a flood of new conversations (group DMs
+ * anyone can open with the operator) waits behind the ones already being read instead of crowding them out, and a
+ * 1:1 DM gets the same head start as in the quiet queue. The budget counts channel reads, not calls: a channel with
+ * more than a page of new messages, and thread replies (a separate limit), aren't counted.
  */
 const MIN_QUIET_READS_PER_POLL = 5;
+/** How often to log that busy channels are taking turns */
+const DEFERRED_LOG_MS = 10 * 60 * 1000;
 /** The smallest budget used, however short the interval: below it, polls run long rather than read almost nothing */
 const MIN_READS_PER_POLL = 10;
 /**
@@ -177,6 +183,9 @@ const WIDE_READS_PER_POLL = 5;
 export class SlackAdapter implements MessagingAdapter {
   /** Channels that error on read (deleted, archived, left) — logged once, then retried every UNREADABLE_RETRY_MS. */
   private readonly unreadableChannels = new Set<string>();
+  /** When each conversation first showed up in the list: a never-read one's place in the active queue */
+  private readonly channelFirstSeen = new Map<string, number>();
+  private lastDeferredLog = -Infinity;
   /** Latest message time seen per channel (epoch ms), and when each channel was last read. */
   private readonly channelLastActivity = new Map<string, number>();
   private readonly channelLastRead = new Map<string, number>();
@@ -280,7 +289,7 @@ export class SlackAdapter implements MessagingAdapter {
    * channels not read for QUIET_POLL_MS, and unreadable ones not tried for UNREADABLE_RETRY_MS (so they can't crowd
    * out readable ones, yet a channel that's rejoined is still found).
    */
-  private slowChannelsDue(channelIds: string[], now: number, cap: number): Set<string> {
+  private slowChannelsDue(channelIds: string[], now: number): string[] {
     const due: Array<{ id: string; order: number }> = [];
     for (const id of channelIds) {
       const lastRead = this.channelLastRead.get(id);
@@ -291,7 +300,7 @@ export class SlackAdapter implements MessagingAdapter {
       due.push({ id, order: lastRead - headStart });
     }
     due.sort((a, b) => a.order - b.order);
-    return new Set(due.slice(0, cap).map((c) => c.id));
+    return due.map((c) => c.id);
   }
 
   /** Channel reads that fit in one poll interval at Slack's conversations.history limit; null when the interval isn't known */
@@ -301,19 +310,32 @@ export class SlackAdapter implements MessagingAdapter {
     return Math.max(MIN_READS_PER_POLL, perPoll);
   }
 
-  /** The channels read every poll that fit in this poll, least recently read first (never-read ones first of all) */
+  /** The channels read every poll that fit in this poll, whose turn it is (see MIN_QUIET_READS_PER_POLL) */
   private activeChannelsDue(channelIds: string[], now: number, cap: number): Set<string> {
     const active = channelIds.filter((id) => !this.isReadSlowly(id, now));
     if (active.length <= cap) return new Set(active);
-    active.sort((a, b) => (this.channelLastRead.get(a) ?? -Infinity) - (this.channelLastRead.get(b) ?? -Infinity));
+    if (now - this.lastDeferredLog >= DEFERRED_LOG_MS) {
+      this.lastDeferredLog = now;
+      log.info(`${active.length} active conversations, ${cap} read per poll: they take turns, so new messages may wait a poll or two`);
+    }
+    const turn = (id: string) => {
+      const since = this.channelLastRead.get(id) ?? this.channelFirstSeen.get(id) ?? now;
+      return since - (this.channelMap.get(id)?.isDirect ? DIRECT_HEAD_START_MS : 0);
+    };
+    // On a tie, one never read goes first
+    active.sort((a, b) => turn(a) - turn(b) || Number(this.channelLastRead.has(a)) - Number(this.channelLastRead.has(b)));
     return new Set(active.slice(0, cap));
   }
 
-  /** Channels read every poll whose turn it is to be read back to the reply window, least recently first. */
-  private wideReadsDue(channelIds: string[], now: number): Set<string> {
+  /**
+   * Channels read every poll whose turn it is to be read back to the reply window, least recently first. Only
+   * channels read this poll (activeDue, when active channels take turns), so no slot goes to one that's skipped.
+   */
+  private wideReadsDue(channelIds: string[], now: number, activeDue: Set<string> | null): Set<string> {
     const due: Array<{ id: string; lastWide: number }> = [];
     for (const id of channelIds) {
       if (this.isReadSlowly(id, now)) continue; // read back to the window whenever they're read
+      if (activeDue && !activeDue.has(id)) continue;
       const lastWide = this.channelLastWideRead.get(id) ?? 0;
       if (now - lastWide >= WIDE_READ_MS) due.push({ id, lastWide });
     }
@@ -341,15 +363,23 @@ export class SlackAdapter implements MessagingAdapter {
       if (channelSince) this.noteActivity(channelId, channelSince.getTime());
     }
     const pollStart = Date.now();
-    // With a known interval, active channels take turns when there are more than fit, and quiet ones get what's left
+    for (const id of channelIds) if (!this.channelFirstSeen.has(id)) this.channelFirstSeen.set(id, pollStart);
+    // With a known interval, active channels take turns when there are more than fit (after setting aside reads
+    // for quiet channels that are due), and quiet ones get what's left
     const budget = this.readBudget(options?.pollIntervalMs);
-    const activeDue = budget === null ? null : this.activeChannelsDue(channelIds, pollStart, budget - MIN_QUIET_READS_PER_POLL);
-    const quietCap = budget === null ? QUIET_READS_PER_POLL : Math.max(MIN_QUIET_READS_PER_POLL, budget - activeDue!.size);
-    const slowDue = this.slowChannelsDue(channelIds, pollStart, quietCap);
+    const slowOrder = this.slowChannelsDue(channelIds, pollStart);
+    let activeDue: Set<string> | null = null; // null: every active channel is read
+    let quietCap = QUIET_READS_PER_POLL;
+    if (budget !== null) {
+      const reserved = Math.min(MIN_QUIET_READS_PER_POLL, slowOrder.length);
+      activeDue = this.activeChannelsDue(channelIds, pollStart, budget - reserved);
+      quietCap = Math.max(reserved, budget - activeDue.size);
+    }
+    const slowDue = new Set(slowOrder.slice(0, quietCap));
     const known = options?.knownThreads;
     // Nothing known yet (a fresh install): reading back the window can't find anything
     const windowStart = known?.size && options?.replyWindowStart ? options.replyWindowStart.getTime() / 1000 : null;
-    const wideDue = windowStart !== null ? this.wideReadsDue(channelIds, pollStart) : new Set<string>();
+    const wideDue = windowStart !== null ? this.wideReadsDue(channelIds, pollStart, activeDue) : new Set<string>();
     // A failed poll's threads are all dropped, so the channels it read keep their place in the quiet queue
     const lastReadBefore = new Map<string, number | undefined>();
     const lastWideBefore = new Map<string, number | undefined>();
@@ -363,7 +393,8 @@ export class SlackAdapter implements MessagingAdapter {
         const channelSince = perChannelSince?.get(channelId);
 
         const slow = this.isReadSlowly(channelId, pollStart);
-        if (slow ? !slowDue.has(channelId) : activeDue !== null && !activeDue.has(channelId)) continue;
+        const readNow = slow ? slowDue.has(channelId) : activeDue?.has(channelId) ?? true;
+        if (!readNow) continue;
         lastReadBefore.set(channelId, this.channelLastRead.get(channelId));
         this.channelLastRead.set(channelId, Date.now());
         const cursor = channelSince ? channelSince.getTime() / 1000 : since.getTime() / 1000;
