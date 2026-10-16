@@ -886,10 +886,11 @@ export function createApp(state: EngineState): Hono {
       return c.json({ ok: false, error: "Work item not found" }, 404);
     }
 
+    // The thread an action's message goes to: the item's latest linked thread, else the latest thread with an event
+    // for it (an item that only appears in classifier breakdowns)
     function findThreadForWorkItem(workItemId: string) {
       const threads = state.graph.getThreadsForWorkItemViaJunction(workItemId);
       if (threads.length > 0) return threads[0];
-      // Fallback: scan events (covers edge cases during migration)
       const events = state.graph.getEventsForWorkItem(workItemId);
       const withThread = [...events].reverse().find((e) => e.threadId);
       if (withThread) return state.graph.getThreadById(withThread.threadId) ?? undefined;

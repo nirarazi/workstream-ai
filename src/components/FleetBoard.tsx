@@ -23,7 +23,6 @@ const ANOMALY_ICONS: Record<string, { icon: string; color: string }> = {
 export default function FleetBoard(_props: FleetBoardProps): JSX.Element {
   const [items, setItems] = useState<FleetItem[]>([]);
   const [agents, setAgents] = useState<Agent[]>([]);
-  const [, setUserMap] = useState<Map<string, string>>(new Map());
   const [mentionables, setMentionables] = useState<Mentionable[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -44,11 +43,6 @@ export default function FleetBoard(_props: FleetBoardProps): JSX.Element {
       setItems(fleetRes.items);
       setAgents(agentsRes.agents);
 
-      const map = new Map<string, string>();
-      for (const a of agentsRes.agents) {
-        if (a.platformUserId) map.set(a.platformUserId, a.name);
-      }
-      setUserMap(map);
       setMentionables(agentsToMentionables(agentsRes.agents));
       setError(null);
     } catch (err) {

@@ -1758,7 +1758,7 @@ function mapActionableRow(row: Record<string, unknown>): ActionableItem {
         isBot: aIsBot != null ? aIsBot === 1 : null,
         firstSeen: row.a_first_seen as string,
         lastSeen: row.a_last_seen as string,
-        botType: (row.a_bot_type as Agent["botType"] | undefined) ?? null,
+        botType: (row.a_bot_type as Agent["botType"] | undefined) ?? null, // not selected by the stream queries
       }
     : null;
 
