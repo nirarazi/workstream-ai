@@ -17,12 +17,7 @@
     "noFallthroughCasesInSwitch": true,
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
-    "esModuleInterop": true,
-    "baseUrl": ".",
-    "paths": {
-      "@core/*": ["core/*"]
-    }
+    "esModuleInterop": true
   },
-  "include": ["src", "core"],
-  "references": [{ "path": "./tsconfig.node.json" }]
+  "include": ["src", "core"]
 }

@@ -1714,6 +1714,7 @@ function mapActionableRow(row: Record<string, unknown>): ActionableItem {
     dismissReason: (row.dismiss_reason as DismissReason | null) ?? null,
     statusAt: (row.status_at as string | null) ?? null,
     reopenedAt: (row.reopened_at as string | null) ?? null,
+    mergedInto: (row.merged_into as string | null) ?? null,
     createdAt: row.created_at as string,
     updatedAt: row.updated_at as string,
   };
@@ -1757,6 +1758,7 @@ function mapActionableRow(row: Record<string, unknown>): ActionableItem {
         isBot: aIsBot != null ? aIsBot === 1 : null,
         firstSeen: row.a_first_seen as string,
         lastSeen: row.a_last_seen as string,
+        botType: (row.a_bot_type as Agent["botType"] | undefined) ?? null, // not selected by the stream queries
       }
     : null;
 

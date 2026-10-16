@@ -32,7 +32,6 @@ interface ContextPaneProps {
 
 export default function ContextPane({
   workItemId,
-  platformMeta,
   userMap,
   mentionables,
   onClose,
@@ -369,12 +368,12 @@ export default function ContextPane({
                 {taskEnrichment.source.charAt(0).toUpperCase() + taskEnrichment.source.slice(1)}
               </h3>
               <div className="rounded border border-gray-800 bg-gray-900 p-3 text-sm space-y-1">
-                {(taskEnrichment.data as Record<string, unknown>).description && (
+                {Boolean((taskEnrichment.data as Record<string, unknown>).description) && (
                   <p className="text-gray-300">
                     {String((taskEnrichment.data as Record<string, unknown>).description).slice(0, 500)}
                   </p>
                 )}
-                {(taskEnrichment.data as Record<string, unknown>).status && (
+                {Boolean((taskEnrichment.data as Record<string, unknown>).status) && (
                   <p className="text-xs text-gray-500">
                     Status: {String((taskEnrichment.data as Record<string, unknown>).status)}
                   </p>

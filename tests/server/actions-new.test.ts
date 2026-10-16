@@ -392,6 +392,35 @@ describe("the operator's message is logged once", () => {
     for (const r of rows) expect(r.message_id).toMatch(/^operator-action-/);
   });
 
+  it("dismisses an item with no thread instead of failing", async () => {
+    graph.upsertWorkItem({ id: "OPS-300", source: "jira", title: "No conversation yet", currentAtcStatus: "blocked_on_human" });
+    const state = makeState(graph, db);
+
+    const res = await createApp(state).request("/api/action", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ workItemId: "OPS-300", action: "dismiss" }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(graph.getWorkItemById("OPS-300")!.dismissedAt).not.toBeNull();
+  });
+
+  it("says there's no thread to post to, without posting, but keeps the action", async () => {
+    graph.upsertWorkItem({ id: "OPS-301", source: "jira", title: "No conversation yet", currentAtcStatus: "blocked_on_human" });
+    const state = makeState(graph, db);
+
+    const res = await createApp(state).request("/api/action", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ workItemId: "OPS-301", action: "close", message: "Closing this" }),
+    });
+
+    expect(res.status).toBe(404);
+    expect(state.messagingAdapter.replyToThread).not.toHaveBeenCalled();
+    expect(graph.getWorkItemById("OPS-301")!.currentAtcStatus).toBe("completed");
+  });
+
   it("still records the action when its message fails to post", async () => {
     const state = makeState(graph, db);
     state.messagingAdapter.replyToThread.mockRejectedValue(new Error("Slack is down"));

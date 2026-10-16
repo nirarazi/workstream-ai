@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, type JSX } from "react";
-import { askSidekick, type SidekickMessage, type SidekickResult } from "../lib/api";
+import { askSidekick, type SidekickMessage } from "../lib/api";
 
 interface SidekickProps {
   onClose: () => void;

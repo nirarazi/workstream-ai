@@ -11,6 +11,7 @@
     "tauri": "tauri",
     "test": "vitest run",
     "test:watch": "vitest",
+    "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.node.json",
     "classify": "tsx core/classifier/cli.ts",
     "mcp": "tsx core/mcp/cli.ts",
     "eval:sample": "tsx core/eval/sample.ts",

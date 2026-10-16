@@ -11,14 +11,6 @@ const STREAM_STATUS_STYLE: Record<string, { bg: string; text: string; border: st
   noise:            { bg: "bg-gray-700/50", text: "text-gray-300", border: "border-gray-700" },
 };
 
-const STATUS_LABELS: Record<string, string> = {
-  blocked_on_human: "Blocked",
-  needs_decision: "Needs Decision",
-  in_progress: "In Progress",
-  completed: "Completed",
-  noise: "Noise",
-};
-
 interface StatusSnapshotProps {
   data: StreamData;
   pinned?: boolean;

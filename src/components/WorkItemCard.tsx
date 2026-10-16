@@ -1,6 +1,6 @@
 import { useState, useRef, type JSX } from "react";
 import type { ActionableItem, Mentionable } from "../lib/api";
-import { postAction, postReply } from "../lib/api";
+import { postAction, postReply, openExternalUrl } from "../lib/api";
 import CreateTicketButton from "./CreateTicketButton";
 import { timeAgo } from "../lib/time";
 import StatusBadge from "./StatusBadge";

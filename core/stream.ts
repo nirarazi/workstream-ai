@@ -1,6 +1,6 @@
 // core/stream.ts — Work Item Stream: aggregated view for the operator
 
-import type { EntryType, OperatorIdentityMap, StatusCategory, Event, WorkItem, Agent, Enrichment } from "./types.js";
+import type { EntryType, OperatorIdentityMap, StatusCategory, Event, WorkItem, Enrichment } from "./types.js";
 
 export interface TimelineEntry {
   id: string;

@@ -876,18 +876,6 @@ export function createApp(state: EngineState): Hono {
       return c.json({ ok: false, error: "Missing required fields: workItemId, action" }, 400);
     }
 
-    // Find the best thread for a work item: prefer directly-linked threads,
-    // fall back to the most recent thread that has events for this work item
-    // (covers work items that only appear via classifier breakdowns).
-    function findThreadForWorkItem(workItemId: string) {
-      const direct = state.graph.getThreadsForWorkItem(workItemId);
-      if (direct.length > 0) return direct[0];
-      const events = state.graph.getEventsForWorkItem(workItemId);
-      const withThread = [...events].reverse().find((e) => e.threadId);
-      if (withThread) return state.graph.getThreadById(withThread.threadId) ?? undefined;
-      return undefined;
-    }
-
     const validActions = new Set(["approve", "redirect", "close", "snooze", "create_ticket", "dismiss", "noise"]);
     if (!validActions.has(body.action)) {
       return c.json({ ok: false, error: `Invalid action: ${body.action}` }, 400);
@@ -898,10 +886,11 @@ export function createApp(state: EngineState): Hono {
       return c.json({ ok: false, error: "Work item not found" }, 404);
     }
 
+    // The thread an action's message goes to: the item's latest linked thread, else the latest thread with an event
+    // for it (an item that only appears in classifier breakdowns)
     function findThreadForWorkItem(workItemId: string) {
       const threads = state.graph.getThreadsForWorkItemViaJunction(workItemId);
       if (threads.length > 0) return threads[0];
-      // Fallback: scan events (covers edge cases during migration)
       const events = state.graph.getEventsForWorkItem(workItemId);
       const withThread = [...events].reverse().find((e) => e.threadId);
       if (withThread) return state.graph.getThreadById(withThread.threadId) ?? undefined;
@@ -1032,6 +1021,7 @@ export function createApp(state: EngineState): Hono {
       // (If a poll reads the message while it's still being posted, whichever insert lands first is kept.)
       const actionThread = findThreadForWorkItem(body.workItemId);
       const recordAction = (posted?: PostedMessage) => {
+        if (!actionThread) return; // an event belongs to a thread: with none, there's nowhere to record it
         const actionStatus: StatusCategory =
           body.action === "approve" || body.action === "close" ? "completed"
           : body.action === "noise" ? "noise"
@@ -1046,14 +1036,14 @@ export function createApp(state: EngineState): Hono {
           noise: "Operator classified as noise",
         };
         state.graph.insertEvent({
-          threadId: actionThread?.id ?? null,
+          threadId: actionThread.id,
           messageId: posted ? posted.messageId : `operator-${body.action === "dismiss" || body.action === "noise" ? body.action : "action"}-${Date.now()}`,
           workItemId: body.workItemId,
           agentId: null,
           status: actionStatus,
           confidence: 1.0,
           reason: actionLabels[body.action] ?? `Operator action: ${body.action}`,
-          rawText: body.message ?? null,
+          rawText: body.message ?? undefined,
           timestamp: posted ? posted.timestamp : new Date().toISOString(),
           entryType: "decision",
           targetedAtOperator: false,
@@ -1119,7 +1109,7 @@ export function createApp(state: EngineState): Hono {
 
   // --- POST /api/resync ---
   app.post("/api/resync", async (c) => {
-    const body = await c.req.json<{ days?: number }>().catch(() => ({}));
+    const body = await c.req.json<{ days?: number }>().catch((): { days?: number } => ({}));
     const days = body.days ?? 7;
     const updated = state.graph.rollBackPollCursors(days);
     return c.json({ ok: true, cursorsRolledBack: updated, days });
