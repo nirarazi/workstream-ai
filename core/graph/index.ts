@@ -754,7 +754,7 @@ export class ContextGraph {
         SELECT 1 FROM digest_checks dc JOIN events e ON e.id = dc.event_id
         WHERE dc.work_item_id = ? AND dc.digest_status = ? AND dc.item_status IS ? AND dc.agrees = 0
           AND e.agent_id IS (SELECT agent_id FROM events WHERE id = ?)
-          AND (dc.judge_verdict = 'unsure' OR (dc.resolution = 'app' AND dc.resolved_at > ?))
+          AND (dc.judge_verdict = 'unsure' OR dc.resolution = 'operator-app' OR (dc.resolution = 'app' AND dc.resolved_at > ?))
       `).get(check.workItemId, check.digestStatus, check.itemStatus, check.eventId, new Date(Date.now() - 7 * 86400000).toISOString())) return;
     }
     this.db.db.prepare(`
@@ -799,10 +799,15 @@ export class ContextGraph {
   }
 
   /** Settles a digest check: `app` (the app's view stands), `digest` (adopted), or why it no longer needs judging */
+  /**
+   * Settles a digest check: `app`/`digest` (the judge's verdict), `operator-app`/`operator-digest` (the operator's), or
+   * why it no longer needs judging (`gone`, `superseded`, `agrees`). A judge's earlier note is kept unless replaced.
+   */
   resolveDigestCheck(eventId: string, workItemId: string, resolution: string, verdict?: { verdict: string; reason: string }): void {
     const now = new Date().toISOString();
     this.db.db.prepare(`
-      UPDATE digest_checks SET resolved_at = ?, resolution = ?, judge_verdict = ?, judge_reason = ?, judged_at = COALESCE(?, judged_at)
+      UPDATE digest_checks SET resolved_at = ?, resolution = ?, judge_verdict = COALESCE(?, judge_verdict),
+        judge_reason = COALESCE(?, judge_reason), judged_at = COALESCE(?, judged_at)
       WHERE event_id = ? AND work_item_id = ?
     `).run(now, resolution, verdict?.verdict ?? null, verdict?.reason ?? null, verdict ? now : null, eventId, workItemId);
   }
@@ -824,7 +829,16 @@ export class ContextGraph {
 
   /** One digest check left for the operator, if it's still waiting */
   getDigestCheckForOperator(eventId: string, workItemId: string): (DigestDisagreement & { judgeReason: string | null; senderName: string | null }) | null {
-    return this.getDigestChecksForOperator(500).find((d) => d.eventId === eventId && d.workItemId === workItemId) ?? null;
+    const row = this.db.db.prepare(`
+      SELECT dc.event_id AS eventId, dc.work_item_id AS workItemId, dc.digest_status AS digestStatus,
+        dc.digest_targeted AS digestTargeted, dc.item_status AS itemStatus, dc.created_at AS createdAt, dc.from_line AS fromLine,
+        e.raw_text AS digestText, e.thread_id AS threadId, dc.judge_reason AS judgeReason, a.name AS senderName
+      FROM digest_checks dc
+      JOIN events e ON e.id = dc.event_id
+      LEFT JOIN agents a ON a.id = e.agent_id
+      WHERE dc.event_id = ? AND dc.work_item_id = ? AND dc.judge_verdict = 'unsure' AND dc.resolved_at IS NULL
+    `).get(eventId, workItemId) as (Omit<DigestDisagreement, "digestTargeted" | "fromLine"> & { digestTargeted: number; fromLine: number; judgeReason: string | null; senderName: string | null }) | undefined;
+    return row ? { ...row, digestTargeted: Boolean(row.digestTargeted), fromLine: Boolean(row.fromLine) } : null;
   }
 
   /** The judge couldn't settle a digest check: it waits for the operator */

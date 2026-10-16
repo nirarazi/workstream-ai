@@ -21,10 +21,10 @@ function makeState() {
 }
 
 /** A check the judge left for the operator: the digest says `digestStatus` about an item the app sees as `itemStatus` */
-function waiting(id: string, itemStatus: StatusCategory, digestStatus: StatusCategory, targeted = false): string {
+function waiting(id: string, itemStatus: StatusCategory, digestStatus: StatusCategory, targeted = false, fromLine = true): string {
   graph.upsertWorkItem({ id, source: "jira", title: `Item ${id}`, currentAtcStatus: itemStatus, statusAt: "2026-10-14T09:00:00.000Z" });
   const eventId = graph.getEventByMessageId("d1", "T-DIGEST")!.id;
-  graph.recordDigestCheck({ eventId, workItemId: id, digestStatus, digestTargeted: targeted, itemStatus, at: DIGEST_AT });
+  graph.recordDigestCheck({ eventId, workItemId: id, digestStatus, digestTargeted: targeted, itemStatus, at: DIGEST_AT, fromLine });
   graph.markDigestCheckUnsure(eventId, id, "The messages don't settle it");
   return eventId;
 }
@@ -90,5 +90,58 @@ describe("digest checks for the operator", () => {
     expect((await decide({ eventId, workItemId: "OPS-9", verdict: "app" })).status).toBe(404);
     await decide({ eventId, workItemId: "OPS-1", verdict: "app" });
     expect((await decide({ eventId, workItemId: "OPS-1", verdict: "digest" })).status).toBe(404);
+  });
+
+  it("leaves the item free to move with later messages after the operator sides with the digest", async () => {
+    const eventId = waiting("OPS-2", "in_progress", "blocked_on_human", true);
+    await decide({ eventId, workItemId: "OPS-2", verdict: "digest" });
+
+    expect(graph.getWorkItemById("OPS-2")!.currentConfidence).toBe(0);
+    // In the item's timeline, like the operator's other actions
+    expect(graph.getEventsForWorkItem("OPS-2").map((e) => e.reason)).toContain("Operator sided with Atlas's digest");
+  });
+
+  it("doesn't ask the same sender's same claim again once the operator says the app is right", async () => {
+    const eventId = waiting("OPS-1", "in_progress", "completed");
+    await decide({ eventId, workItemId: "OPS-1", verdict: "app" });
+
+    graph.insertEvent({ threadId: "T-DIGEST", messageId: "d2", workItemId: null, agentId: "U-atlas", status: "in_progress", confidence: 0.9, rawText: "Daily again", timestamp: "2026-10-16T09:00:00.000Z", digest: true });
+    graph.recordDigestCheck({ eventId: graph.getEventByMessageId("d2", "T-DIGEST")!.id, workItemId: "OPS-1", digestStatus: "completed", digestTargeted: false, itemStatus: "in_progress", at: "2026-10-16T09:00:00.000Z" });
+
+    expect(db.db.prepare("SELECT COUNT(*) AS n FROM digest_checks WHERE work_item_id = 'OPS-1'").get()).toEqual({ n: 1 });
+    // The judge's note is kept
+    expect(db.db.prepare("SELECT judge_reason FROM digest_checks WHERE work_item_id = 'OPS-1'").get()).toEqual({ judge_reason: "The messages don't settle it" });
+  });
+
+  it("doesn't apply a decision to an item that has moved on, or that's gone", async () => {
+    const moved = waiting("OPS-1", "in_progress", "completed");
+    graph.upsertWorkItem({ id: "OPS-1", source: "jira", currentAtcStatus: "blocked_on_human", statusAt: "2026-10-15T10:00:00.000Z" });
+    expect((await decide({ eventId: moved, workItemId: "OPS-1", verdict: "digest" })).status).toBe(409);
+    expect(graph.getWorkItemById("OPS-1")!.currentAtcStatus).toBe("blocked_on_human");
+
+    const merged = waiting("OPS-3", "in_progress", "completed");
+    db.db.prepare("UPDATE work_items SET merged_into = 'OPS-1' WHERE id = 'OPS-3'").run();
+    expect((await decide({ eventId: merged, workItemId: "OPS-3", verdict: "digest" })).status).toBe(409);
+  });
+
+  it("won't take a digest's view that wasn't about this item, and says so", async () => {
+    const eventId = waiting("OPS-1", "in_progress", "completed", false, false);
+    expect((await (await get()).json()).items[0].aboutThisItem).toBe(false);
+
+    expect((await decide({ eventId, workItemId: "OPS-1", verdict: "digest" })).status).toBe(409);
+    expect((await decide({ eventId, workItemId: "OPS-1", verdict: "app" })).status).toBe(200);
+  });
+
+  it("keeps a snooze, reopens a finished item the operator agrees needs them, and refuses a non-JSON body", async () => {
+    const snoozed = new Date(Date.now() + 3600_000).toISOString();
+    const eventId = waiting("OPS-2", "completed", "blocked_on_human");
+    graph.upsertWorkItem({ id: "OPS-2", source: "jira", snoozedUntil: snoozed });
+
+    await decide({ eventId, workItemId: "OPS-2", verdict: "digest" });
+
+    expect(graph.getWorkItemById("OPS-2")).toMatchObject({ currentAtcStatus: "blocked_on_human", snoozedUntil: snoozed });
+    expect(graph.getWorkItemById("OPS-2")!.reopenedAt).not.toBeNull();
+    const bad = await createApp(makeState()).request("/api/digest-checks/decide", { method: "POST", headers: { "Content-Type": "application/json" }, body: "not json" });
+    expect(bad.status).toBe(400);
   });
 });

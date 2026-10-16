@@ -5,7 +5,7 @@ import { cors } from "hono/cors";
 import { createLogger } from "./logger.js";
 import { loadConfig, findProjectRoot, resetConfig, type Config } from "./config.js";
 import { Database } from "./graph/db.js";
-import { ContextGraph } from "./graph/index.js";
+import { ContextGraph, statusKind } from "./graph/index.js";
 import { Classifier, createProvider, loadPrompt, buildFewShotMessages, buildOperatorContext, hasRemit } from "./classifier/index.js";
 import { createDecisionGate } from "./decisions/gate.js";
 import { UsageTracker } from "./usage/tracker.js";
@@ -458,7 +458,8 @@ export function createApp(state: EngineState): Hono {
 
   // --- GET /api/digest-checks ---
   // What digests disagree with the app about that the judge couldn't settle: the operator decides. Ones that went
-  // stale meanwhile (the item moved on, or its sender said something newer about it) are settled first.
+  // stale meanwhile (the item moved on, or its sender said something newer about it) are settled first: the same
+  // settlement the judge's next run would make, and the only write a GET here may do.
   app.get("/api/digest-checks", (c) => {
     const checks = state.graph.getDigestChecksForOperator().filter((d) => !settleIfStale(state.graph, d));
     const items = checks.map((d) => {
@@ -470,6 +471,8 @@ export function createApp(state: EngineState): Hono {
         appStatus: workItem.currentAtcStatus,
         digestStatus: d.digestStatus,
         digestSaysNeedsYou: d.digestTargeted,
+        // false: the digest had no line for this item; its status is the whole message's, so it can't be adopted
+        aboutThisItem: d.fromLine,
         digestText: d.digestText,
         digestAt: d.createdAt,
         sender: d.senderName,
@@ -482,36 +485,58 @@ export function createApp(state: EngineState): Hono {
   // --- POST /api/digest-checks/decide ---
   // The operator's verdict on a digest check: "app" keeps the item as it is, "digest" takes the digest's view of it
   app.post("/api/digest-checks/decide", async (c) => {
-    const body = await c.req.json<{ eventId?: unknown; workItemId?: unknown; verdict?: unknown }>().catch(() => ({}) as Record<string, unknown>);
+    const body = await c.req.json<Record<string, unknown>>().catch(() => ({}) as Record<string, unknown>);
     const { eventId, workItemId, verdict } = body as { eventId?: unknown; workItemId?: unknown; verdict?: unknown };
     if (typeof eventId !== "string" || typeof workItemId !== "string" || (verdict !== "app" && verdict !== "digest")) {
       return c.json({ error: "Expected eventId, workItemId and verdict (app or digest)" }, 400);
     }
-    const check = state.graph.getDigestCheckForOperator(eventId, workItemId);
-    if (!check) return c.json({ error: "No digest check waiting for that" }, 404);
-    if (verdict === "app") {
-      state.graph.resolveDigestCheck(eventId, workItemId, "operator-app");
-      return c.json({ ok: true });
-    }
-    const item = state.graph.getWorkItemById(workItemId)!;
-    const now = new Date().toISOString();
-    const status = check.digestStatus as StatusCategory;
-    state.graph.transaction(() => {
-      state.graph.upsertWorkItem({
-        id: workItemId,
-        source: item.source,
-        currentAtcStatus: status,
-        currentConfidence: 1,
-        statusAt: now, // the operator's word is the newest on it
-        snoozedUntil: item.snoozedUntil,
+    const outcome = state.graph.transaction((): { status: 200 | 404 | 409; error?: string } => {
+      const check = state.graph.getDigestCheckForOperator(eventId, workItemId);
+      if (!check) return { status: 404, error: "No digest check waiting for that" };
+      // The item may have moved on since the card was shown: that settles it, and the operator's click doesn't apply
+      if (settleIfStale(state.graph, check)) return { status: 409, error: "Already settled: the item has moved on" };
+      if (verdict === "digest" && !check.fromLine) {
+        return { status: 409, error: "The digest said nothing about this item in particular, so its view can't be taken" };
+      }
+      const item = state.graph.getWorkItemById(workItemId)!;
+      const now = new Date().toISOString();
+      if (verdict === "digest") {
+        const status = check.digestStatus as StatusCategory;
+        const needs = status === "blocked_on_human" || status === "needs_decision";
+        state.graph.upsertWorkItem({
+          id: workItemId,
+          source: item.source,
+          currentAtcStatus: status,
+          // As of now, so an older message classified later can't undo it; with no confidence of its own, so any
+          // newer message about the item still decides
+          currentConfidence: 0,
+          statusAt: now,
+          snoozedUntil: item.snoozedUntil,
+        });
+        if (needs && item.currentAtcStatus === "completed") state.graph.setReopened(workItemId, now);
+        if (!needs) state.graph.setReopened(workItemId, null);
+        if (needs && check.digestTargeted) state.graph.addEventTarget(eventId, workItemId);
+      }
+      // In the item's timeline, like the operator's other actions
+      state.graph.insertEvent({
+        threadId: check.threadId,
+        messageId: `operator-digest-${Date.now()}`,
+        workItemId,
+        agentId: null,
+        status: verdict === "digest" ? check.digestStatus as StatusCategory : item.currentAtcStatus ?? "in_progress",
+        confidence: 1,
+        reason: verdict === "digest"
+          ? `Operator sided with ${check.senderName ? `${check.senderName}'s` : "a"} digest`
+          : `Operator kept the app's view over ${check.senderName ? `${check.senderName}'s` : "a"} digest`,
+        timestamp: now,
+        entryType: "decision",
+        // Agreeing an item needs them leaves it on the operator: the record mustn't read as a handoff to someone else
+        targetedAtOperator: verdict === "digest" && statusKind(check.digestStatus) === "needs",
       });
-      const needs = status === "blocked_on_human" || status === "needs_decision";
-      if (needs && item.currentAtcStatus === "completed") state.graph.setReopened(workItemId, now);
-      if (!needs) state.graph.setReopened(workItemId, null);
-      if (needs && check.digestTargeted) state.graph.addEventTarget(eventId, workItemId);
-      state.graph.resolveDigestCheck(eventId, workItemId, "operator-digest");
+      state.graph.resolveDigestCheck(eventId, workItemId, verdict === "digest" ? "operator-digest" : "operator-app");
+      return { status: 200 };
     });
-    return c.json({ ok: true });
+    return outcome.status === 200 ? c.json({ ok: true }) : c.json({ error: outcome.error }, outcome.status);
   });
 
   // --- GET /api/stream/done ---

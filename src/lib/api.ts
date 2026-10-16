@@ -436,6 +436,8 @@ export interface DigestCheck {
   appStatus: string | null;
   digestStatus: string;
   digestSaysNeedsYou: boolean;
+  /** False when the digest had no line for this item: its status is the whole message's, and can't be taken */
+  aboutThisItem: boolean;
   digestText: string;
   digestAt: string;
   sender: string | null;

@@ -38,6 +38,8 @@ export default function StreamView({
   const [doneTotal, setDoneTotal] = useState(0);
   // Digest disagreements left for the operator: shown at the top of Needs me, and counted with it
   const [digestChecks, setDigestChecks] = useState<DigestCheck[]>([]);
+  const digestChecksRef = useRef<DigestCheck[]>([]);
+  digestChecksRef.current = digestChecks;
   const [search, setSearch] = useState("");
   const [selectedWorkItemId, setSelectedWorkItemId] = useState<string | null>(null);
   const [actionStates, setActionStates] = useState<Map<string, ActionState>>(new Map());
@@ -83,7 +85,7 @@ export default function StreamView({
       setLastSyncAt(new Date());
       setSyncError(false);
 
-      setBadgeCount(inbox.items.length + (checks?.items.length ?? 0));
+      setBadgeCount(new Set([...inbox.items.map((i) => i.workItem.id), ...(checks ?? { items: digestChecksRef.current }).items.map((d) => d.workItemId)]).size);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to fetch");
       setSyncError(true);
@@ -129,9 +131,15 @@ export default function StreamView({
     }
   })();
   const currentItems = tabItems.filter((i) => matchesSearch(i, search));
+  // Search covers digest checks too: the item, its title, the sender and the digest's text
+  const query = search.trim().toLowerCase();
+  const visibleDigestChecks = query
+    ? digestChecks.filter((d) => [d.workItemId, d.title ?? "", d.sender ?? "", d.digestText].some((f) => f.toLowerCase().includes(query)))
+    : digestChecks;
 
   const counts = {
-    needsMe: needsMeItems.length + digestChecks.length,
+    // Items, not cards: an item in Needs me that also has a digest check counts once
+    needsMe: new Set([...needsMeItems.map((i) => i.workItem.id), ...digestChecks.map((d) => d.workItemId)]).size,
     snoozed: snoozedItems.length,
     allActive: allActiveItems.length,
     done: doneTotal,
@@ -261,10 +269,15 @@ export default function StreamView({
           {error && (
             <div className="px-4 py-2 text-xs text-red-400">{error}</div>
           )}
-          {filter === "needs-me" && !search.trim() && (
-            <DigestChecks checks={digestChecks} onDecided={poll} onOpen={(id) => setSelectedWorkItemId(id)} />
+          {filter === "needs-me" && (
+            <DigestChecks
+              checks={visibleDigestChecks}
+              onDecided={poll}
+              onOpen={(id) => setSelectedWorkItemId(id)}
+              selectedWorkItemId={selectedWorkItemId}
+            />
           )}
-          {sortedItems.length === 0 && !error && !(filter === "needs-me" && digestChecks.length > 0 && !search.trim()) && (
+          {sortedItems.length === 0 && !error && !(filter === "needs-me" && visibleDigestChecks.length > 0) && (
             <div className="px-4 py-8 text-center text-gray-600 text-sm">
               {search.trim()
                 ? `Nothing matches “${search.trim()}” in this tab.`
