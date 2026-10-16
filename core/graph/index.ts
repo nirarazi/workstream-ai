@@ -1378,7 +1378,7 @@ export class ContextGraph {
 
   /**
    * Done: the 200 most recently finished items. Not merged ones, nor a conversation item replaced by a ticket
-   * created from it (its thread's primary item is now the ticket). The 200 are picked before the event lookup,
+   * created from it (its thread now belongs to the ticket). The 200 are picked before the event lookup,
    * since this list only grows.
    */
   getCompletedItems(): ActionableItem[] {
@@ -1407,9 +1407,10 @@ export class ContextGraph {
         SELECT * FROM work_items w
         WHERE w.current_atc_status = 'completed'
           AND w.merged_into IS NULL
+          -- Creating a ticket points the thread itself at the ticket; a ticket merely mentioned in it doesn't
           AND NOT (w.id LIKE 'thread:%' AND EXISTS (
-            SELECT 1 FROM thread_work_items twi
-            WHERE twi.thread_id = substr(w.id, 8) AND twi.relation = 'primary' AND twi.work_item_id <> w.id
+            SELECT 1 FROM threads th
+            WHERE th.id = substr(w.id, 8) AND th.work_item_id IS NOT NULL AND th.work_item_id <> w.id
           ))
         -- Items finished before status times were kept fall back to their last update
         ORDER BY COALESCE(w.status_at, w.updated_at) DESC

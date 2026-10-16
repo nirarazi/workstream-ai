@@ -85,6 +85,17 @@ describe("Done tab", () => {
     expect(graph.getCompletedItems().map((i) => i.workItem.id)).toEqual(["OPS-9", "thread:T-2"]);
   });
 
+  it("keeps a finished conversation that merely mentions a ticket", () => {
+    graph.upsertWorkItem({ id: "thread:T-3", source: "inferred", title: "Cleanup", currentAtcStatus: "completed", statusAt: at(2) });
+    graph.upsertThread({ id: "T-3", channelId: "C001", channelName: "fleet-ops", platform: "slack", workItemId: "thread:T-3" });
+    graph.linkThreadWorkItem("T-3", "thread:T-3", "primary");
+    // The linker records the first ticket a message names as primary, without touching the thread's own item
+    graph.upsertWorkItem({ id: "OPS-5", source: "jira", title: "Follow-up" });
+    graph.linkThreadWorkItem("T-3", "OPS-5", "primary");
+
+    expect(graph.getCompletedItems().map((i) => i.workItem.id)).toEqual(["thread:T-3"]);
+  });
+
   it("shows an agent's completion summary sent over MCP", () => {
     graph.upsertWorkItem({ id: "deploy-payments", source: "mcp", title: "Deploy payments", currentAtcStatus: "completed", statusAt: at(1) });
     graph.upsertThread({ id: "mcp", channelId: "mcp", channelName: "mcp", platform: "mcp", workItemId: null });
