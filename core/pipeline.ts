@@ -44,13 +44,13 @@ const RETRY_MAX_MS = 30 * 60 * 1000;
 const REPLY_WINDOW_MS = 24 * 60 * 60 * 1000;
 /**
  * The lines of a message its author wrote: without quoted lines ("> ...", which Slack sends as "&gt; ...") and without
- * a forwarded block and its summary, which carry other people's words and the ticket IDs in them.
+ * a forwarded block and anything after it (its summary), which carry other people's words and the ticket IDs in them.
  */
 export function operatorsOwnLines(text: string): string {
   const own: string[] = [];
   for (const line of text.split("\n")) {
     const trimmed = line.trimStart();
-    if (/^(>|&gt;)\s*Forwarded from/i.test(trimmed) || /^Summary:/i.test(trimmed)) break;
+    if (/^(>|&gt;)\s*Forwarded from/i.test(trimmed)) break; // the forwarded block, and a summary after it
     if (trimmed.startsWith(">") || trimmed.startsWith("&gt;")) continue;
     own.push(line);
   }
@@ -629,11 +629,6 @@ export class Pipeline {
     return this.allowsPullRequests() ? [...prefixes, "PR #"] : prefixes;
   }
 
-  /**
-   * The operator's own message is never something the operator has to act on: they just acted, so the
-   * next move is someone else's. Without this, "any news on this?" came back blocked and targeted, and
-   * kept the item in the operator's inbox with their own message as the reason.
-   */
   /** What an operator's statement means for an item's status: "blocked" not on someone else isn't waiting on them */
   private operatorsStatus(status: StatusCategory, actionRequiredFrom: string[] | null): StatusCategory {
     const operatorIds = new Set([...(this.operatorIdentities?.values() ?? [])].map((id) => id.userId));
@@ -641,6 +636,11 @@ export class Pipeline {
     return (status === "blocked_on_human" || status === "needs_decision") && !namesSomeoneElse ? "in_progress" : status;
   }
 
+  /**
+   * The operator's own message is never something the operator has to act on: they just acted, so the
+   * next move is someone else's. Without this, "any news on this?" came back blocked and targeted, and
+   * kept the item in the operator's inbox with their own message as the reason.
+   */
   private fromOperator(message: Message, classification: Classification): Classification {
     if (!this.isOperator(message)) return classification;
     // "@Dana please approve X" from the operator is still blocked — on Dana. Keep that status; just untarget it.
@@ -1063,9 +1063,22 @@ export class Pipeline {
           const escalates = !fromTheOperator && Boolean(itemClassification?.targetedAtOperator)
             && (itemClassification!.status === "blocked_on_human" || itemClassification!.status === "needs_decision");
           if (escalates) this.graph.addEventTarget(event.id, workItemId);
-          const operatorsWord = operatorsWordApplies && (workItemId === primaryWorkItemId || namedHere.has(workItemId));
-          // Their message counts for the item wherever it's posted, so it can hand the item off or keep it
-          if (operatorsWord && workItemId !== primaryWorkItemId) this.graph.addEventSubject(event.id, workItemId);
+          // Their word on an item: one they named (or the thread's own, when they named none or named it). With no line
+          // of its own, only when it's the one item they named, so one status doesn't spread over several; and never
+          // noise, which says nothing about the item.
+          const theirItem = workItemId === primaryWorkItemId ? namedHere.size === 0 || namedHere.has(workItemId) : namedHere.has(workItemId);
+          const theirStatus = itemClassification
+            ? this.operatorsStatus(itemClassification.status, itemClassification.actionRequiredFrom)
+            : classification.status;
+          const operatorsWord = operatorsWordApplies && theirItem
+            && (Boolean(itemClassification) || namedHere.size <= 1)
+            && theirStatus !== "noise";
+          // Their message counts for the item wherever it's posted, with their line for it, so it can hand it off
+          if (operatorsWord && (itemClassification || workItemId !== primaryWorkItemId)) {
+            this.graph.addEventSubject(event.id, workItemId, itemClassification
+              ? { status: theirStatus, actionRequiredFrom: itemClassification.actionRequiredFrom }
+              : undefined);
+          }
 
           // A digest doesn't decide the items it names (its thread's own item, if any, is handled as usual, and so is an
           // item its line says needs the operator): what it says about each is compared with the app's view instead,
@@ -1110,9 +1123,7 @@ export class Pipeline {
           }
 
           // The operator's line for an item is their word too: not waiting on them unless it names someone else
-          const itemStatus = itemClassification && fromTheOperator
-            ? this.operatorsStatus(itemClassification.status, itemClassification.actionRequiredFrom)
-            : itemClassification?.status ?? classification.status;
+          const itemStatus = fromTheOperator ? theirStatus : itemClassification?.status ?? classification.status;
           const itemConfidence = itemClassification?.confidence ?? classification.confidence;
           const itemTitle = itemClassification?.title ?? classification.title;
 

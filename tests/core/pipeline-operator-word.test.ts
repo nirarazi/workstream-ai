@@ -117,5 +117,61 @@ describe("Pipeline: the operator's word", () => {
 
     expect(graph.getWorkItemById("OPS-2")!.currentAtcStatus).toBe("blocked_on_human");
   });
+
+  const line = (workItemId: string, status: Classification["status"], actionRequiredFrom: string[] | null = null) =>
+    ({ workItemId, status, entryType: "progress" as const, confidence: 0.9, reason: "", title: workItemId, targetedAtOperator: false, actionRequiredFrom, nextAction: null });
+
+  it("doesn't take a 'thanks' read as noise as their word", async () => {
+    const { graph, pipeline } = setup("thanks", answer({ status: "noise", entryType: "noise", confidence: 0.7, workItemIds: [] }));
+
+    await pipeline.processOnce();
+
+    expect(graph.getWorkItemById("OPS-1")!.currentAtcStatus).toBe("blocked_on_human");
+  });
+
+  it("doesn't spread one status over several items they name without a line each", async () => {
+    const { graph, pipeline } = setup("OPS-2 is done; OPS-3 is waiting on Dana", answer({ status: "blocked_on_human", actionRequiredFrom: ["U-dana"], workItemIds: ["OPS-2", "OPS-3"] }));
+    graph.upsertWorkItem({ id: "OPS-3", source: "jira", title: "OPS-3", currentAtcStatus: "completed", currentConfidence: 0.9, statusAt: "2026-10-15T08:00:00.000Z" });
+
+    await pipeline.processOnce();
+
+    expect(graph.getWorkItemById("OPS-3")!.currentAtcStatus).toBe("completed");
+    expect(graph.getWorkItemById("OPS-2")!.currentAtcStatus).toBe("blocked_on_human");
+    expect(graph.getWorkItemById("OPS-2")!.currentConfidence).toBe(0.95); // untouched, not their word
+  });
+
+  it("doesn't give the thread's own item their word when they name a different one", async () => {
+    const { graph, pipeline } = setup("unrelated, but OPS-2 is merged", answer({ status: "completed", confidence: 0.5 }));
+
+    await pipeline.processOnce();
+
+    expect(graph.getWorkItemById("OPS-2")!.currentAtcStatus).toBe("completed");
+    expect(graph.getWorkItemById("OPS-1")!.currentAtcStatus).toBe("blocked_on_human");
+  });
+
+  it("hands off an item by its own line in a message about several", async () => {
+    const { graph, pipeline } = setup("OPS-1 shipped. OPS-2 is blocked on Dana's decision.", answer({
+      status: "completed", workItemIds: ["OPS-1", "OPS-2"],
+      breakdown: [line("OPS-1", "completed"), line("OPS-2", "blocked_on_human", ["U-dana"])],
+    }));
+
+    await pipeline.processOnce();
+
+    expect(graph.getWorkItemById("OPS-2")!.currentAtcStatus).toBe("blocked_on_human");
+    expect(graph.getActionableItems().map((i) => i.workItem.id)).not.toContain("OPS-2");
+    expect(db.db.prepare("SELECT work_item_id, status FROM event_subjects ORDER BY work_item_id").all()).toEqual([
+      { work_item_id: "OPS-1", status: "completed" },
+      { work_item_id: "OPS-2", status: "blocked_on_human" },
+    ]);
+  });
+
+  it("doesn't let an older message of theirs, classified late, undo a newer status", async () => {
+    const { graph, pipeline } = setup("Progress on OPS-2 this week", answer({}));
+    graph.upsertWorkItem({ id: "OPS-2", source: "jira", currentAtcStatus: "blocked_on_human", statusAt: "2026-10-16T13:00:00.000Z" });
+
+    await pipeline.processOnce();
+
+    expect(graph.getWorkItemById("OPS-2")!.currentAtcStatus).toBe("blocked_on_human");
+  });
 });
 

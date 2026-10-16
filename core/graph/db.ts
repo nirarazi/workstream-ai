@@ -119,6 +119,9 @@ CREATE INDEX IF NOT EXISTS idx_event_targets_work_item ON event_targets(work_ite
 CREATE TABLE IF NOT EXISTS event_subjects (
   event_id     TEXT NOT NULL REFERENCES events(id),
   work_item_id TEXT NOT NULL REFERENCES work_items(id),
+  -- The message's own line for this item (status, and who it waits on), where it gave one
+  status       TEXT,
+  action_required_from TEXT,
   PRIMARY KEY (event_id, work_item_id)
 );
 CREATE INDEX IF NOT EXISTS idx_event_subjects_work_item ON event_subjects(work_item_id);

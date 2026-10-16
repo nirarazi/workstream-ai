@@ -776,8 +776,10 @@ export class ContextGraph {
   }
 
   /** Records that a message is about a work item besides its thread's own (see aboutItem) */
-  addEventSubject(eventId: string, workItemId: string): void {
-    this.db.db.prepare("INSERT OR IGNORE INTO event_subjects (event_id, work_item_id) VALUES (?, ?)").run(eventId, workItemId);
+  addEventSubject(eventId: string, workItemId: string, line?: { status: StatusCategory; actionRequiredFrom: string[] | null }): void {
+    this.db.db.prepare(`
+      INSERT OR IGNORE INTO event_subjects (event_id, work_item_id, status, action_required_from) VALUES (?, ?, ?, ?)
+    `).run(eventId, workItemId, line?.status ?? null, line?.actionRequiredFrom ? JSON.stringify(line.actionRequiredFrom) : null);
   }
 
   /** Records that a message's own line for a work item puts it in front of the operator (see aboutItem) */
@@ -1508,11 +1510,18 @@ export class ContextGraph {
           SELECT 1 FROM events e4
           WHERE ${aboutItem("e4", "wi.id", false)}
             AND e4.targeted_at_operator = 0
-            AND e4.status IN ('blocked_on_human', 'needs_decision')
+            -- The message's own line for this item, where it gave one (a message about several items)
+            AND COALESCE(
+              (SELECT es4.status FROM event_subjects es4 WHERE es4.event_id = e4.id AND es4.work_item_id = wi.id), e4.status
+            ) IN ('blocked_on_human', 'needs_decision')
             AND e4.confidence >= ?
             AND e4.timestamp > e.timestamp
             AND NOT EXISTS (
-              SELECT 1 FROM json_each(CASE WHEN json_valid(e4.action_required_from) THEN e4.action_required_from ELSE '[]' END) j
+              SELECT 1 FROM json_each(COALESCE(
+                (SELECT CASE WHEN json_valid(es5.action_required_from) THEN es5.action_required_from END
+                  FROM event_subjects es5 WHERE es5.event_id = e4.id AND es5.work_item_id = wi.id),
+                CASE WHEN json_valid(e4.action_required_from) THEN e4.action_required_from ELSE '[]' END
+              )) j
               WHERE lower(j.value) IN (SELECT lower(value) FROM json_each(?))
             )
         )
