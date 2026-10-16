@@ -20,7 +20,7 @@ import { Summarizer } from "./summarizer/index.js";
 import { detectAnomalies, type FleetItemInput } from "./graph/anomalies.js";
 import { Sidekick, type SidekickMessage } from "./sidekick/index.js";
 import { buildUnifiedStatus, buildTimeline, usableName } from "./stream.js";
-import type { OperatorIdentityMap } from "./types.js";
+import type { OperatorIdentityMap, StatusCategory } from "./types.js";
 
 const log = createLogger("server");
 
@@ -131,6 +131,16 @@ export function settingsNeedRestart(previous: Config, next: Config, envChanged: 
   const { inbox: _a, ...before } = previous;
   const { inbox: _b, ...after } = next;
   return JSON.stringify(before) !== JSON.stringify(after);
+}
+
+/**
+ * The posted message as the adapter reported it, if it's usable as an event key: a real platform message ID. A blank
+ * or missing one would make every later action in the thread collide with it, so it's treated as not reported.
+ */
+function usablePosted(posted: PostedMessage | void): PostedMessage | undefined {
+  if (!posted || typeof posted.messageId !== "string" || !posted.messageId.trim()) return undefined;
+  if (typeof posted.timestamp !== "string" || Number.isNaN(Date.parse(posted.timestamp))) return undefined;
+  return posted;
 }
 
 export function createApp(state: EngineState): Hono {
@@ -536,7 +546,13 @@ export function createApp(state: EngineState): Hono {
     try {
       // Case 1: Reply to existing thread (original behavior)
       if (body.threadId && body.channelId) {
-        const posted = await messaging.replyToThread(body.threadId, body.channelId, body.message);
+        const posted = usablePosted(await messaging.replyToThread(body.threadId, body.channelId, body.message));
+        // The reply went out: a failure to record it mustn't report failure, or a retry would post it again
+        try {
+          if (posted) state.graph.noteThreadActivity(body.threadId, posted.timestamp);
+        } catch (err) {
+          log.error("Posted the reply but couldn't note it on its thread", err instanceof Error ? err.message : String(err));
+        }
         if (body.workItemId) {
           const threads = state.graph.getThreadsForWorkItem(body.workItemId);
           const thread = threads.find((t) => t.id === body.threadId);
@@ -923,22 +939,7 @@ export function createApp(state: EngineState): Hono {
 
         case "dismiss": {
           state.graph.dismissWorkItem(body.workItemId);
-          // Insert an event recording the operator dismissal
-          const dismissThread = findThreadForWorkItem(body.workItemId);
-          state.graph.insertEvent({
-            threadId: dismissThread?.id ?? null,
-            messageId: `operator-dismiss-${Date.now()}`,
-            workItemId: body.workItemId,
-            agentId: null,
-            status: workItem.currentAtcStatus ?? "in_progress",
-            confidence: 1.0,
-            reason: "Operator dismissed from stream",
-            rawText: body.message ?? null,
-            timestamp: new Date().toISOString(),
-            entryType: "decision",
-            targetedAtOperator: false,
-          });
-          break;
+          break; // recorded in the timeline below, with any message
         }
 
         case "noise": {
@@ -948,21 +949,7 @@ export function createApp(state: EngineState): Hono {
             currentAtcStatus: "noise",
           });
           state.graph.setReopened(body.workItemId, null);
-          const noiseThread = findThreadForWorkItem(body.workItemId);
-          state.graph.insertEvent({
-            threadId: noiseThread?.id ?? null,
-            messageId: `operator-noise-${Date.now()}`,
-            workItemId: body.workItemId,
-            agentId: null,
-            status: "noise",
-            confidence: 1.0,
-            reason: "Operator classified as noise",
-            rawText: body.message ?? null,
-            timestamp: new Date().toISOString(),
-            entryType: "decision",
-            targetedAtOperator: false,
-          });
-          break;
+          break; // recorded in the timeline below, with any message
         }
 
         case "create_ticket": {
@@ -1035,25 +1022,30 @@ export function createApp(state: EngineState): Hono {
         }
       }
 
-      // Record the operator's action as an event in the timeline (dismiss and noise already inserted their own
-      // events above). With a message, it's posted first and recorded under the posted message's own ID, so
-      // reading it back from the platform doesn't log it a second time.
+      // Record the operator's action as an event in the timeline. With a message, it's posted first and recorded
+      // under the posted message's own ID and time, so reading it back from the platform doesn't log it again.
+      // (If a poll reads the message while it's still being posted, whichever insert lands first is kept.)
       const actionThread = findThreadForWorkItem(body.workItemId);
-      const recordAction = (posted: PostedMessage | void) => {
-        if (body.action === "dismiss" || body.action === "noise") return;
-        const actionStatus = body.action === "approve" || body.action === "close" ? "completed" : "in_progress";
+      const recordAction = (posted?: PostedMessage) => {
+        const actionStatus =
+          body.action === "approve" || body.action === "close" ? "completed"
+          : body.action === "noise" ? "noise"
+          : body.action === "dismiss" ? workItem.currentAtcStatus ?? "in_progress"
+          : "in_progress";
         const actionLabels: Record<string, string> = {
           approve: "Operator approved",
           redirect: "Operator unblocked",
           close: "Operator dismissed",
           snooze: "Operator snoozed",
+          dismiss: "Operator dismissed from stream",
+          noise: "Operator classified as noise",
         };
         state.graph.insertEvent({
           threadId: actionThread?.id ?? null,
-          messageId: posted ? posted.messageId : `operator-action-${Date.now()}`,
+          messageId: posted ? posted.messageId : `operator-${body.action === "dismiss" || body.action === "noise" ? body.action : "action"}-${Date.now()}`,
           workItemId: body.workItemId,
           agentId: null,
-          status: actionStatus,
+          status: actionStatus as StatusCategory,
           confidence: 1.0,
           reason: actionLabels[body.action] ?? `Operator action: ${body.action}`,
           rawText: body.message ?? null,
@@ -1067,15 +1059,21 @@ export function createApp(state: EngineState): Hono {
       let delivered = false;
       if (body.message && state.messagingAdapter) {
         if (actionThread) {
-          let posted: PostedMessage | void;
+          let posted: PostedMessage | undefined;
           try {
-            posted = await state.messagingAdapter.replyToThread(actionThread.id, actionThread.channelId, body.message);
+            posted = usablePosted(await state.messagingAdapter.replyToThread(actionThread.id, actionThread.channelId, body.message));
           } catch (err) {
             recordAction(); // the action itself happened; only the message didn't go out
             throw err;
           }
-          recordAction(posted);
           delivered = true;
+          // The message went out: a failure to record it now mustn't report failure, or a retry would post it again
+          try {
+            recordAction(posted);
+            if (posted) state.graph.noteThreadActivity(actionThread.id, posted.timestamp);
+          } catch (err) {
+            log.error("Posted the action's message but couldn't record it", err instanceof Error ? err.message : String(err));
+          }
         } else {
           recordAction();
           log.warn("No threads found for work item — message not sent", body.workItemId);

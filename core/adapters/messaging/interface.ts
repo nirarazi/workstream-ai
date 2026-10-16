@@ -26,6 +26,7 @@ export interface ReadThreadsOptions {
 
 /** A message the adapter posted: its platform ID and time, so it's recognized when it's read back */
 export interface PostedMessage {
+  /** The platform's own ID for the message, the same one reading it back gives it */
   messageId: string;
   /** ISO timestamp */
   timestamp: string;
