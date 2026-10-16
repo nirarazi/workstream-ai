@@ -10,7 +10,7 @@ import { Classifier, createProvider, loadPrompt, buildFewShotMessages, buildOper
 import { createDecisionGate } from "./decisions/gate.js";
 import { UsageTracker } from "./usage/tracker.js";
 import { DefaultExtractor, knownTicketPrefixes } from "./graph/extractors/default.js";
-import { WorkItemLinker } from "./graph/linker.js";
+import { WorkItemLinker, namesDigest } from "./graph/linker.js";
 import { createMessagingAdapter, createTaskAdapter, getMessagingAdapterSetupInfo, getTaskAdapterSetupInfo } from "./adapters/registry.js";
 import { DIGEST_MIN_ITEMS, Pipeline } from "./pipeline.js";
 import type { MessagingAdapter, PostedMessage } from "./adapters/messaging/interface.js";
@@ -1677,9 +1677,18 @@ async function main(): Promise<void> {
 
   // Backfill junction rows from existing events' raw_text
   graph.backfillJunctionFromRawText([extractor]);
-  // Messages stored before digests were told apart: mark them, so they stop putting items in Needs me
-  const digestsMarked = graph.backfillDigests([extractor], DIGEST_MIN_ITEMS);
-  if (digestsMarked > 0) log.info(`Marked ${digestsMarked} earlier message(s) naming ${DIGEST_MIN_ITEMS}+ work items as digests`);
+  // Once, for messages stored before digests were told apart: mark them, so they stop putting items in Needs me.
+  // Which items that takes out of Needs me is logged, and the marks can be undone (see backfillDigests).
+  if (db.digestBackfillPending) {
+    const inNeedsMe = () => new Set(graph.getActionableItems().map((i) => i.workItem.id));
+    const before = inNeedsMe();
+    const extractIds = (text: string) => [...new Set(extractor.extractWorkItemIds(text))];
+    const marked = graph.backfillDigests(namesDigest, extractIds);
+    const after = inNeedsMe();
+    const left = [...before].filter((id) => !after.has(id));
+    log.info(`Marked ${marked.length} earlier message(s) naming ${DIGEST_MIN_ITEMS}+ work items as digests`
+      + (left.length > 0 ? `; out of Needs me: ${left.join(", ")}` : ""));
+  }
 
   // Initialize engine state
   const state: EngineState = {

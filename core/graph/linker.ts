@@ -14,6 +14,17 @@ const log = createLogger("graph:linker");
  */
 export const DIGEST_MIN_ITEMS = 3;
 
+/**
+ * Whether a message naming these work items (found in its text) is a digest. The thread's own item doesn't count: a
+ * reply in a ticket's thread is about that ticket, even when it names two others ("blocked on OPS-1, same for OPS-2
+ * and OPS-3"). Only messages that can be digests count at all (the pipeline excludes humans').
+ */
+export function namesDigest(ids: Iterable<string>, ownItemId: string | null): boolean {
+  let others = 0;
+  for (const id of ids) if (id !== ownItemId && !id.startsWith("thread:")) others++;
+  return others >= DIGEST_MIN_ITEMS;
+}
+
 export class WorkItemLinker {
   private extractors: Extractor[];
   private graph: ContextGraph;
@@ -29,18 +40,10 @@ export class WorkItemLinker {
    * and keep threads.work_item_id in sync for backwards compatibility.
    * Returns the list of extracted work item IDs.
    */
-  linkMessage(text: string, threadId: string): string[] {
-    const allIds = new Set<string>();
-
-    for (const extractor of this.extractors) {
-      const ids = extractor.extractWorkItemIds(text);
-      for (const id of ids) {
-        allIds.add(id);
-      }
-    }
-
-    const workItemIds = Array.from(allIds);
-    const digest = workItemIds.length >= DIGEST_MIN_ITEMS;
+  linkMessage(text: string, threadId: string, canBeDigest = true): string[] {
+    const workItemIds = this.extractIds(text);
+    const ownItemId = this.graph.getThreadById(threadId)?.workItemId ?? null;
+    const digest = canBeDigest && namesDigest(workItemIds, ownItemId);
 
     for (const id of workItemIds) {
       this.graph.upsertWorkItem({ id, source: "extracted" });
@@ -49,7 +52,8 @@ export class WorkItemLinker {
 
     // Write junction rows for all extracted IDs
     for (let i = 0; i < workItemIds.length; i++) {
-      const relation = i === 0 && !digest ? "primary" : "mentioned";
+      // In a digest only the thread's own item (if it names it) stays primary
+      const relation = digest ? (workItemIds[i] === ownItemId ? "primary" : "mentioned") : i === 0 ? "primary" : "mentioned";
       this.graph.linkThreadWorkItem(threadId, workItemIds[i], relation);
     }
 
@@ -71,5 +75,14 @@ export class WorkItemLinker {
     }
 
     return workItemIds;
+  }
+
+  /** The work item IDs the extractors find in a message's text */
+  extractIds(text: string): string[] {
+    const allIds = new Set<string>();
+    for (const extractor of this.extractors) {
+      for (const id of extractor.extractWorkItemIds(text)) allIds.add(id);
+    }
+    return Array.from(allIds);
   }
 }

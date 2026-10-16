@@ -288,6 +288,7 @@ describe("Pipeline", () => {
       expect(linker.linkMessage).toHaveBeenCalledWith(
         thread.messages[0].text,
         "t-1",
+        true, // an agent's message can be a digest
       );
     });
 

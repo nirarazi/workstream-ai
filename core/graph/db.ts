@@ -126,6 +126,8 @@ CREATE INDEX IF NOT EXISTS idx_twi_work_item ON thread_work_items(work_item_id);
 
 export class Database {
   readonly db: BetterSqlite3Type.Database;
+  /** Set when this open added events.digest: messages stored before then still need marking (once) */
+  digestBackfillPending = false;
 
   constructor(dbPath: string = "workstream.db") {
     // Migrate legacy "atc.db" → "workstream.db" if the new name doesn't exist yet
@@ -275,6 +277,7 @@ export class Database {
     const eventColsForDigest = this.db.pragma("table_info(events)") as Array<{ name: string }>;
     if (!eventColsForDigest.some((c) => c.name === "digest")) {
       this.db.exec("ALTER TABLE events ADD COLUMN digest INTEGER NOT NULL DEFAULT 0");
+      this.digestBackfillPending = true; // the engine marks earlier digests once (it has the extractors)
       log.info("Migration: added digest column to events");
     }
 

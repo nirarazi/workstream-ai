@@ -1,10 +1,13 @@
 // tests/core/pipeline-digests.test.ts — messages naming several work items inform them but don't decide them
 
 import { describe, it, expect, vi, afterEach } from "vitest";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { Pipeline, DIGEST_MIN_ITEMS } from "../../core/pipeline.js";
 import { Database } from "../../core/graph/db.js";
 import { ContextGraph } from "../../core/graph/index.js";
-import { WorkItemLinker } from "../../core/graph/linker.js";
+import { WorkItemLinker, namesDigest } from "../../core/graph/linker.js";
 import { DefaultExtractor } from "../../core/graph/extractors/default.js";
 import type { Classification } from "../../core/types.js";
 
@@ -18,21 +21,22 @@ function breakdown(workItemId: string, status: Classification["status"], targete
 let db: Database;
 afterEach(() => db?.close());
 
-function setup(text: string, answer: Classification, threadId = "T-DIGEST") {
+function setup(text: string, answer: Classification, threadId = "T-DIGEST", senderType: "agent" | "human" = "agent") {
   db = new Database(":memory:");
   const graph = new ContextGraph(db);
   const linker = new WorkItemLinker(graph, [extractor()]);
   const message = {
     id: "m1", threadId, channelId: "C1", channelName: "fleet-ops", userId: "U-atlas", userName: "Atlas",
-    text, timestamp: "2026-10-15T09:00:00.000Z", platform: "slack", senderType: "agent" as const,
+    text, timestamp: "2026-10-15T09:00:00.000Z", platform: "slack", senderType,
   };
   const adapter = {
     name: "fake",
     readThreads: vi.fn(async () => [{ id: threadId, channelId: "C1", channelName: "fleet-ops", platform: "slack", workItemId: null, lastActivity: message.timestamp, messageCount: 1, messages: [message] }]),
     getThreadMessages: vi.fn(async () => []),
   } as any;
-  const pipeline = new Pipeline(adapter, { classify: vi.fn(async () => answer) } as any, graph, linker, undefined, CONFIG);
-  return { graph, pipeline };
+  const classify = vi.fn(async () => answer);
+  const pipeline = new Pipeline(adapter, { classify } as any, graph, linker, undefined, CONFIG);
+  return { graph, pipeline, adapter, classify, message };
 }
 
 const DIGEST_TEXT = "Daily digest: OPS-1 still blocked on Alex, OPS-2 blocked on review, OPS-3 shipped";
@@ -101,22 +105,132 @@ describe("Pipeline: digests", () => {
     expect(db.db.prepare("SELECT COUNT(*) AS n FROM digest_checks").get()).toEqual({ n: 0 });
   });
 
-  it("marks digests stored before they were told apart, and stops them putting items in Needs me", () => {
+  it("marks digests stored before they were told apart, once and undoably, and stops them putting items in Needs me", () => {
+    db = new Database(":memory:");
+    const graph = new ContextGraph(db);
+    graph.upsertAgent({ id: "U-atlas", name: "Atlas", platform: "slack", platformUserId: "U-atlas", isBot: true });
+    graph.upsertAgent({ id: "U-dana", name: "Dana", platform: "slack", platformUserId: "U-dana", isBot: false });
+    graph.upsertWorkItem({ id: "OPS-1", source: "jira", title: "One", currentAtcStatus: "blocked_on_human" });
+    // The old rule made the digest's first ticket the thread's own
+    graph.upsertThread({ id: "T-OLD", channelId: "C1", channelName: "fleet-ops", platform: "slack", workItemId: "OPS-1" });
+    graph.linkThreadWorkItem("T-OLD", "OPS-1", "primary");
+    graph.upsertThread({ id: "T-OWN", channelId: "C1", channelName: "fleet-ops", platform: "slack", workItemId: "OPS-1" });
+    graph.linkThreadWorkItem("T-OWN", "OPS-1", "primary");
+    const base = { workItemId: "OPS-1", agentId: "U-atlas", status: "blocked_on_human" as const, confidence: 0.9, entryType: "block" as const, targetedAtOperator: true };
+    graph.insertEvent({ ...base, threadId: "T-OLD", messageId: "d1", rawText: DIGEST_TEXT, timestamp: "2026-10-15T09:00:00.000Z" });
+    graph.insertEvent({ ...base, threadId: "T-OWN", messageId: "own0", rawText: "Starting OPS-1", timestamp: "2026-10-13T09:00:00.000Z" });
+    graph.insertEvent({ ...base, threadId: "T-OWN", messageId: "own1", rawText: "Blocked on OPS-1: same for OPS-2, OPS-3 and OPS-4", timestamp: "2026-10-14T09:00:00.000Z" });
+    graph.insertEvent({ ...base, threadId: "T-OWN", messageId: "human", agentId: "U-dana", rawText: "OPS-2, OPS-3, OPS-4 approved", timestamp: "2026-10-14T10:00:00.000Z" });
+    const ids = (text: string) => extractor().extractWorkItemIds(text);
+
+    expect(graph.backfillDigests(namesDigest, ids).length).toBe(1);
+    expect(graph.getEventByMessageId("d1", "T-OLD")!.digest).toBe(true);
+    // A reply in its item's own thread, and a human's message, stay as they were
+    expect(graph.getEventByMessageId("own1", "T-OWN")!.digest).toBe(false);
+    expect(graph.getEventByMessageId("human", "T-OWN")!.digest).toBe(false);
+    expect(graph.getActionableItems()[0].latestEvent!.messageId).not.toBe("d1");
+
+    db.db.prepare("UPDATE events SET digest = 0 WHERE digest = 2").run(); // the documented undo
+    expect(graph.getEventByMessageId("d1", "T-OLD")!.digest).toBe(false);
+  });
+
+  it("asks for the backfill only when the digest column is first added", () => {
+    const file = join(mkdtempSync(join(tmpdir(), "ws-digest-")), "graph.db");
+    const first = new Database(file);
+    expect(first.digestBackfillPending).toBe(true);
+    first.close();
+    const second = new Database(file);
+    expect(second.digestBackfillPending).toBe(false);
+    second.close();
+  });
+
+  it("handles a reply in an item's own thread as usual, even when it names two other tickets", async () => {
+    const answer: Classification = {
+      status: "blocked_on_human", entryType: "block", confidence: 0.95, reason: "needs approval for prod creds",
+      workItemIds: ["OPS-1", "OPS-2", "OPS-3"], title: "Prod creds", targetedAtOperator: true, actionRequiredFrom: ["U0OPERATOR1"], nextAction: "Approve",
+    };
+    const { graph, pipeline } = setup("Blocked on OPS-1: need your approval for prod creds. Same issue will hit OPS-2 and OPS-3.", answer, "T-OWN");
+    graph.upsertWorkItem({ id: "OPS-1", source: "jira", title: "One", currentAtcStatus: "in_progress", currentConfidence: 0.5 });
+    graph.upsertThread({ id: "T-OWN", channelId: "C1", channelName: "fleet-ops", platform: "slack", workItemId: "OPS-1", lastActivity: "2026-10-15T08:00:00.000Z" });
+    graph.linkThreadWorkItem("T-OWN", "OPS-1", "primary");
+
+    await pipeline.processOnce();
+
+    expect(graph.getWorkItemById("OPS-1")!.currentAtcStatus).toBe("blocked_on_human");
+    expect(graph.getActionableItems().map((i) => i.workItem.id)).toContain("OPS-1");
+    expect(graph.getThreadById("T-OWN")!.workItemId).toBe("OPS-1");
+  });
+
+  it("doesn't count tickets the model adds, only those the message names", async () => {
+    const answer: Classification = { ...DIGEST_ANSWER, workItemIds: ["OPS-1", "OPS-2", "OPS-3"], breakdown: undefined };
+    const { graph, pipeline } = setup("OPS-1 is blocked on Alex; OPS-2 is related", answer, "T-TWO");
+    graph.upsertWorkItem({ id: "OPS-3", source: "jira", title: "Three", currentAtcStatus: "in_progress" });
+
+    await pipeline.processOnce();
+
+    expect(graph.getEventByMessageId("m1", "T-TWO")!.digest).toBe(false);
+    expect(graph.getThreadById("T-TWO")!.workItemId).toBe("OPS-1");
+    expect(graph.getWorkItemById("OPS-1")!.currentAtcStatus).toBe("blocked_on_human");
+  });
+
+  it("never treats a human's message as a digest", async () => {
+    const answer: Classification = { ...DIGEST_ANSWER, status: "in_progress", targetedAtOperator: false, breakdown: undefined };
+    const { graph, pipeline } = setup("OPS-1, OPS-2 and OPS-3 are approved, go ahead", answer, "T-HUMAN", "human");
+
+    await pipeline.processOnce();
+
+    expect(graph.getEventByMessageId("m1", "T-HUMAN")!.digest).toBe(false);
+    expect(graph.getThreadById("T-HUMAN")!.workItemId).toBe("OPS-1");
+  });
+
+  it("keeps a repeated digest a digest", async () => {
+    const { graph, pipeline, adapter, message } = setup(DIGEST_TEXT, DIGEST_ANSWER);
+    graph.upsertWorkItem({ id: "OPS-2", source: "jira", title: "Two", currentAtcStatus: "blocked_on_human" });
+    await pipeline.processOnce();
+    const again = { ...message, id: "m2", timestamp: "2026-10-15T10:00:00.000Z" };
+    adapter.readThreads.mockResolvedValue([{ id: "T-DIGEST", channelId: "C1", channelName: "fleet-ops", platform: "slack", workItemId: null, lastActivity: again.timestamp, messageCount: 2, messages: [message, again] }]);
+
+    await pipeline.processOnce();
+
+    expect(graph.getEventByMessageId("m2", "T-DIGEST")!.digest).toBe(true);
+    expect(graph.getActionableItems().map((i) => i.workItem.id)).not.toContain("OPS-2");
+  });
+
+  it("gives an item it alone knows about a status, still outside Needs me", async () => {
+    const { graph, pipeline } = setup(DIGEST_TEXT, DIGEST_ANSWER);
+
+    await pipeline.processOnce();
+
+    expect(graph.getWorkItemById("OPS-1")!.currentAtcStatus).toBe("blocked_on_human");
+    expect(graph.getAllActiveItems().map((i) => i.workItem.id)).toContain("OPS-1");
+    expect(graph.getActionableItems()).toEqual([]);
+    expect(db.db.prepare("SELECT agrees FROM digest_checks WHERE work_item_id = 'OPS-1'").get()).toEqual({ agrees: null });
+  });
+
+  it("doesn't check a digest held back for a retry against a status set after it", async () => {
+    const { graph, pipeline } = setup(DIGEST_TEXT, DIGEST_ANSWER);
+    graph.upsertWorkItem({ id: "OPS-1", source: "jira", title: "One", currentAtcStatus: "in_progress", statusAt: "2026-10-15T12:00:00.000Z" });
+
+    await pipeline.processOnce();
+
+    expect(db.db.prepare("SELECT COUNT(*) AS n FROM digest_checks WHERE work_item_id = 'OPS-1'").get()).toEqual({ n: 0 });
+  });
+
+  it("doesn't count a digest as handing an item to someone else, or as activity that keeps it from expiring", () => {
     db = new Database(":memory:");
     const graph = new ContextGraph(db);
     graph.upsertAgent({ id: "U-atlas", name: "Atlas", platform: "slack", platformUserId: "U-atlas" });
     graph.upsertWorkItem({ id: "OPS-1", source: "jira", title: "One", currentAtcStatus: "blocked_on_human" });
-    graph.upsertThread({ id: "T-OLD", channelId: "C1", channelName: "fleet-ops", platform: "slack", workItemId: "OPS-1" });
-    graph.linkThreadWorkItem("T-OLD", "OPS-1", "primary");
-    const base = { threadId: "T-OLD", workItemId: "OPS-1", agentId: "U-atlas", status: "blocked_on_human" as const, confidence: 0.9, entryType: "block" as const, targetedAtOperator: true };
-    graph.insertEvent({ ...base, messageId: "d1", rawText: DIGEST_TEXT, timestamp: "2026-10-15T09:00:00.000Z" });
-    graph.insertEvent({ ...base, messageId: "p1", rawText: "OPS-1 waiting on OPS-2", timestamp: "2026-10-14T09:00:00.000Z" });
-    expect(graph.getActionableItems()[0].latestEvent!.messageId).toBe("d1");
+    graph.upsertThread({ id: "T-OWN", channelId: "C1", channelName: "fleet-ops", platform: "slack", workItemId: "OPS-1" });
+    graph.linkThreadWorkItem("T-OWN", "OPS-1", "primary");
+    graph.upsertThread({ id: "T-DIGEST", channelId: "C1", channelName: "fleet-ops", platform: "slack", workItemId: null });
+    graph.linkThreadWorkItem("T-DIGEST", "OPS-1", "mentioned");
+    const old = new Date(Date.now() - 20 * 86400000).toISOString();
+    const recent = new Date(Date.now() - 86400000).toISOString();
+    graph.insertEvent({ threadId: "T-OWN", messageId: "own", workItemId: "OPS-1", agentId: "U-atlas", status: "blocked_on_human", confidence: 0.9, entryType: "block", targetedAtOperator: true, timestamp: old });
+    graph.insertEvent({ threadId: "T-DIGEST", messageId: "dig", workItemId: null, agentId: "U-atlas", status: "blocked_on_human", confidence: 0.95, entryType: "block", targetedAtOperator: false, actionRequiredFrom: ["U-dana"], timestamp: recent, digest: true });
 
-    expect(graph.backfillDigests([extractor()], DIGEST_MIN_ITEMS)).toBe(1);
-    expect(graph.backfillDigests([extractor()], DIGEST_MIN_ITEMS)).toBe(0); // already marked
-
-    // The item stays only on the strength of its own message
-    expect(graph.getActionableItems()[0].latestEvent!.messageId).toBe("p1");
+    expect(graph.getActionableItems().map((i) => i.workItem.id)).toEqual(["OPS-1"]);
+    expect(graph.expireInactiveItems(14)).toBe(1);
   });
 });

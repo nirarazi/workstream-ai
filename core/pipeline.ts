@@ -8,10 +8,10 @@ import type { MessagingAdapter } from "./adapters/messaging/interface.js";
 import type { TaskAdapter } from "./adapters/tasks/interface.js";
 import type { Classifier } from "./classifier/index.js";
 import type { ContextGraph } from "./graph/index.js";
-import { DIGEST_MIN_ITEMS, type WorkItemLinker } from "./graph/linker.js";
+import { DIGEST_MIN_ITEMS, namesDigest, type WorkItemLinker } from "./graph/linker.js";
+import { knownTicketPrefixes, looksLikeTicketKey } from "./graph/extractors/default.js";
 
 export { DIGEST_MIN_ITEMS };
-import { knownTicketPrefixes, looksLikeTicketKey } from "./graph/extractors/default.js";
 
 const log = createLogger("pipeline");
 
@@ -566,6 +566,14 @@ export class Pipeline {
 
   // --- Private helpers ---
 
+  /**
+   * Only an agent's or a bot's message can be a digest. A human naming several tickets ("OPS-1, OPS-2 and OPS-3 are
+   * approved") is deciding them, and their messages are never kept out of Needs me on that account.
+   */
+  private canBeDigest(message: Message): boolean {
+    return message.senderType !== "human" && !this.isOperator(message);
+  }
+
   private pollIntervalSeconds(): number {
     return this.config?.messaging?.pollInterval ?? DEFAULT_POLL_INTERVAL;
   }
@@ -792,8 +800,11 @@ export class Pipeline {
         reason: cachedResult.reason + " (deduplicated)",
         rawText: message.text,
         timestamp: message.timestamp,
+        targetedAtOperator: cachedResult.targetedAtOperator,
         actionRequiredFrom: cachedResult.actionRequiredFrom,
         nextAction: cachedResult.nextAction,
+        // Same text, same thread: a digest the first time is one now
+        digest: !inheritedWorkItemId && this.canBeDigest(message) && namesDigest(this.linker.extractIds(message.text), null),
       });
       return cachedResult;
     }
@@ -841,7 +852,7 @@ export class Pipeline {
     }
 
     // Step 1: Link work items from message text (regex — only known prefixes)
-    const extractedIds = this.linker.linkMessage(message.text, thread.id);
+    const extractedIds = this.linker.linkMessage(message.text, thread.id, this.canBeDigest(message));
 
     // Step 2: Classify the message with operator identities and sender context
     // Override senderType if the graph has classified this bot as a notification source
@@ -945,8 +956,9 @@ export class Pipeline {
         isBot: message.senderType === "agent" ? true : message.senderType === "human" ? false : null,
       });
 
-      // A digest makes none of the items it names the thread's own: they're all mentioned
-      const digest = [...allWorkItemIds].filter((id) => !id.startsWith("thread:")).length >= DIGEST_MIN_ITEMS;
+      // A digest makes none of the items it names the thread's own: they're all mentioned. Decided as the linker does,
+      // from the IDs in the text, so the two agree (IDs the model adds don't make a message a digest).
+      const digest = this.canBeDigest(message) && namesDigest(extractedIds, inheritedWorkItemId);
 
       // Step 4: Upsert thread in graph — preserve manually linked work items
       const isManuallyLinked = existingThread?.manuallyLinked === true;
@@ -983,7 +995,8 @@ export class Pipeline {
         targetedAtOperator: classification.targetedAtOperator,
         actionRequiredFrom: classification.actionRequiredFrom,
         nextAction: classification.nextAction,
-        digest,
+        // About its thread's own item when there is one, so it counts for that item as usual
+        digest: digest && !primaryWorkItemId,
       });
 
       // Step 6: Update work item status and write junction rows
@@ -1002,14 +1015,28 @@ export class Pipeline {
         if (existing) {
           const itemClassification = validatedBreakdownMap.get(workItemId);
 
-          // A digest doesn't decide: what it says about each item is compared with the app's view instead
-          if (digest) {
-            if (itemClassification) {
+          // A digest doesn't decide the items it names (its thread's own item, if any, is handled as usual): what it
+          // says about each is compared with the app's view instead, with the whole message's status where it gave none
+          if (digest && workItemId !== primaryWorkItemId) {
+            const digestStatus = itemClassification?.status ?? classification.status;
+            if (!existing.currentAtcStatus) {
+              // Nothing to contradict: the digest is all the app knows, so it sets where the item stands. Its event
+              // is a digest, so this doesn't put the item in Needs me.
+              this.graph.upsertWorkItem({
+                id: workItemId,
+                source: existing.source,
+                currentAtcStatus: digestStatus,
+                currentConfidence: itemClassification?.confidence ?? classification.confidence,
+                statusAt: message.timestamp,
+              });
+            }
+            // A digest older than the item's status is compared with a later state, so it isn't checked
+            if (!this.isOlderThanStatus(existing, message)) {
               this.graph.recordDigestCheck({
                 eventId: event.id,
                 workItemId,
-                digestStatus: itemClassification.status,
-                digestTargeted: itemClassification.targetedAtOperator,
+                digestStatus,
+                digestTargeted: itemClassification?.targetedAtOperator ?? classification.targetedAtOperator,
                 itemStatus: existing.currentAtcStatus,
                 at: message.timestamp,
               });

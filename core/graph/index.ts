@@ -475,8 +475,9 @@ export class ContextGraph {
       .prepare(`
         UPDATE work_items SET dismissed_at = (
           SELECT MAX(e.timestamp) FROM events e
-          WHERE e.work_item_id = work_items.id
-             OR e.thread_id IN (SELECT thread_id FROM thread_work_items WHERE work_item_id = work_items.id)
+          WHERE (e.work_item_id = work_items.id
+             OR e.thread_id IN (SELECT thread_id FROM thread_work_items WHERE work_item_id = work_items.id))
+            AND e.digest = 0 -- a digest naming the item isn't activity on it
         ), dismiss_reason = 'expired'
         WHERE id IN (
           SELECT wi.id FROM work_items wi
@@ -486,8 +487,9 @@ export class ContextGraph {
             AND (wi.snoozed_until IS NULL OR wi.snoozed_until <= ?)
             AND (
               SELECT MAX(e.timestamp) FROM events e
-              WHERE e.work_item_id = wi.id
-                 OR e.thread_id IN (SELECT thread_id FROM thread_work_items WHERE work_item_id = wi.id)
+              WHERE (e.work_item_id = wi.id
+                 OR e.thread_id IN (SELECT thread_id FROM thread_work_items WHERE work_item_id = wi.id))
+                AND e.digest = 0
             ) < ?
             -- not dismissed, or brought back by a later message aimed at the operator (as the inbox does)
             AND (wi.dismissed_at IS NULL OR wi.dismissed_at < (
@@ -495,6 +497,7 @@ export class ContextGraph {
               WHERE (e.work_item_id = wi.id
                  OR e.thread_id IN (SELECT thread_id FROM thread_work_items WHERE work_item_id = wi.id))
                 AND e.targeted_at_operator = 1
+                AND e.digest = 0
             ))
         )
       `)
@@ -662,11 +665,6 @@ export class ContextGraph {
   }
 
   /**
-   * Scan all events' raw_text for work item IDs using the given extractor,
-   * and create `mentioned` junction rows for any that are missing.
-   * Skips IDs that already have a junction row for that thread.
-   */
-  /**
    * Records what a digest said about one of the work items it names, and whether that matches the app's view:
    * the same kind of state (needs someone, done, or neither). Unresolved disagreements are for a judge to settle.
    */
@@ -678,6 +676,7 @@ export class ContextGraph {
     itemStatus: StatusCategory | null;
     at: string;
   }): void {
+    // The kinds of state that matter to the operator: someone's needed, it's done, or neither (working, or noise)
     const kind = (s: string) =>
       s === "blocked_on_human" || s === "needs_decision" ? "needs" : s === "completed" ? "done" : "other";
     const agrees = check.itemStatus === null ? null : kind(check.digestStatus) === kind(check.itemStatus) ? 1 : 0;
@@ -696,29 +695,40 @@ export class ContextGraph {
   }
 
   /**
-   * Marks stored events whose text names at least `minItems` work items as digests, reading the IDs with the
-   * extractors. Only marks: the pipeline also counts IDs the model found, which the text alone may not show.
-   * Returns how many were marked.
+   * Once, for messages stored before digests were told apart: marks those that would be digests now (`isDigest`
+   * given the IDs in the text and the thread's own item) as digest = 2, so the change can be undone
+   * (`UPDATE events SET digest = 0 WHERE digest = 2`). Humans' messages are never digests. A message that started its
+   * thread made its first item the thread's own under the old rule, so it has no own item here. Returns the IDs marked.
    */
-  backfillDigests(extractors: Extractor[], minItems: number): number {
-    const events = this.db.db.prepare(
-      "SELECT id, raw_text FROM events WHERE digest = 0 AND raw_text != '' AND message_id NOT LIKE 'operator-%'"
-    ).all() as Array<{ id: string; raw_text: string }>;
-    const mark = this.db.db.prepare("UPDATE events SET digest = 1 WHERE id = ?");
-    let marked = 0;
+  backfillDigests(isDigest: (ids: string[], ownItemId: string | null) => boolean, extractIds: (text: string) => string[]): string[] {
+    const events = this.db.db.prepare(`
+      SELECT e.id, e.raw_text, t.work_item_id AS own_item,
+        e.timestamp = (SELECT MIN(e2.timestamp) FROM events e2 WHERE e2.thread_id = e.thread_id) AS starts_thread
+      FROM events e
+      JOIN threads t ON t.id = e.thread_id
+      LEFT JOIN agents a ON a.id = e.agent_id
+      WHERE e.digest = 0 AND e.raw_text != '' AND e.message_id NOT LIKE 'operator-%'
+        AND COALESCE(a.is_bot, 1) = 1
+    `).all() as Array<{ id: string; raw_text: string; own_item: string | null; starts_thread: number }>;
+    const mark = this.db.db.prepare("UPDATE events SET digest = 2 WHERE id = ?");
+    const marked: string[] = [];
     this.transaction(() => {
       for (const event of events) {
-        const ids = new Set<string>();
-        for (const extractor of extractors) for (const id of extractor.extractWorkItemIds(event.raw_text)) ids.add(id);
-        if (ids.size >= minItems) {
-          mark.run(event.id);
-          marked++;
-        }
+        const ownItem = event.starts_thread ? null : event.own_item;
+        // A reply in an item's own thread is about that item, so it isn't marked (as the pipeline does)
+        if (ownItem || !isDigest(extractIds(event.raw_text), null)) continue;
+        mark.run(event.id);
+        marked.push(event.id);
       }
     });
     return marked;
   }
 
+  /**
+   * Scan all events' raw_text for work item IDs using the given extractor,
+   * and create `mentioned` junction rows for any that are missing.
+   * Skips IDs that already have a junction row for that thread.
+   */
   backfillJunctionFromRawText(extractors: Extractor[]): number {
     const events = this.db.db.prepare(
       "SELECT id, thread_id, work_item_id, raw_text FROM events WHERE raw_text != ''"
@@ -1380,6 +1390,7 @@ export class ContextGraph {
           WHERE (e3.work_item_id = wi.id
              OR e3.thread_id IN (SELECT thread_id FROM thread_work_items WHERE work_item_id = wi.id))
             AND e3.targeted_at_operator = 1
+            AND e3.digest = 0 -- a digest doesn't bring a dismissed item back
             AND e3.timestamp > wi.dismissed_at
         ))
       ORDER BY
@@ -1443,6 +1454,7 @@ export class ContextGraph {
           WHERE (e3.work_item_id = wi.id
              OR e3.thread_id IN (SELECT thread_id FROM thread_work_items WHERE work_item_id = wi.id))
             AND e3.targeted_at_operator = 1
+            AND e3.digest = 0 -- a digest doesn't bring a dismissed item back
             AND e3.timestamp > wi.dismissed_at
         )
       ORDER BY wi.dismissed_at DESC
