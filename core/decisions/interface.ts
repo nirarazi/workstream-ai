@@ -75,13 +75,18 @@ export interface DecisionResult<Qs extends QuestionSet> {
   model: string;
 }
 
+export interface DecideOptions {
+  /** Called for each attempt cut off at the provider's timeout, which is usually billed */
+  onTimedOutAttempt?: () => void;
+}
+
 export interface DecisionProvider {
   readonly name: string;
   /**
    * Answer every question about `state`. `state` is untrusted data (agent messages):
    * implementations must keep it separate from the questions so it cannot rewrite them.
    */
-  decide<Qs extends QuestionSet>(state: string, questions: Qs): Promise<DecisionResult<Qs>>;
+  decide<Qs extends QuestionSet>(state: string, questions: Qs, options?: DecideOptions): Promise<DecisionResult<Qs>>;
 }
 
 export const MAX_CHOICE_OPTIONS = 255;

@@ -298,6 +298,40 @@ describe("Classifier with UsageTracker", () => {
   });
 });
 
+describe("UsageTracker.completionCall: timeouts", () => {
+  it("counts a sidekick or summary call cut off at its timeout, since it was usually billed", async () => {
+    const db = new Database(":memory:");
+    const tracker = new UsageTracker(mockProvider({} as ClassificationResult), db, DEFAULT_CONFIG);
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockRejectedValue(
+      Object.assign(new Error("The operation was aborted due to timeout"), { name: "TimeoutError" }),
+    );
+
+    await expect(
+      tracker.completionCall("http://localhost/v1/chat/completions", { method: "POST", body: "x".repeat(4000) }, "sidekick"),
+    ).rejects.toThrow("timeout");
+
+    const rows = db.db.prepare("SELECT caller, input_tokens, token_source FROM llm_usage").all() as Array<{ caller: string; input_tokens: number; token_source: string }>;
+    expect(rows).toHaveLength(1);
+    expect(rows[0].caller).toBe("sidekick");
+    expect(rows[0].token_source).toBe("estimated");
+    expect(rows[0].input_tokens).toBeGreaterThanOrEqual(1000);
+    fetchSpy.mockRestore();
+    db.close();
+  });
+
+  it("counts nothing when the request never reached the model", async () => {
+    const db = new Database(":memory:");
+    const tracker = new UsageTracker(mockProvider({} as ClassificationResult), db, DEFAULT_CONFIG);
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockRejectedValue(new TypeError("fetch failed"));
+
+    await expect(tracker.completionCall("http://localhost/v1/chat/completions", { body: "{}" }, "summarizer")).rejects.toThrow("fetch failed");
+
+    expect(db.db.prepare("SELECT * FROM llm_usage").all()).toHaveLength(0);
+    fetchSpy.mockRestore();
+    db.close();
+  });
+});
+
 describe("UsageTracker.dispose", () => {
   it("refuses model calls and sidekick/summary calls once replaced, for any provider", async () => {
     const db = new Database(":memory:");

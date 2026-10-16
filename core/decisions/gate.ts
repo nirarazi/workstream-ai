@@ -8,7 +8,7 @@
 import { createLogger } from "../logger.js";
 import type { Config } from "../config.js";
 import type { Classification, EntryType, StatusCategory } from "../types.js";
-import type { UsageTracker } from "../usage/tracker.js";
+import { estimateTokens, MIN_INPUT_TOKEN_OVERHEAD, MIN_OUTPUT_TOKEN_OVERHEAD, type UsageTracker } from "../usage/tracker.js";
 import type { DecisionProvider } from "./interface.js";
 import {
   classifyWithDecisions,
@@ -32,7 +32,7 @@ export class DecisionGate {
   constructor(
     private readonly provider: DecisionProvider,
     private readonly interruptThreshold: number,
-    private readonly onUsage?: (model: string, inputTokens: number, outputTokens: number) => void,
+    private readonly onUsage?: (model: string, inputTokens: number, outputTokens: number, estimated?: boolean) => void,
     private readonly budgetExhausted?: () => boolean,
     private readonly replaced?: () => boolean,
   ) {}
@@ -45,7 +45,29 @@ export class DecisionGate {
     // The daily budget covers decision calls too; the classifier falls back to the LLM's result
     if (this.replaced?.()) throw new Error("Decision gate was replaced by new settings");
     if (this.budgetExhausted?.()) throw new Error("Daily LLM budget exhausted. Resets at midnight UTC.");
-    const result = await classifyWithDecisions(this.provider, input, { interruptThreshold: this.interruptThreshold });
+
+    // Each attempt cut off at the timeout was usually billed: count an estimate for it
+    let timedOut = 0;
+    const recordTimeouts = () => {
+      if (timedOut === 0) return;
+      const inputTokens = estimateTokens(JSON.stringify(input)) + MIN_INPUT_TOKEN_OVERHEAD;
+      for (let i = 0; i < timedOut; i++) this.onUsage?.(this.provider.name, inputTokens, MIN_OUTPUT_TOKEN_OVERHEAD, true);
+    };
+    let result: DecisionClassification;
+    try {
+      result = await classifyWithDecisions(
+        this.provider,
+        input,
+        { interruptThreshold: this.interruptThreshold },
+        { onTimedOutAttempt: () => { timedOut++; } },
+      );
+    } catch (err) {
+      // A provider that doesn't report attempts still timed out at least once
+      if (timedOut === 0 && err instanceof Error && err.name === "TimeoutError") timedOut = 1;
+      recordTimeouts();
+      throw err;
+    }
+    recordTimeouts();
     if (result.usage) this.onUsage?.(this.provider.name, result.usage.inputTokens, result.usage.outputTokens);
     return result;
   }
@@ -108,9 +130,9 @@ export function createDecisionGate(config: Config, usageTracker?: UsageTracker):
       ? { input: d.inputCostPerMillion, output: d.outputCostPerMillion }
       : DEFAULT_PRICES[model];
   const onUsage = usageTracker
-    ? (_name: string, inputTokens: number, outputTokens: number) => {
+    ? (_name: string, inputTokens: number, outputTokens: number, estimated?: boolean) => {
         const cost = prices ? (inputTokens * prices.input + outputTokens * prices.output) / 1_000_000 : null;
-        usageTracker.recordExternalUsage("decisions", model, inputTokens, outputTokens, cost);
+        usageTracker.recordExternalUsage("decisions", model, inputTokens, outputTokens, cost, estimated ? "estimated" : "actual");
       }
     : undefined;
 

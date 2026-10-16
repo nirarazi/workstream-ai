@@ -3,6 +3,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { concentration, normalize, validateQuestions, type QuestionSet } from "../../core/decisions/interface.js";
 import { LLMDecisionProvider, buildDecisionPrompt, parseDecisionResponse } from "../../core/decisions/providers/llm.js";
+import { OpenAICompatibleProvider } from "../../core/classifier/providers/openai-compatible.js";
 import { TypeSafeDecisionProvider, toWireQuestion } from "../../core/decisions/providers/typesafe.js";
 import { OpenAIDecisionProvider, toOpenAIQuestion } from "../../core/decisions/providers/openai.js";
 import {
@@ -86,6 +87,21 @@ describe("LLMDecisionProvider", () => {
     expect(complete.mock.calls[0][1]).toContain("### urgency");
     expect(result.answers.color.choice).toBe("red");
     expect(result.model).toBe("test-model");
+  });
+
+  it("reports each timed-out attempt of its transport", async () => {
+    const completeWithUsage = vi.spyOn(OpenAICompatibleProvider.prototype, "completeWithUsage")
+      .mockImplementation(async (_m, _s, _f, options) => {
+        options?.onTimedOutAttempt?.();
+        return { text: '{"refund":{"probability":0.1}}' };
+      });
+    const provider = LLMDecisionProvider.fromEndpoint({ baseUrl: "http://localhost:11434/v1", model: "test-model" });
+    const onTimedOutAttempt = vi.fn();
+
+    await provider.decide("state", { refund: QUESTIONS.refund }, { onTimedOutAttempt });
+
+    expect(onTimedOutAttempt).toHaveBeenCalledTimes(1);
+    completeWithUsage.mockRestore();
   });
 });
 
