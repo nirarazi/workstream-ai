@@ -591,7 +591,23 @@ export async function setBadgeCount(count: number): Promise<void> {
 // window.open in browser.
 // ---------------------------------------------------------------------------
 
-export async function openExternalUrl(url: string): Promise<void> {
+/** Only web links open: links can come from message content, and other schemes (file:, app handlers) reach the OS */
+export function openableUrl(url: string): string | null {
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === "https:" || parsed.protocol === "http:" ? parsed.href : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function openExternalUrl(raw: string): Promise<void> {
+  // The parsed form, so what's checked is what opens
+  const url = openableUrl(raw);
+  if (!url) {
+    console.warn("Not opening a link that isn't http(s)");
+    return;
+  }
   try {
     const { open } = await import("@tauri-apps/plugin-shell");
     await open(url);
