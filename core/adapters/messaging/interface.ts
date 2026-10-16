@@ -63,6 +63,9 @@ export interface MessagingAdapter {
   /** Serialize a user ID into the platform's native mention format (e.g. <@U123> for Slack) */
   serializeMention?(userId: string): string;
 
+  /** The user ID in a platform mention (e.g. "<@U123>" or "<@U123|dana>" for Slack); null if it isn't one */
+  parseMention?(text: string): string | null;
+
   /** Display name of a user from the adapter's already-loaded directory, without a network call. Null if unknown. */
   getUserName?(userId: string): string | null;
 

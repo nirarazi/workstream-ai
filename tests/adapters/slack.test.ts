@@ -706,6 +706,15 @@ describe("SlackAdapter", () => {
     });
   });
 
+  describe("parseMention", () => {
+    it("takes the user ID out of a mention, with or without a name", () => {
+      expect(adapter.parseMention("<@U0DANA0001>")).toBe("U0DANA0001");
+      expect(adapter.parseMention("<@U0DANA0001|dana>")).toBe("U0DANA0001");
+      expect(adapter.parseMention("U0DANA0001")).toBeNull();
+      expect(adapter.parseMention("<#C0FLEET001>")).toBeNull();
+    });
+  });
+
   // -- Rate limiting --
 
   describe("rate limiting", () => {

@@ -19,7 +19,7 @@ import { createRateLimiter, type RateLimiter } from "./rate-limiter.js";
 import { Summarizer } from "./summarizer/index.js";
 import { detectAnomalies, type FleetItemInput } from "./graph/anomalies.js";
 import { Sidekick, type SidekickMessage } from "./sidekick/index.js";
-import { buildUnifiedStatus, buildTimeline } from "./stream.js";
+import { buildUnifiedStatus, buildTimeline, usableName } from "./stream.js";
 import type { OperatorIdentityMap } from "./types.js";
 
 const log = createLogger("server");
@@ -336,14 +336,19 @@ export function createApp(state: EngineState): Hono {
       .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())[0] ?? null;
 
     // Whoever the item waits on may never have posted in its threads: look them up among
-    // everyone the graph has seen, then in the messaging platform's user directory.
+    // everyone the graph has seen, then in the messaging platform's user directory. A name
+    // that is really an ID (someone missing from the directory when they first posted) doesn't count.
+    const actorIds = (latestBlockEvent?.actionRequiredFrom ?? [])
+      .map((actor) => state.messagingAdapter?.parseMention?.(actor) ?? actor);
     const actorNameMap = new Map(agentMap);
-    for (const actorId of latestBlockEvent?.actionRequiredFrom ?? []) {
-      if (actorNameMap.has(actorId)) continue;
-      const name = state.graph.getAgentById(actorId)?.name ?? state.messagingAdapter?.getUserName?.(actorId);
+    for (const actorId of actorIds) {
+      if (usableName(actorNameMap.get(actorId), actorId)) continue;
+      const name = usableName(state.graph.getAgentById(actorId)?.name, actorId)
+        ?? usableName(state.messagingAdapter?.getUserName?.(actorId), actorId);
       if (name) actorNameMap.set(actorId, name);
     }
-    const unifiedStatus = buildUnifiedStatus(workItem, latestBlockEvent, state.operatorIdentities, actorNameMap);
+    const blockEvent = latestBlockEvent && { ...latestBlockEvent, actionRequiredFrom: latestBlockEvent.actionRequiredFrom && actorIds };
+    const unifiedStatus = buildUnifiedStatus(workItem, blockEvent, state.operatorIdentities, actorNameMap);
     const timeline = buildTimeline(events, agentMap, agentAvatarMap, threadChannelMap, threadPlatformMap);
 
     let statusSummary: string | null = null;

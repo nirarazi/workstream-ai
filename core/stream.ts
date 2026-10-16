@@ -34,9 +34,24 @@ export interface StreamData {
   nextAction: string | null;
 }
 
-/** A platform user ID or similar token (e.g. U0OPERATOR1, 1712345678.123456), not a readable name. */
+/** Longest name shown in a status label; anything longer is more likely model prose than a name. */
+const MAX_LABEL_NAME_LENGTH = 40;
+
+/**
+ * A platform user ID, mention token or similar (e.g. U0OPERATOR1, <@U0OPERATOR1>, 1712345678.123456),
+ * not a readable name. An all-caps agent name with a digit (say R2D2) counts too, so such a name is
+ * only shown once the graph or the platform's directory supplies it.
+ */
 function looksLikeOpaqueId(value: string): boolean {
-  return /\d/.test(value) && /^[A-Z0-9_.:-]+$/.test(value);
+  return (/\d/.test(value) && /^[A-Z0-9_.:-]+$/.test(value)) || /^<.*>$/.test(value);
+}
+
+/** The value if it's fit to show as a person's name: not an ID (or the ID itself), not "unknown", not too long. */
+export function usableName(value: string | null | undefined, id?: string): string | null {
+  const name = value?.trim();
+  if (!name || name === id || name.toLowerCase() === "unknown") return null;
+  if (looksLikeOpaqueId(name) || name.length > MAX_LABEL_NAME_LENGTH) return null;
+  return name;
 }
 
 export function buildUnifiedStatus(
@@ -59,9 +74,11 @@ export function buildUnifiedStatus(
     latestBlockEvent.actionRequiredFrom.length > 0 &&
     operatorIdentities
   ) {
-    // Check if operator is in actionRequiredFrom
-    const isOperator = [...operatorIdentities.values()].some(
-      (identity) => latestBlockEvent.actionRequiredFrom!.includes(identity.userId),
+    // Check if operator is in actionRequiredFrom, by ID or, when the classifier wrote a name, by name
+    const isOperator = [...operatorIdentities.values()].some((identity) =>
+      latestBlockEvent.actionRequiredFrom!.some(
+        (actor) => actor === identity.userId || (!!identity.userName && actor.toLowerCase() === identity.userName.toLowerCase()),
+      ),
     );
 
     if (isOperator) {
@@ -70,7 +87,7 @@ export function buildUnifiedStatus(
       // Name the first action taker we can show. The classifier returns platform IDs, but
       // sometimes a plain name; an ID we can't resolve isn't worth showing.
       const actorName = latestBlockEvent.actionRequiredFrom
-        .map((id) => agentNameMap?.get(id) ?? (looksLikeOpaqueId(id) ? null : id))
+        .map((id) => usableName(agentNameMap?.get(id), id) ?? usableName(id))
         .find((name): name is string => !!name);
       if (status === "needs_decision") {
         label = actorName ? `Needs ${actorName}'s decision` : "Needs someone else's decision";
