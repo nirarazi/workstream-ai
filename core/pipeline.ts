@@ -43,6 +43,21 @@ const RETRY_MAX_MS = 30 * 60 * 1000;
 /** Classified threads that started within this long stay in the history window, so late replies to them are read */
 const REPLY_WINDOW_MS = 24 * 60 * 60 * 1000;
 /**
+ * The lines of a message its author wrote: without quoted lines ("> ...", which Slack sends as "&gt; ...") and without
+ * a forwarded block and its summary, which carry other people's words and the ticket IDs in them.
+ */
+export function operatorsOwnLines(text: string): string {
+  const own: string[] = [];
+  for (const line of text.split("\n")) {
+    const trimmed = line.trimStart();
+    if (/^(>|&gt;)\s*Forwarded from/i.test(trimmed) || /^Summary:/i.test(trimmed)) break;
+    if (trimmed.startsWith(">") || trimmed.startsWith("&gt;")) continue;
+    own.push(line);
+  }
+  return own.join("\n");
+}
+
+/**
  * Whether a message on a completed work item brings it back: a blocker or a decision does (it needs the operator
  * again), and so does another human saying work resumed. An agent reporting progress after completion doesn't, nor
  * does the operator's own message (e.g. the note sent with Approve, which comes back as in_progress).
@@ -1029,9 +1044,12 @@ export class Pipeline {
           .map((b) => [b.workItemId, b]),
       );
 
-      // The operator's own message is their word on the items it's about: its thread's own item and those it names
+      // The operator's own message is their word on the items it's about: its thread's own item, and those named in
+      // their own lines (not ones the model added, nor in text they quote or forward). Not when an app posted it under
+      // their account.
       const fromTheOperator = this.isOperator(message);
-      const namedHere = new Set([...extractedIds, ...classification.workItemIds]);
+      const operatorsWordApplies = fromTheOperator && !message.postedByApp;
+      const namedHere = operatorsWordApplies ? new Set(this.linker.extractIds(operatorsOwnLines(message.text))) : new Set<string>();
       for (const workItemId of allWorkItemIds) {
         // Write junction row (primary for the first/inherited ID, mentioned for the rest)
         const relation = workItemId === primaryWorkItemId ? "primary" : "mentioned";
@@ -1045,7 +1063,7 @@ export class Pipeline {
           const escalates = !fromTheOperator && Boolean(itemClassification?.targetedAtOperator)
             && (itemClassification!.status === "blocked_on_human" || itemClassification!.status === "needs_decision");
           if (escalates) this.graph.addEventTarget(event.id, workItemId);
-          const operatorsWord = fromTheOperator && (workItemId === primaryWorkItemId || namedHere.has(workItemId));
+          const operatorsWord = operatorsWordApplies && (workItemId === primaryWorkItemId || namedHere.has(workItemId));
           // Their message counts for the item wherever it's posted, so it can hand the item off or keep it
           if (operatorsWord && workItemId !== primaryWorkItemId) this.graph.addEventSubject(event.id, workItemId);
 

@@ -13,7 +13,7 @@ let db: Database;
 afterEach(() => db?.close());
 
 /** A thread owned by OPS-1, with OPS-2 (blocked on the operator, in Needs me) from another thread */
-function setup(text: string, answer: Classification) {
+function setup(text: string, answer: Classification, extra: { postedByApp?: boolean } = {}) {
   db = new Database(":memory:");
   const graph = new ContextGraph(db);
   graph.upsertAgent({ id: "U-relay", name: "Relay", platform: "slack", platformUserId: "U-relay", isBot: true });
@@ -25,7 +25,7 @@ function setup(text: string, answer: Classification) {
   }
   const message = {
     id: "m-op", threadId: "T-ONE", channelId: "C1", channelName: "fleet-ops", userId: OPERATOR, userName: "Alex",
-    text, timestamp: "2026-10-16T12:00:00.000Z", platform: "slack", senderType: "human" as const,
+    text, timestamp: "2026-10-16T12:00:00.000Z", platform: "slack", senderType: "human" as const, ...extra,
   };
   const adapter = {
     name: "fake",
@@ -88,4 +88,34 @@ describe("Pipeline: the operator's word", () => {
     expect(graph.getWorkItemById("OPS-2")!.currentAtcStatus).toBe("blocked_on_human");
     expect(graph.getActionableItems().map((i) => i.workItem.id)).toContain("OPS-2");
   });
+
+  it("doesn't take the model's guess at which items their message is about", async () => {
+    // The text names no ticket; the model lists OPS-2 anyway (a candidate, or an agent's earlier message)
+    const { graph, pipeline } = setup("approved, go ahead", answer({ status: "completed", workItemIds: ["OPS-1", "OPS-2"] }));
+
+    await pipeline.processOnce();
+
+    expect(graph.getWorkItemById("OPS-2")!.currentAtcStatus).toBe("blocked_on_human");
+    expect(graph.getActionableItems().map((i) => i.workItem.id)).toContain("OPS-2");
+  });
+
+  it("doesn't count tickets in text they quote or forward as theirs", async () => {
+    const { graph, pipeline } = setup(
+      "fyi Dana\n&gt; Forwarded from #fleet-ops:\n&gt; \"Relay: OPS-2 needs your call\"\nmore of it, OPS-2 again",
+      answer({ workItemIds: [] }),
+    );
+
+    await pipeline.processOnce();
+
+    expect(graph.getWorkItemById("OPS-2")!.currentAtcStatus).toBe("blocked_on_human");
+  });
+
+  it("doesn't give an app posting under their account their word", async () => {
+    const { graph, pipeline } = setup("Progress on OPS-2 this week", answer({}), { postedByApp: true });
+
+    await pipeline.processOnce();
+
+    expect(graph.getWorkItemById("OPS-2")!.currentAtcStatus).toBe("blocked_on_human");
+  });
 });
+
