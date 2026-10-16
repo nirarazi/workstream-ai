@@ -23,11 +23,13 @@ export interface WorkItem {
   dismissReason: "operator" | "expired" | null;
   /** Set when a later message brought a completed item back */
   reopenedAt?: string | null;
+  /** When the current status was set (for a completed item, when it was finished) */
+  statusAt?: string | null;
   createdAt: string;
   updatedAt: string;
 }
 
-export type StreamFilter = "needs-me" | "all-active" | "snoozed" | "dismissed";
+export type StreamFilter = "needs-me" | "all-active" | "snoozed" | "done" | "dismissed";
 
 export interface ActionResponse {
   ok: boolean;
@@ -419,6 +421,10 @@ export async function fetchAllActive(): Promise<{ items: ActionableItem[] }> {
 
 export async function fetchDismissed(): Promise<{ items: ActionableItem[] }> {
   return apiFetch("/api/stream/dismissed");
+}
+
+export async function fetchDone(): Promise<{ items: ActionableItem[] }> {
+  return apiFetch("/api/stream/done");
 }
 
 export async function togglePin(workItemId: string): Promise<PinResponse> {

@@ -429,6 +429,12 @@ export function createApp(state: EngineState): Hono {
     return c.json({ items });
   });
 
+  // --- GET /api/stream/done ---
+  app.get("/api/stream/done", (c) => {
+    const items = state.graph.getCompletedItems();
+    return c.json({ items });
+  });
+
   // --- GET /api/stream/dismissed ---
   app.get("/api/stream/dismissed", (c) => {
     const items = state.graph.getDismissedItems();

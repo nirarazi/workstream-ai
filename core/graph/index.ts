@@ -1376,6 +1376,51 @@ export class ContextGraph {
     return rows.map(mapActionableRow);
   }
 
+  /** Done: completed items, most recently finished first (the latest of the last 200) */
+  getCompletedItems(): ActionableItem[] {
+    const rows = this.db.db
+      .prepare(
+        `
+      SELECT
+        wi.*,
+        e.id AS e_id, e.thread_id AS e_thread_id, e.message_id AS e_message_id,
+        e.work_item_id AS e_work_item_id, e.agent_id AS e_agent_id,
+        e.status AS e_status, e.confidence AS e_confidence, e.reason AS e_reason,
+        e.raw_text AS e_raw_text, e.timestamp AS e_timestamp, e.created_at AS e_created_at,
+        e.entry_type AS e_entry_type,
+        e.targeted_at_operator AS e_targeted_at_operator,
+        e.action_required_from AS e_action_required_from,
+        e.next_action AS e_next_action,
+        a.id AS a_id, a.name AS a_name, a.platform AS a_platform,
+        a.platform_user_id AS a_platform_user_id, a.role AS a_role,
+        a.avatar_url AS a_avatar_url, a.is_bot AS a_is_bot,
+        a.first_seen AS a_first_seen, a.last_seen AS a_last_seen,
+        t.id AS t_id, t.channel_id AS t_channel_id, t.channel_name AS t_channel_name,
+        t.platform_meta AS t_platform_meta,
+        t.platform AS t_platform, t.work_item_id AS t_work_item_id,
+        t.last_activity AS t_last_activity, t.message_count AS t_message_count
+      FROM work_items wi
+      LEFT JOIN events e ON e.id = (
+          SELECT e2.id FROM events e2
+          WHERE (e2.work_item_id = wi.id
+             OR e2.thread_id IN (SELECT thread_id FROM thread_work_items WHERE work_item_id = wi.id))
+            AND e2.agent_id IS NOT NULL -- the last message, not the operator's approve or close record
+          ORDER BY e2.timestamp DESC
+          LIMIT 1
+        )
+      LEFT JOIN agents a ON e.agent_id = a.id
+      LEFT JOIN threads t ON e.thread_id = t.id
+      WHERE wi.current_atc_status = 'completed'
+        AND wi.merged_into IS NULL
+      ORDER BY COALESCE(wi.status_at, wi.updated_at) DESC
+      LIMIT 200
+    `,
+      )
+      .all() as Array<Record<string, unknown>>;
+
+    return rows.map(mapActionableRow);
+  }
+
   // --- Channel Context Query (for continuation detection) ---
 
   /**

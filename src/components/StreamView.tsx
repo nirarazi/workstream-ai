@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback, type JSX } from "react";
 import {
-  fetchInbox, fetchAllActive, fetchDismissed, setBadgeCount,
+  fetchInbox, fetchAllActive, fetchDismissed, fetchDone, setBadgeCount,
   mergeWorkItems, unmergeWorkItem,
   type ActionableItem, type StreamFilter, type Mentionable,
 } from "../lib/api";
@@ -32,6 +32,7 @@ export default function StreamView({
   const [needsMeItems, setNeedsMeItems] = useState<ActionableItem[]>([]);
   const [allActiveItems, setAllActiveItems] = useState<ActionableItem[]>([]);
   const [dismissedItems, setDismissedItems] = useState<ActionableItem[]>([]);
+  const [doneItems, setDoneItems] = useState<ActionableItem[]>([]);
   const [search, setSearch] = useState("");
   const [selectedWorkItemId, setSelectedWorkItemId] = useState<string | null>(null);
   const [actionStates, setActionStates] = useState<Map<string, ActionState>>(new Map());
@@ -57,15 +58,17 @@ export default function StreamView({
 
   const poll = useCallback(async () => {
     try {
-      const [inbox, allActive, dismissed] = await Promise.all([
+      const [inbox, allActive, dismissed, done] = await Promise.all([
         fetchInbox(),
         fetchAllActive(),
-        // The Dismissed tab is secondary: if it fails, keep the last list rather than stall the inbox
+        // The Dismissed and Done tabs are secondary: if one fails, keep its last list rather than stall the inbox
         fetchDismissed().catch(() => null),
+        fetchDone().catch(() => null),
       ]);
       setNeedsMeItems(inbox.items);
       setAllActiveItems(allActive.items);
       if (dismissed) setDismissedItems(dismissed.items);
+      if (done) setDoneItems(done.items);
       setError(null);
       setLastSyncAt(new Date());
       setSyncError(false);
@@ -89,7 +92,7 @@ export default function StreamView({
   useEffect(() => {
     if (!selectedWorkItemId) return;
     setRecentlyViewed((prev) => {
-      const allItems = [...needsMeItems, ...allActiveItems, ...dismissedItems];
+      const allItems = [...needsMeItems, ...allActiveItems, ...dismissedItems, ...doneItems];
       const item = allItems.find((i) => i.workItem.id === selectedWorkItemId);
       if (!item) return prev;
       const entry = {
@@ -100,7 +103,7 @@ export default function StreamView({
       const filtered = prev.filter((v) => v.id !== selectedWorkItemId);
       return [entry, ...filtered].slice(0, 5);
     });
-  }, [selectedWorkItemId, needsMeItems, allActiveItems, dismissedItems]);
+  }, [selectedWorkItemId, needsMeItems, allActiveItems, dismissedItems, doneItems]);
 
   // Needs me already leaves out snoozed items, so the Snoozed tab is drawn from All active
   const snoozedItems = allActiveItems.filter(
@@ -111,6 +114,7 @@ export default function StreamView({
       case "needs-me": return needsMeItems;
       case "snoozed": return snoozedItems;
       case "all-active": return allActiveItems;
+      case "done": return doneItems;
       case "dismissed": return dismissedItems;
     }
   })();
@@ -136,7 +140,7 @@ export default function StreamView({
 
       const res = await mergeWorkItems(targetId, sourceId);
       setUndoState({
-        message: `Merged into "${[...needsMeItems, ...allActiveItems, ...dismissedItems].find((i) => i.workItem.id === targetId)?.workItem.title ?? targetId}"`,
+        message: `Merged into "${[...needsMeItems, ...allActiveItems, ...dismissedItems, ...doneItems].find((i) => i.workItem.id === targetId)?.workItem.title ?? targetId}"`,
         sourceId: res.record.sourceId,
       });
 
@@ -148,7 +152,7 @@ export default function StreamView({
       console.error("Merge failed", err);
       setMergingId(null);
     }
-  }, [needsMeItems, allActiveItems, dismissedItems, poll]);
+  }, [needsMeItems, allActiveItems, dismissedItems, doneItems, poll]);
 
   // Undo handler
   const handleUndo = useCallback(async () => {
@@ -212,6 +216,11 @@ export default function StreamView({
     if (filter === "dismissed") {
       return new Date(b.workItem.dismissedAt ?? 0).getTime() - new Date(a.workItem.dismissedAt ?? 0).getTime();
     }
+    // Done: most recently finished first
+    if (filter === "done") {
+      const doneAt = (i: ActionableItem) => new Date(i.workItem.statusAt ?? i.workItem.updatedAt).getTime();
+      return doneAt(b) - doneAt(a);
+    }
     // Pinned items first
     if (a.workItem.pinned && !b.workItem.pinned) return -1;
     if (!a.workItem.pinned && b.workItem.pinned) return 1;
@@ -251,7 +260,9 @@ export default function StreamView({
                     ? "No snoozed items."
                     : filter === "dismissed"
                       ? "No dismissed items."
-                      : "No active work items."}
+                      : filter === "done"
+                        ? "Nothing done yet."
+                        : "No active work items."}
             </div>
           )}
           {sortedItems.map(item => (
@@ -269,6 +280,7 @@ export default function StreamView({
               onDragEnter={(id) => { if (id !== draggingId) setDragOverId(id); }}
               dragOverId={dragOverId}
               showDismissal={filter === "dismissed"}
+              showCompletion={filter === "done"}
             />
           ))}
         </div>
