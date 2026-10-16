@@ -182,6 +182,18 @@ function sameSet(a: Set<string>, b: Set<string>): boolean {
   return true;
 }
 
+/** A digest check the app and the digest disagree on, not yet settled or judged */
+export interface DigestDisagreement {
+  eventId: string;
+  workItemId: string;
+  digestStatus: string;
+  digestTargeted: boolean;
+  itemStatus: string | null;
+  createdAt: string;
+  digestText: string;
+  threadId: string;
+}
+
 /**
  * SQL: event `e` is about work item `item`, so it can decide where the item stands for the operator. That's a message
  * whose subject is the item (its work_item_id; not a digest marked by the backfill, whose subject came from the old
@@ -720,11 +732,42 @@ export class ContextGraph {
   }
 
   /** Digest checks that disagree with the app and aren't settled yet, oldest first */
-  getOpenDigestDisagreements(limit = 50): Array<{ eventId: string; workItemId: string; digestStatus: string; itemStatus: string | null }> {
+  getOpenDigestDisagreements(limit = 50): DigestDisagreement[] {
     return (this.db.db.prepare(`
-      SELECT event_id AS eventId, work_item_id AS workItemId, digest_status AS digestStatus, item_status AS itemStatus
-      FROM digest_checks WHERE agrees = 0 AND resolved_at IS NULL ORDER BY created_at LIMIT ?
-    `).all(limit)) as Array<{ eventId: string; workItemId: string; digestStatus: string; itemStatus: string | null }>;
+      SELECT dc.event_id AS eventId, dc.work_item_id AS workItemId, dc.digest_status AS digestStatus,
+        dc.digest_targeted AS digestTargeted, dc.item_status AS itemStatus, dc.created_at AS createdAt,
+        e.raw_text AS digestText, e.thread_id AS threadId
+      FROM digest_checks dc JOIN events e ON e.id = dc.event_id
+      WHERE dc.agrees = 0 AND dc.resolved_at IS NULL AND dc.judged_at IS NULL
+      ORDER BY dc.created_at LIMIT ?
+    `).all(limit) as Array<Omit<DigestDisagreement, "digestTargeted"> & { digestTargeted: number }>)
+      .map((r) => ({ ...r, digestTargeted: r.digestTargeted === 1 }));
+  }
+
+  /** Settles a digest check: `app` (the app's view stands), `digest` (adopted), or why it no longer needs judging */
+  resolveDigestCheck(eventId: string, workItemId: string, resolution: string, verdict?: { verdict: string; reason: string }): void {
+    const now = new Date().toISOString();
+    this.db.db.prepare(`
+      UPDATE digest_checks SET resolved_at = ?, resolution = ?, judge_verdict = ?, judge_reason = ?, judged_at = COALESCE(?, judged_at)
+      WHERE event_id = ? AND work_item_id = ?
+    `).run(now, resolution, verdict?.verdict ?? null, verdict?.reason ?? null, verdict ? now : null, eventId, workItemId);
+  }
+
+  /** The judge couldn't settle a digest check: it waits for the operator */
+  markDigestCheckUnsure(eventId: string, workItemId: string, reason: string): void {
+    this.db.db.prepare(`
+      UPDATE digest_checks SET judge_verdict = 'unsure', judge_reason = ?, judged_at = ? WHERE event_id = ? AND work_item_id = ?
+    `).run(reason, new Date().toISOString(), eventId, workItemId);
+  }
+
+  /** The latest non-digest messages about a work item (see aboutItem), newest first: what a judge reads about it */
+  getOwnMessages(workItemId: string, limit: number): Event[] {
+    const rows = this.db.db.prepare(`
+      SELECT e.* FROM events e, (SELECT ? AS id) w
+      WHERE ${aboutItem("e", "w.id")} AND e.digest = 0 AND e.raw_text != ''
+      ORDER BY e.timestamp DESC LIMIT ?
+    `).all(workItemId, limit) as EventRow[];
+    return rows.map(toEvent);
   }
 
   /**

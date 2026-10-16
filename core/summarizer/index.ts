@@ -61,6 +61,11 @@ export class Summarizer {
     }
   }
 
+  /** One prompt to the configured model, counted toward the budget under `usageLabel`; throws on failure */
+  async ask(userPrompt: string, systemPrompt: string, usageLabel: string): Promise<string> {
+    return this.complete(userPrompt, systemPrompt, usageLabel);
+  }
+
   private async complete(userPrompt: string, systemPrompt: string, usageLabel: string): Promise<string> {
     return this.isAnthropic
       ? this.callAnthropic(userPrompt, systemPrompt, usageLabel)

@@ -127,6 +127,10 @@ CREATE TABLE IF NOT EXISTS digest_checks (
   created_at     TEXT NOT NULL,
   resolved_at    TEXT,
   resolution     TEXT,
+  -- What the judge made of a disagreement: app, digest or unsure (unsure ones wait for the operator)
+  judge_verdict  TEXT,
+  judge_reason   TEXT,
+  judged_at      TEXT,
   PRIMARY KEY (event_id, work_item_id)
 );
 
@@ -298,6 +302,15 @@ export class Database {
       // the MCP server or a CLI opens it first, or the engine stops before it's done.
       this.db.prepare("INSERT OR REPLACE INTO meta (key, value) VALUES ('digest_backfill', 'pending')").run();
       log.info("Migration: added digest column to events");
+    }
+
+    // Add the judge's columns to digest_checks (created by an earlier build without them)
+    const checkCols = this.db.pragma("table_info(digest_checks)") as Array<{ name: string }>;
+    if (!checkCols.some((c) => c.name === "judge_verdict")) {
+      this.db.exec("ALTER TABLE digest_checks ADD COLUMN judge_verdict TEXT");
+      this.db.exec("ALTER TABLE digest_checks ADD COLUMN judge_reason TEXT");
+      this.db.exec("ALTER TABLE digest_checks ADD COLUMN judged_at TEXT");
+      log.info("Migration: added judge columns to digest_checks");
     }
 
     // Add is_bot column to agents table

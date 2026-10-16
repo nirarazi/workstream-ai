@@ -17,6 +17,7 @@ import type { MessagingAdapter, PostedMessage } from "./adapters/messaging/inter
 import type { TaskAdapter } from "./adapters/tasks/interface.js";
 import { createRateLimiter, type RateLimiter } from "./rate-limiter.js";
 import { Summarizer } from "./summarizer/index.js";
+import { DigestJudge } from "./digests/judge.js";
 import { detectAnomalies, type FleetItemInput } from "./graph/anomalies.js";
 import { Sidekick, type SidekickMessage } from "./sidekick/index.js";
 import { buildUnifiedStatus, buildTimeline, usableName } from "./stream.js";
@@ -146,6 +147,15 @@ function operatorNames(identities: OperatorIdentityMap | undefined, configuredNa
  * The posted message as the adapter reported it, if it's usable as an event key: a real platform message ID. A blank
  * or missing one would make every later action in the thread collide with it, so it's treated as not reported.
  */
+/** The digest judge, asking the configured model (read per call, so a settings change applies at once) */
+function digestJudgeFor(state: EngineState): DigestJudge {
+  return new DigestJudge(state.graph, (userPrompt, systemPrompt) => {
+    const { baseUrl, model, apiKey } = state.config.classifier.provider;
+    return new Summarizer({ baseUrl, model, apiKey, usageTracker: state.usageTracker ?? undefined })
+      .ask(userPrompt, systemPrompt, "digest-judge");
+  });
+}
+
 function usablePosted(posted: PostedMessage | void): PostedMessage | undefined {
   if (!posted || typeof posted.messageId !== "string" || !posted.messageId.trim()) return undefined;
   if (typeof posted.timestamp !== "string" || Number.isNaN(Date.parse(posted.timestamp))) return undefined;
@@ -1483,6 +1493,7 @@ export function createApp(state: EngineState): Hono {
           state.config,
           state.operatorIdentities,
         );
+        state.pipeline.setDigestJudge(digestJudgeFor(state));
         // Start in background — initial poll can take minutes with rate limiting
         state.pipeline.start().catch((err) => log.error("Pipeline restart failed", err));
         log.info("Pipeline restarting in background");
@@ -1798,6 +1809,7 @@ async function main(): Promise<void> {
       state.config,
       state.operatorIdentities,
     );
+    state.pipeline.setDigestJudge(digestJudgeFor(state));
   } else {
     log.warn("No messaging adapter available — pipeline not started (configure via POST /api/setup)");
   }
