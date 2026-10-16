@@ -1,7 +1,7 @@
 // tests/adapters/jira.test.ts — Tests for JiraAdapter
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { JiraAdapter, JiraAuthError, JiraRateLimitError } from "../../core/adapters/tasks/jira/index.js";
+import { JiraAdapter, JiraAuthError, JiraRateLimitError, checkJiraBaseUrl } from "../../core/adapters/tasks/jira/index.js";
 
 // --- Mock fetch ---
 
@@ -110,6 +110,75 @@ describe("JiraAdapter", () => {
 
       const [url] = mockFetch.mock.calls[0];
       expect(url).toBe("https://test.atlassian.net/rest/api/3/myself");
+    });
+  });
+
+  // -- base URL --
+
+  describe("base URL", () => {
+    it("accepts https, keeps a context path, and drops trailing slashes", () => {
+      expect(checkJiraBaseUrl("https://test.atlassian.net/")).toBe("https://test.atlassian.net");
+      expect(checkJiraBaseUrl(" https://jira.example.com/jira// ")).toBe("https://jira.example.com/jira");
+    });
+
+    it("allows plain http only to this machine", () => {
+      expect(checkJiraBaseUrl("http://localhost:8080")).toBe("http://localhost:8080");
+      expect(checkJiraBaseUrl("http://127.0.0.1:8080/jira")).toBe("http://127.0.0.1:8080/jira");
+      expect(() => checkJiraBaseUrl("http://jira.example.com")).toThrow(/https/);
+      expect(() => checkJiraBaseUrl("http://localhost.example.com")).toThrow(/https/);
+      expect(() => checkJiraBaseUrl("ftp://jira.example.com")).toThrow(/https/);
+    });
+
+    it("refuses credentials, queries, fragments and things that aren't URLs", () => {
+      expect(() => checkJiraBaseUrl("https://user:pw@jira.example.com")).toThrow(/user name or password/);
+      expect(() => checkJiraBaseUrl("https://jira.example.com/?x=1")).toThrow(/query/);
+      expect(() => checkJiraBaseUrl("https://jira.example.com/#top")).toThrow(/fragment/);
+      expect(() => checkJiraBaseUrl("jira.example.com")).toThrow(/valid URL/);
+    });
+
+    it("never sends the token to an http base URL", async () => {
+      await expect(adapter.connect({ ...CREDENTIALS, baseUrl: "http://jira.example.com" })).rejects.toThrow(/https/);
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+  });
+
+  // -- project keys as ticket prefixes --
+
+  describe("getValidIdPrefixes", () => {
+    const settle = () => new Promise((r) => setTimeout(r, 0));
+
+    it("fetches the project keys in the background, across pages", async () => {
+      mockFetch.mockResolvedValueOnce(jsonResponse({ displayName: "Op" }));
+      await adapter.connect(CREDENTIALS);
+      mockFetch
+        .mockResolvedValueOnce(jsonResponse({ values: [{ key: "OPS" }, { key: "eng" }], isLast: false }))
+        .mockResolvedValueOnce(jsonResponse({ values: [{ key: "MKT" }, { key: "not a key" }], isLast: true }));
+
+      expect(adapter.getValidIdPrefixes()).toEqual([]);
+      await settle();
+      await settle();
+
+      expect(adapter.getValidIdPrefixes()).toEqual(["OPS-", "ENG-", "MKT-"]);
+      expect(mockFetch.mock.calls[1][0]).toBe("https://test.atlassian.net/rest/api/3/project/search?startAt=0&maxResults=50");
+      expect(mockFetch.mock.calls[2][0]).toContain("startAt=50");
+      expect(mockFetch).toHaveBeenCalledTimes(3); // no refetch while the list is fresh
+    });
+
+    it("keeps no prefixes and waits before retrying when the list can't be read", async () => {
+      mockFetch.mockResolvedValueOnce(jsonResponse({ displayName: "Op" }));
+      await adapter.connect(CREDENTIALS);
+      mockFetch.mockResolvedValueOnce(jsonResponse({ errorMessages: ["nope"] }, 500));
+
+      adapter.getValidIdPrefixes();
+      await settle();
+
+      expect(adapter.getValidIdPrefixes()).toEqual([]);
+      expect(mockFetch).toHaveBeenCalledTimes(2);
+    });
+
+    it("asks Jira nothing before connecting", () => {
+      expect(adapter.getValidIdPrefixes()).toEqual([]);
+      expect(mockFetch).not.toHaveBeenCalled();
     });
   });
 

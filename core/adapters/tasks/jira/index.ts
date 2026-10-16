@@ -9,6 +9,34 @@ import type { RateLimiter } from "../../../rate-limiter.js";
 
 const log = createLogger("jira-adapter");
 
+/** How long a fetched project list is used before it's fetched again, and the wait after a failed fetch */
+const PROJECT_KEYS_TTL_MS = 60 * 60 * 1000;
+const PROJECT_KEYS_RETRY_MS = 5 * 60 * 1000;
+/** Pages of 50 projects read at most; a larger site keeps the first 1,000 */
+const MAX_PROJECT_PAGES = 20;
+
+const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
+
+/**
+ * The base URL the API token is sent to. It must be https, since the token goes in every request's
+ * Authorization header; plain http is allowed only to this machine (a local Jira or a test server).
+ */
+export function checkJiraBaseUrl(raw: string): string {
+  let url: URL;
+  try {
+    url = new URL(raw.trim());
+  } catch {
+    throw new Error("Jira base URL isn't a valid URL");
+  }
+  const loopback = LOOPBACK_HOSTS.has(url.hostname) || url.hostname.endsWith(".localhost");
+  if (url.protocol !== "https:" && !(url.protocol === "http:" && loopback)) {
+    throw new Error("Jira base URL must start with https:// (http:// only for localhost)");
+  }
+  if (url.username || url.password) throw new Error("Jira base URL must not contain a user name or password");
+  if (url.search || url.hash) throw new Error("Jira base URL must not contain a query or fragment");
+  return `${url.origin}${url.pathname}`.replace(/\/+$/, "");
+}
+
 // --- Jira API response types ---
 
 interface JiraIssueFields {
@@ -162,6 +190,9 @@ export class JiraAdapter implements TaskAdapter {
   private connected = false;
   private rateLimiter?: RateLimiter;
   private authedUser: { userId: string; userName: string } | null = null;
+  private projectPrefixes: string[] = [];
+  private projectKeysDueAt = 0;
+  private projectKeysLoading: Promise<void> | null = null;
 
   setRateLimiter(limiter: RateLimiter): void {
     this.rateLimiter = limiter;
@@ -216,7 +247,9 @@ export class JiraAdapter implements TaskAdapter {
       throw new Error("Jira credentials must include token (base64 email:api_token)");
     }
 
-    this.baseUrl = baseUrl.replace(/\/+$/, "");
+    this.baseUrl = checkJiraBaseUrl(baseUrl);
+    this.projectPrefixes = [];
+    this.projectKeysDueAt = 0;
     this.authToken = credentials.token;
 
     log.info("Verifying Jira connection...", this.baseUrl);
@@ -334,6 +367,47 @@ export class JiraAdapter implements TaskAdapter {
     }
 
     log.info(`Transitioned ${id} to "${targetStatus}"`);
+  }
+
+  /**
+   * The site's project keys as ticket prefixes ("OPS-"). Answers from the last fetched list and,
+   * when that is due, fetches it again in the background, so the first call after connecting
+   * returns an empty list (callers then fall back to configured prefixes).
+   */
+  getValidIdPrefixes(): string[] {
+    if (this.connected && !this.projectKeysLoading && Date.now() >= this.projectKeysDueAt) {
+      const baseUrl = this.baseUrl;
+      this.projectKeysLoading = this.fetchProjectKeys()
+        .then((keys) => {
+          if (baseUrl !== this.baseUrl) return; // reconnected to another site meanwhile
+          this.projectPrefixes = keys.map((key) => `${key.toUpperCase()}-`);
+          this.projectKeysDueAt = Date.now() + PROJECT_KEYS_TTL_MS;
+          log.info(`Loaded ${keys.length} Jira project keys`);
+        })
+        .catch((err) => {
+          this.projectKeysDueAt = Date.now() + PROJECT_KEYS_RETRY_MS;
+          log.warn(`Couldn't list Jira projects: ${err instanceof Error ? err.message : String(err)}`);
+        })
+        .finally(() => {
+          this.projectKeysLoading = null;
+        });
+    }
+    return this.projectPrefixes;
+  }
+
+  private async fetchProjectKeys(): Promise<string[]> {
+    const keys: string[] = [];
+    for (let page = 0; page < MAX_PROJECT_PAGES; page++) {
+      const params = new URLSearchParams({ startAt: String(page * 50), maxResults: "50" });
+      const response = await this.request(`/rest/api/3/project/search?${params.toString()}`);
+      if (!response.ok) throw new Error(`project search failed (${response.status})`);
+      const data = (await response.json()) as { values?: Array<{ key?: unknown }>; isLast?: boolean };
+      for (const project of data.values ?? []) {
+        if (typeof project.key === "string" && /^[A-Z][A-Z0-9_]+$/i.test(project.key)) keys.push(project.key);
+      }
+      if (data.isLast !== false || (data.values ?? []).length === 0) break;
+    }
+    return keys;
   }
 
   async searchWorkItems(query: string): Promise<WorkItemDetail[]> {

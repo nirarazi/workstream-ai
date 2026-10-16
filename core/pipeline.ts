@@ -9,7 +9,7 @@ import type { TaskAdapter } from "./adapters/tasks/interface.js";
 import type { Classifier } from "./classifier/index.js";
 import type { ContextGraph } from "./graph/index.js";
 import type { WorkItemLinker } from "./graph/linker.js";
-import { looksLikeTicketKey } from "./graph/extractors/default.js";
+import { knownTicketPrefixes, looksLikeTicketKey } from "./graph/extractors/default.js";
 
 const log = createLogger("pipeline");
 
@@ -29,6 +29,8 @@ class ClassificationFailed extends Error {
  * messages got real answers in the same poll, so an outage doesn't use up tries.
  */
 const MAX_CLASSIFY_ATTEMPTS = 3;
+/** Most ticket prefixes listed in the classifier prompt; a tracker with more is checked after the call */
+const MAX_PROMPT_PREFIXES = 30;
 /** However the tries go, a message isn't held back for longer than this. */
 const MAX_HOLD_MS = 6 * 60 * 60 * 1000;
 /** Retries back off (next poll, then 30s, 1m, 2m … up to 30m), which bounds the calls a held message costs. */
@@ -93,7 +95,6 @@ export class Pipeline {
   private classifiedNotStored = new Map<string, Classification>();
   private readonly MAX_CONTENT_HASHES = 1000;
   private operatorIdentities: OperatorIdentityMap | null = null;
-  private validPrefixes: string[] | null = null;
   /** Advanced by start() and stop(); a poll that sees it change has been superseded and stops. */
   private runId = 0;
   /** Messages (`threadId:messageId`) whose classification failed, cleared once one is stored. */
@@ -559,17 +560,24 @@ export class Pipeline {
 
   // --- Private helpers ---
 
+  /** Configured ticket prefixes plus the tracker's (e.g. Jira's project keys, which arrive after connecting) */
   private getValidPrefixes(): string[] {
-    if (this.validPrefixes !== null) return this.validPrefixes;
+    return knownTicketPrefixes(this.config?.taskAdapter?.ticketPrefixes, this.taskAdapter);
+  }
 
-    // Prefer task adapter's runtime prefixes (e.g. from Jira project list)
-    if (this.taskAdapter?.getValidIdPrefixes) {
-      this.validPrefixes = this.taskAdapter.getValidIdPrefixes().map(p => p.toUpperCase());
-    } else {
-      // Fall back to static config
-      this.validPrefixes = (this.config?.taskAdapter?.ticketPrefixes ?? []).map(p => p.toUpperCase());
-    }
-    return this.validPrefixes;
+  /**
+   * Pull requests are work items unless the operator configured prefixes that leave them out. Prefixes
+   * learned from a tracker only say which tickets exist, not that pull requests don't count.
+   */
+  private allowsPullRequests(): boolean {
+    return (this.config?.taskAdapter?.ticketPrefixes ?? []).length === 0;
+  }
+
+  /** The prefixes named in the prompt: none when there are too many to be worth the tokens on every call */
+  private promptPrefixes(): string[] {
+    const prefixes = this.getValidPrefixes();
+    if (prefixes.length === 0 || prefixes.length > MAX_PROMPT_PREFIXES) return [];
+    return this.allowsPullRequests() ? [...prefixes, "PR #"] : prefixes;
   }
 
   /**
@@ -602,9 +610,10 @@ export class Pipeline {
     // MCP as "deploy-payments"): the prompt offers those as candidates
     if (id.startsWith("thread:") || this.graph.getWorkItemById(id)) return true;
     const prefixes = this.getValidPrefixes();
-    // No prefixes configured: accept a ticket key (but not a technical term like UTF-8) or a pull request
-    if (prefixes.length === 0) return looksLikeTicketKey(id) || /^PR\s*#?\d+$/i.test(id);
-    return prefixes.some(prefix => id.toUpperCase().startsWith(prefix));
+    const pullRequest = /^PR\s*#?\d+$/i.test(id);
+    // No prefixes known: accept a ticket key (but not a technical term like UTF-8) or a pull request
+    if (prefixes.length === 0) return looksLikeTicketKey(id) || pullRequest;
+    return prefixes.some(prefix => id.toUpperCase().startsWith(prefix)) || (pullRequest && this.allowsPullRequests());
   }
 
   /**
@@ -854,7 +863,7 @@ export class Pipeline {
     const reused = this.classifiedNotStored.get(writeKey);
     const classification = reused ?? this.fromOperator(
       message,
-      await this.classifier.classify(message.text, candidateContext, this.operatorIdentities, senderContext, this.getValidPrefixes(), channelContext, threadContext),
+      await this.classifier.classify(message.text, candidateContext, this.operatorIdentities, senderContext, this.promptPrefixes(), channelContext, threadContext),
     );
     // Stopped while classifying: the call may have been cut off and come back as a fallback, so store
     // nothing and leave the message for the next pipeline to classify
