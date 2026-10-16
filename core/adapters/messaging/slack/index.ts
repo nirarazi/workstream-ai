@@ -567,6 +567,11 @@ export class SlackAdapter implements MessagingAdapter {
     return { slackWorkspaceUrl: this.workspaceUrl };
   }
 
+  getUserName(userId: string): string | null {
+    const name = this.userInfoMap.get(userId)?.name;
+    return name && name !== userId ? name : null;
+  }
+
   /** Return the authenticated operator's identity */
   getAuthenticatedUser(): { userId: string; userName: string } | null {
     return this.authedUser;
@@ -585,6 +590,10 @@ export class SlackAdapter implements MessagingAdapter {
   /** Serialize a user ID into Slack mention format */
   serializeMention(userId: string): string {
     return `<@${userId}>`;
+  }
+
+  parseMention(text: string): string | null {
+    return /^<@([A-Z0-9]+)(?:\|[^>]*)?>$/.exec(text.trim())?.[1] ?? null;
   }
 
   /** Backfill agent names/avatars from Slack user data */

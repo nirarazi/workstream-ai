@@ -691,6 +691,30 @@ describe("SlackAdapter", () => {
     });
   });
 
+  describe("getUserName", () => {
+    it("names users from the directory loaded at connect, without calling Slack", async () => {
+      mockUsersList.mockResolvedValue({
+        members: [{ id: "U0DANA0001", real_name: "Dana Reyes", profile: { display_name: "dana" } }],
+        response_metadata: {},
+      });
+      await adapter.connect({ token: "xoxp-valid-token" });
+      mockUsersList.mockClear();
+
+      expect(adapter.getUserName("U0DANA0001")).toBe("dana");
+      expect(adapter.getUserName("U0NOBODY01")).toBeNull();
+      expect(mockUsersList).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("parseMention", () => {
+    it("takes the user ID out of a mention, with or without a name", () => {
+      expect(adapter.parseMention("<@U0DANA0001>")).toBe("U0DANA0001");
+      expect(adapter.parseMention("<@U0DANA0001|dana>")).toBe("U0DANA0001");
+      expect(adapter.parseMention("U0DANA0001")).toBeNull();
+      expect(adapter.parseMention("<#C0FLEET001>")).toBeNull();
+    });
+  });
+
   // -- Rate limiting --
 
   describe("rate limiting", () => {
