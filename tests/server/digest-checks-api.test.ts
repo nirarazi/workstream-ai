@@ -95,10 +95,57 @@ describe("digest checks for the operator", () => {
   it("leaves the item free to move with later messages after the operator sides with the digest", async () => {
     const eventId = waiting("OPS-2", "in_progress", "blocked_on_human", true);
     await decide({ eventId, workItemId: "OPS-2", verdict: "digest" });
-
-    expect(graph.getWorkItemById("OPS-2")!.currentConfidence).toBe(0);
-    // In the item's timeline, like the operator's other actions
     expect(graph.getEventsForWorkItem("OPS-2").map((e) => e.reason)).toContain("Operator sided with Atlas's digest");
+
+    // A later message about the item, through the pipeline, still moves it
+    const message = { id: "m9", threadId: "T-OWN", channelId: "C1", channelName: "fleet-ops", userId: "U-relay", userName: "Relay", text: "OPS-2 is unblocked and moving", timestamp: new Date(Date.now() + 60_000).toISOString(), platform: "slack", senderType: "agent" as const };
+    graph.upsertThread({ id: "T-OWN", channelId: "C1", channelName: "fleet-ops", platform: "slack", workItemId: "OPS-2" });
+    graph.linkThreadWorkItem("T-OWN", "OPS-2", "primary");
+    const { Pipeline } = await import("../../core/pipeline.js");
+    const { WorkItemLinker } = await import("../../core/graph/linker.js");
+    const pipeline = new Pipeline(
+      { name: "fake", readThreads: vi.fn(async () => [{ id: "T-OWN", channelId: "C1", channelName: "fleet-ops", platform: "slack", workItemId: "OPS-2", lastActivity: message.timestamp, messageCount: 1, messages: [message] }]), getThreadMessages: vi.fn(async () => []) } as any,
+      { classify: vi.fn(async () => ({ status: "in_progress", entryType: "progress", confidence: 0.9, reason: "moving", workItemIds: ["OPS-2"], title: "Two", targetedAtOperator: false, actionRequiredFrom: null, nextAction: null })) } as any,
+      graph, new WorkItemLinker(graph, []), undefined,
+      { messaging: { pollInterval: 3600, channels: [] }, lookback: { maxThreadsPerPoll: 10, maxActiveThreadRepolls: 0 } } as any,
+    );
+    await pipeline.processOnce();
+
+    expect(graph.getWorkItemById("OPS-2")!.currentAtcStatus).toBe("in_progress");
+  });
+
+  it("keeps an item in Needs me when the operator says the app is right that it needs them", async () => {
+    graph.upsertWorkItem({ id: "OPS-5", source: "jira", title: "Five", currentAtcStatus: "blocked_on_human", statusAt: "2026-10-14T09:00:00.000Z" });
+    graph.upsertThread({ id: "T-FIVE", channelId: "C1", channelName: "fleet-ops", platform: "slack", workItemId: "OPS-5" });
+    graph.linkThreadWorkItem("T-FIVE", "OPS-5", "primary");
+    graph.insertEvent({ threadId: "T-FIVE", messageId: "f1", workItemId: "OPS-5", agentId: "U-atlas", status: "blocked_on_human", confidence: 0.9, rawText: "Need your approval", timestamp: "2026-10-14T09:00:00.000Z", targetedAtOperator: true });
+    const eventId = graph.getEventByMessageId("d1", "T-DIGEST")!.id;
+    graph.recordDigestCheck({ eventId, workItemId: "OPS-5", digestStatus: "completed", digestTargeted: false, itemStatus: "blocked_on_human", at: DIGEST_AT });
+    graph.markDigestCheckUnsure(eventId, "OPS-5", "unclear");
+    expect(graph.getActionableItems().map((i) => i.workItem.id)).toEqual(["OPS-5"]);
+
+    await decide({ eventId, workItemId: "OPS-5", verdict: "app" });
+
+    expect(graph.getActionableItems().map((i) => i.workItem.id)).toEqual(["OPS-5"]);
+  });
+
+  it("leaves an item out of Needs me when the operator agrees it's blocked on someone else", async () => {
+    const eventId = waiting("OPS-2", "in_progress", "blocked_on_human", false);
+
+    await decide({ eventId, workItemId: "OPS-2", verdict: "digest" });
+
+    expect(graph.getWorkItemById("OPS-2")!.currentAtcStatus).toBe("blocked_on_human");
+    expect(graph.getActionableItems()).toEqual([]);
+  });
+
+  it("doesn't let dismissing a whole-digest claim silence a later one from the item's own line", async () => {
+    const eventId = waiting("OPS-4", "in_progress", "blocked_on_human", false, false);
+    await decide({ eventId, workItemId: "OPS-4", verdict: "app" });
+
+    graph.insertEvent({ threadId: "T-DIGEST", messageId: "d3", workItemId: null, agentId: "U-atlas", status: "in_progress", confidence: 0.9, rawText: "OPS-4 blocked on Dana", timestamp: "2026-10-16T09:00:00.000Z", digest: true });
+    graph.recordDigestCheck({ eventId: graph.getEventByMessageId("d3", "T-DIGEST")!.id, workItemId: "OPS-4", digestStatus: "blocked_on_human", digestTargeted: false, itemStatus: "in_progress", at: "2026-10-16T09:00:00.000Z", fromLine: true });
+
+    expect(db.db.prepare("SELECT COUNT(*) AS n FROM digest_checks WHERE work_item_id = 'OPS-4'").get()).toEqual({ n: 2 });
   });
 
   it("doesn't ask the same sender's same claim again once the operator says the app is right", async () => {

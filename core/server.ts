@@ -5,7 +5,7 @@ import { cors } from "hono/cors";
 import { createLogger } from "./logger.js";
 import { loadConfig, findProjectRoot, resetConfig, type Config } from "./config.js";
 import { Database } from "./graph/db.js";
-import { ContextGraph, statusKind } from "./graph/index.js";
+import { ContextGraph } from "./graph/index.js";
 import { Classifier, createProvider, loadPrompt, buildFewShotMessages, buildOperatorContext, hasRemit } from "./classifier/index.js";
 import { createDecisionGate } from "./decisions/gate.js";
 import { UsageTracker } from "./usage/tracker.js";
@@ -520,18 +520,19 @@ export function createApp(state: EngineState): Hono {
       // In the item's timeline, like the operator's other actions
       state.graph.insertEvent({
         threadId: check.threadId,
-        messageId: `operator-digest-${Date.now()}`,
+        messageId: `operator-digest-${eventId}-${workItemId}`, // each check is decided once
         workItemId,
         agentId: null,
         status: verdict === "digest" ? check.digestStatus as StatusCategory : item.currentAtcStatus ?? "in_progress",
-        confidence: 1,
+        // A record, not a message: no confidence and not aimed at anyone, so it neither hands the item off nor puts it
+        // in Needs me (the decision itself does that, above)
+        confidence: 0,
         reason: verdict === "digest"
           ? `Operator sided with ${check.senderName ? `${check.senderName}'s` : "a"} digest`
           : `Operator kept the app's view over ${check.senderName ? `${check.senderName}'s` : "a"} digest`,
         timestamp: now,
         entryType: "decision",
-        // Agreeing an item needs them leaves it on the operator: the record mustn't read as a handoff to someone else
-        targetedAtOperator: verdict === "digest" && statusKind(check.digestStatus) === "needs",
+        targetedAtOperator: false,
       });
       state.graph.resolveDigestCheck(eventId, workItemId, verdict === "digest" ? "operator-digest" : "operator-app");
       return { status: 200 };

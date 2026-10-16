@@ -754,8 +754,12 @@ export class ContextGraph {
         SELECT 1 FROM digest_checks dc JOIN events e ON e.id = dc.event_id
         WHERE dc.work_item_id = ? AND dc.digest_status = ? AND dc.item_status IS ? AND dc.agrees = 0
           AND e.agent_id IS (SELECT agent_id FROM events WHERE id = ?)
-          AND (dc.judge_verdict = 'unsure' OR dc.resolution = 'operator-app' OR (dc.resolution = 'app' AND dc.resolved_at > ?))
-      `).get(check.workItemId, check.digestStatus, check.itemStatus, check.eventId, new Date(Date.now() - 7 * 86400000).toISOString())) return;
+          AND ((dc.judge_verdict = 'unsure' AND dc.resolved_at IS NULL)
+            OR (dc.resolution IN ('app', 'operator-app') AND dc.resolved_at > ?
+              -- dismissing a whole-message claim doesn't silence a later one from the item's own line
+              AND dc.from_line >= ?))
+      `).get(check.workItemId, check.digestStatus, check.itemStatus, check.eventId,
+        new Date(Date.now() - 7 * 86400000).toISOString(), check.fromLine === false ? 0 : 1)) return;
     }
     this.db.db.prepare(`
       INSERT OR IGNORE INTO digest_checks (event_id, work_item_id, digest_status, digest_targeted, item_status, agrees, created_at, from_line)

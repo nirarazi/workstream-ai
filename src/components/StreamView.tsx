@@ -131,10 +131,10 @@ export default function StreamView({
     }
   })();
   const currentItems = tabItems.filter((i) => matchesSearch(i, search));
-  // Search covers digest checks too: the item, its title, the sender and the digest's text
+  // Search covers digest checks too: the item, its title and the sender (not the digest's text, which names others)
   const query = search.trim().toLowerCase();
   const visibleDigestChecks = query
-    ? digestChecks.filter((d) => [d.workItemId, d.title ?? "", d.sender ?? "", d.digestText].some((f) => f.toLowerCase().includes(query)))
+    ? digestChecks.filter((d) => [d.workItemId, d.title ?? "", d.sender ?? ""].some((f) => f.toLowerCase().includes(query)))
     : digestChecks;
 
   const counts = {

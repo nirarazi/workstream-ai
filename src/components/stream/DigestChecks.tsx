@@ -57,7 +57,8 @@ export default function DigestChecks({ checks, onDecided, onOpen, selectedWorkIt
         const titleId = `digest-check-${key.replace(/[^A-Za-z0-9_-]/g, "_")}`;
         const isBusy = busy.has(key);
         const isExpanded = expanded.has(key);
-        const text = check.digestText.replace(BIDI_CONTROLS, "");
+        const clean = (value: string) => value.replace(BIDI_CONTROLS, "");
+        const text = clean(check.digestText);
         return (
           <div key={key} role="group" aria-labelledby={titleId} className="px-4 py-3 border-t border-gray-800/60 text-xs">
             <button
@@ -67,10 +68,10 @@ export default function DigestChecks({ checks, onDecided, onOpen, selectedWorkIt
               aria-current={selectedWorkItemId === check.workItemId ? "true" : undefined}
               className="text-left font-medium text-gray-200 hover:underline cursor-pointer"
             >
-              {check.title || check.workItemId}
+              {clean(check.title || check.workItemId)}
             </button>
             <div className="mt-1.5 flex flex-wrap items-center gap-2 text-gray-400">
-              <span>{check.sender ?? "A digest"} says</span>
+              <span>{check.sender ? clean(check.sender) : "A digest"} says</span>
               <StatusBadge status={check.digestStatus} />
               {check.digestSaysNeedsYou && <span className="text-gray-500">(needs you)</span>}
               {!check.aboutThisItem && <span className="text-gray-500">(of the whole digest, not this item)</span>}
@@ -89,7 +90,7 @@ export default function DigestChecks({ checks, onDecided, onOpen, selectedWorkIt
             >
               {isExpanded ? "Show less" : "Show the whole digest"}
             </button>
-            {check.judgeNote && <p className="mt-1 text-gray-600 italic">Model's note: {check.judgeNote}</p>}
+            {check.judgeNote && <p className="mt-1 text-gray-600 italic">Model's note: {clean(check.judgeNote)}</p>}
             <div className="mt-2 flex gap-2">
               {check.aboutThisItem && (
                 <button
