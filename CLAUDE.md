@@ -50,7 +50,7 @@ agents via MCP ─────────────────────�
   - `workstream_complete`
 - **UI** (`src/`): React, run in a Tauri desktop window or a browser tab.
   - **Stream view:** tabs for Needs me, Snoozed, All active and Dismissed, each searchable. Each item has a timeline, suggested actions and a reply box.
-  - **Fleet board:** shows the agents.
+  - **Work items:** every active work item in one filterable table. A new Fleet view of the agents themselves is being designed.
   - **Sidekick:** a question-answering pane over the context graph (`core/sidekick/`).
   - **Settings screen:** credentials, model and inbox preferences.
 - **Desktop shell** (`src-tauri/`): Tauri 2. It currently starts the engine from the project directory. A self-contained build is on the roadmap.

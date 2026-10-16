@@ -30,7 +30,7 @@ Status badges use a universal traffic light convention:
 | `completed` | Green | Done — work finished |
 | `noise` | Gray | Informational — no action needed |
 
-These colors are defined in `src/components/StatusBadge.tsx` (fleet table, cards) and `src/components/stream/StatusSnapshot.tsx` (stream detail pane).
+These colors are defined in `src/components/StatusBadge.tsx` (work items table, cards) and `src/components/stream/StatusSnapshot.tsx` (stream detail pane).
 
 ### Action Button Colors
 

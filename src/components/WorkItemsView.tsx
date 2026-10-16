@@ -9,7 +9,7 @@ import CopyableId from "./CopyableId";
 
 const POLL_INTERVAL = 10000;
 
-interface FleetBoardProps {
+interface WorkItemsViewProps {
   platformMeta?: Record<string, unknown>;
 }
 
@@ -20,7 +20,8 @@ const ANOMALY_ICONS: Record<string, { icon: string; color: string }> = {
   duplicate_work: { icon: "\uD83D\uDD17", color: "text-purple-400" },
 };
 
-export default function FleetBoard(_props: FleetBoardProps): JSX.Element {
+/** Every active work item in one filterable table */
+export default function WorkItemsView(_props: WorkItemsViewProps): JSX.Element {
   const [items, setItems] = useState<FleetItem[]>([]);
   const [agents, setAgents] = useState<Agent[]>([]);
   const [mentionables, setMentionables] = useState<Mentionable[]>([]);
@@ -86,7 +87,7 @@ export default function FleetBoard(_props: FleetBoardProps): JSX.Element {
   if (loading) {
     return (
       <div className="flex items-center justify-center py-20">
-        <p className="text-sm text-gray-500">Loading fleet...</p>
+        <p className="text-sm text-gray-500">Loading work items...</p>
       </div>
     );
   }

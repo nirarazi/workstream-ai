@@ -36,12 +36,12 @@ function SyncIndicator({ lastSyncAt, error }: { lastSyncAt: Date | null; error: 
 import { fetchSetupStatus, fetchStatus, fetchAgents, agentsToMentionables, type ServiceStatuses, type Mentionable } from "./lib/api";
 import { useTheme, useTextSize, type ThemeMode } from "./lib/theme";
 import StreamView from "./components/StreamView";
-import FleetBoard from "./components/FleetBoard";
+import WorkItemsView from "./components/WorkItemsView";
 import Sidekick from "./components/Sidekick";
 import Setup from "./components/Setup";
 import { getSerializeMention } from "./messaging/registry";
 
-type View = "loading" | "setup" | "stream" | "fleet" | "settings";
+type View = "loading" | "setup" | "stream" | "work-items" | "settings";
 type DotStatus = "ok" | "degraded" | "disconnected";
 
 const DEFAULT_SERVICES: ServiceStatuses = {};
@@ -269,7 +269,7 @@ function App(): JSX.Element {
         </header>
 
         {/* Tab bar */}
-        {(view === "stream" || view === "fleet") && (
+        {(view === "stream" || view === "work-items") && (
           <nav className="border-b border-gray-800 px-6 flex items-center gap-6">
             <button
               onClick={() => setView("stream")}
@@ -282,14 +282,14 @@ function App(): JSX.Element {
               Stream
             </button>
             <button
-              onClick={() => setView("fleet")}
+              onClick={() => setView("work-items")}
               className={`cursor-pointer py-2.5 text-sm font-medium border-b-2 transition-colors ${
-                view === "fleet"
+                view === "work-items"
                   ? "border-cyan-500 text-gray-200"
                   : "border-transparent text-gray-500 hover:text-gray-300"
               }`}
             >
-              Fleet
+              Work items
             </button>
           </nav>
         )}
@@ -321,7 +321,7 @@ function App(): JSX.Element {
         {view === "stream" && (
           <StreamView mentionables={mentionables} serializeMention={serializeMention} platform={agentPlatform} platformMeta={platformMeta} onSyncStateChange={setSyncState} />
         )}
-        {view === "fleet" && <FleetBoard platformMeta={platformMeta} />}
+        {view === "work-items" && <WorkItemsView platformMeta={platformMeta} />}
         {view === "settings" && (
           <Setup onComplete={() => { init(); setView("stream"); }} />
         )}
