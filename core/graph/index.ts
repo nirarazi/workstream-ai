@@ -441,7 +441,6 @@ export class ContextGraph {
     return this.db.db.transaction(fn).immediate() as T;
   }
 
-  /** Mark a completed work item as brought back by a message at `at`, or clear the mark (null) when it's closed. */
   /** Moves a thread's last activity forward to `at` (ISO), e.g. when the operator posts in it; never backwards */
   noteThreadActivity(threadId: string, at: string): void {
     this.db.db
@@ -449,6 +448,7 @@ export class ContextGraph {
       .run(at, threadId, at);
   }
 
+  /** Mark a completed work item as brought back by a message at `at`, or clear the mark (null) when it's closed. */
   setReopened(workItemId: string, at: string | null): void {
     this.db.db.prepare("UPDATE work_items SET reopened_at = ? WHERE id = ?").run(at, workItemId);
   }

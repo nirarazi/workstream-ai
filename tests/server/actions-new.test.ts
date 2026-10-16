@@ -345,6 +345,35 @@ describe("the operator's message is logged once", () => {
     expect(await res.json()).toMatchObject({ ok: true, delivered: true });
   });
 
+  it("reports a reply as sent once it went out, even if recording it fails", async () => {
+    const state = makeState(graph, db);
+    state.messagingAdapter.replyToThread.mockResolvedValue(POSTED);
+    const insert = vi.spyOn(graph, "insertEvent").mockImplementation(() => { throw new Error("database is locked"); });
+
+    const res = await createApp(state).request("/api/reply", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ threadId: "T001", channelId: "C001", message: "Thanks", workItemId: "OPS-200" }),
+    });
+
+    insert.mockRestore();
+    expect(res.status).toBe(200);
+  });
+
+  it("stores an adapter's posted time as ISO", async () => {
+    const state = makeState(graph, db);
+    state.messagingAdapter.replyToThread.mockResolvedValue({ messageId: "1791000000.000400", timestamp: "Fri, 16 Oct 2026 04:09:20 GMT" });
+
+    await createApp(state).request("/api/reply", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ threadId: "T001", channelId: "C001", message: "Thanks", workItemId: "OPS-200" }),
+    });
+
+    expect(eventsFor("1791000000.000400")[0].timestamp).toBe("2026-10-16T04:09:20.000Z");
+    expect(graph.getThreadById("T001")!.lastActivity).toBe("2026-10-16T04:09:20.000Z");
+  });
+
   it("ignores a blank message ID from the adapter, so actions don't collide", async () => {
     const state = makeState(graph, db);
     state.messagingAdapter.replyToThread.mockResolvedValue({ messageId: "", timestamp: POSTED.timestamp });

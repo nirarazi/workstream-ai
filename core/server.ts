@@ -140,7 +140,8 @@ export function settingsNeedRestart(previous: Config, next: Config, envChanged: 
 function usablePosted(posted: PostedMessage | void): PostedMessage | undefined {
   if (!posted || typeof posted.messageId !== "string" || !posted.messageId.trim()) return undefined;
   if (typeof posted.timestamp !== "string" || Number.isNaN(Date.parse(posted.timestamp))) return undefined;
-  return posted;
+  // Stored times are compared as ISO strings, so any other date format is converted
+  return { messageId: posted.messageId, timestamp: new Date(posted.timestamp).toISOString() };
 }
 
 export function createApp(state: EngineState): Hono {
@@ -550,28 +551,28 @@ export function createApp(state: EngineState): Hono {
         // The reply went out: a failure to record it mustn't report failure, or a retry would post it again
         try {
           if (posted) state.graph.noteThreadActivity(body.threadId, posted.timestamp);
-        } catch (err) {
-          log.error("Posted the reply but couldn't note it on its thread", err instanceof Error ? err.message : String(err));
-        }
-        if (body.workItemId) {
-          const threads = state.graph.getThreadsForWorkItem(body.workItemId);
-          const thread = threads.find((t) => t.id === body.threadId);
-          if (thread) {
-            // Under the posted message's own ID, so reading it back from the platform doesn't log it again
-            state.graph.insertEvent({
-              threadId: body.threadId,
-              messageId: posted ? posted.messageId : `operator-reply-${Date.now()}`,
-              workItemId: body.workItemId,
-              agentId: null,
-              status: "in_progress",
-              confidence: 1.0,
-              reason: "Operator reply",
-              rawText: body.message,
-              timestamp: posted ? posted.timestamp : new Date().toISOString(),
-              entryType: "decision",
-              targetedAtOperator: false, // the operator's own reply never waits on the operator
-            });
+          if (body.workItemId) {
+            const threads = state.graph.getThreadsForWorkItem(body.workItemId);
+            const thread = threads.find((t) => t.id === body.threadId);
+            if (thread) {
+              // Under the posted message's own ID, so reading it back from the platform doesn't log it again
+              state.graph.insertEvent({
+                threadId: body.threadId,
+                messageId: posted ? posted.messageId : `operator-reply-${Date.now()}`,
+                workItemId: body.workItemId,
+                agentId: null,
+                status: "in_progress",
+                confidence: 1.0,
+                reason: "Operator reply",
+                rawText: body.message,
+                timestamp: posted ? posted.timestamp : new Date().toISOString(),
+                entryType: "decision",
+                targetedAtOperator: false, // the operator's own reply never waits on the operator
+              });
+            }
           }
+        } catch (err) {
+          log.error("Posted the reply but couldn't record it", err instanceof Error ? err.message : String(err));
         }
         return c.json({ ok: true });
       }
@@ -1027,7 +1028,7 @@ export function createApp(state: EngineState): Hono {
       // (If a poll reads the message while it's still being posted, whichever insert lands first is kept.)
       const actionThread = findThreadForWorkItem(body.workItemId);
       const recordAction = (posted?: PostedMessage) => {
-        const actionStatus =
+        const actionStatus: StatusCategory =
           body.action === "approve" || body.action === "close" ? "completed"
           : body.action === "noise" ? "noise"
           : body.action === "dismiss" ? workItem.currentAtcStatus ?? "in_progress"
@@ -1045,7 +1046,7 @@ export function createApp(state: EngineState): Hono {
           messageId: posted ? posted.messageId : `operator-${body.action === "dismiss" || body.action === "noise" ? body.action : "action"}-${Date.now()}`,
           workItemId: body.workItemId,
           agentId: null,
-          status: actionStatus as StatusCategory,
+          status: actionStatus,
           confidence: 1.0,
           reason: actionLabels[body.action] ?? `Operator action: ${body.action}`,
           rawText: body.message ?? null,
@@ -1069,8 +1070,12 @@ export function createApp(state: EngineState): Hono {
           delivered = true;
           // The message went out: a failure to record it now mustn't report failure, or a retry would post it again
           try {
-            recordAction(posted);
             if (posted) state.graph.noteThreadActivity(actionThread.id, posted.timestamp);
+          } catch (err) {
+            log.error("Posted the action's message but couldn't note it on its thread", err instanceof Error ? err.message : String(err));
+          }
+          try {
+            recordAction(posted);
           } catch (err) {
             log.error("Posted the action's message but couldn't record it", err instanceof Error ? err.message : String(err));
           }
