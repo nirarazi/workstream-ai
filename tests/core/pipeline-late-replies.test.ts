@@ -45,6 +45,7 @@ describe("Pipeline: late replies to threads that started before the cursor", () 
     const options = readThreads.mock.calls[1][3];
     expect([...options.knownThreads]).toEqual([["OLD", { latestAt: "2026-10-13T09:00:00.000Z", messageCount: 1 }]]);
     expect(options.replyWindowStart.toISOString()).toBe("2026-10-12T12:00:00.000Z");
+    expect(options.pollIntervalMs).toBe((CONFIG as any).messaging.pollInterval * 1000); // so the adapter can fit its reads
     db.close();
   });
 

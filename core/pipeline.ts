@@ -186,7 +186,7 @@ export class Pipeline {
     if (run !== this.runId) return;
 
     // Set up the polling interval
-    const intervalSeconds = this.config?.messaging?.pollInterval ?? DEFAULT_POLL_INTERVAL;
+    const intervalSeconds = this.pollIntervalSeconds();
     // A catch-up poll can outlast the interval; overlapping polls multiply Slack calls into rate limits.
     this.intervalHandle = setInterval(async () => {
       if (this.polling) return;
@@ -244,7 +244,11 @@ export class Pipeline {
         globalSince,
         channels.length > 0 ? channels : undefined,
         perChannelSince.size > 0 ? perChannelSince : undefined,
-        { knownThreads, replyWindowStart: lateReplyWindowStart },
+        {
+          knownThreads,
+          replyWindowStart: lateReplyWindowStart,
+          pollIntervalMs: this.pollIntervalSeconds() * 1000,
+        },
       );
     } catch (err) {
       log.error("Failed to read threads from messaging adapter", err);
@@ -559,6 +563,10 @@ export class Pipeline {
   }
 
   // --- Private helpers ---
+
+  private pollIntervalSeconds(): number {
+    return this.config?.messaging?.pollInterval ?? DEFAULT_POLL_INTERVAL;
+  }
 
   /** Configured ticket prefixes plus the tracker's (e.g. Jira's project keys, which arrive after connecting) */
   private getValidPrefixes(): string[] {

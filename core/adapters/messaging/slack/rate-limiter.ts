@@ -27,6 +27,11 @@ const METHOD_LIMITS: Record<string, number> = {
 const WINDOW_MS = 60_000;
 const DEFAULT_LIMIT = 20; // conservative fallback for unknown methods
 
+/** Calls per minute Slack allows for a method */
+export function perMinuteLimit(method: string): number {
+  return METHOD_LIMITS[method] ?? DEFAULT_LIMIT;
+}
+
 interface MethodBucket {
   timestamps: number[];
   limit: number;
