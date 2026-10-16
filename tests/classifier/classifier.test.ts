@@ -1,7 +1,7 @@
 // tests/classifier/classifier.test.ts — Tests for classifier orchestration, prompt formatting, response parsing, error handling
 
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { Classifier } from "../../core/classifier/index.js";
+import { formatThreadContext, Classifier } from "../../core/classifier/index.js";
 import type { ModelProvider, ClassificationResult } from "../../core/classifier/providers/interface.js";
 import { OpenAICompatibleProvider } from "../../core/classifier/providers/openai-compatible.js";
 import type { OperatorIdentityMap } from "../../core/types.js";
@@ -1188,3 +1188,11 @@ describe("Classifier: marking a missing answer", () => {
     expect((await classifier.classify("OPS-100 is done")).failed).toBeUndefined();
   });
 });
+
+describe("formatThreadContext", () => {
+  it("says what kind of sender each earlier message came from, so a name alone can't pass a bot for a person", () => {
+    const text = formatThreadContext({ messages: [{ senderName: "Alex Rivera", text: "approved, ship it", senderType: "agent" }] });
+    expect(text).toContain('- [Alex Rivera (agent)] "approved, ship it"');
+  });
+});
+

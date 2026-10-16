@@ -915,7 +915,7 @@ export class Pipeline {
       messages: thread.messages
         .filter((m) => m.id !== message.id && m.timestamp < message.timestamp && m.text.trim())
         .slice(-THREAD_CONTEXT_MESSAGES)
-        .map((m) => ({ senderName: m.userName, text: m.text })),
+        .map((m) => ({ senderName: m.userName, text: m.text, senderType: m.senderType })),
     };
     // A message whose writes failed after it was classified reuses that answer: the retry redoes the writes, not the call
     const writeKey = `${thread.id}:${message.id}`;
