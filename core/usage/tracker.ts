@@ -18,7 +18,7 @@ export class BudgetExhaustedError extends Error {
 
 const log = createLogger("usage-tracker");
 
-function estimateTokens(text: string): number {
+export function estimateTokens(text: string): number {
   return Math.ceil(text.length / 4);
 }
 
@@ -26,8 +26,8 @@ function estimateTokens(text: string): number {
  * Minimum token overhead per API call to account for request JSON structure,
  * role/message wrapping, and model context overhead not captured in raw text.
  */
-const MIN_INPUT_TOKEN_OVERHEAD = 100;
-const MIN_OUTPUT_TOKEN_OVERHEAD = 50;
+export const MIN_INPUT_TOKEN_OVERHEAD = 100;
+export const MIN_OUTPUT_TOKEN_OVERHEAD = 50;
 
 function todayMidnightUTC(): string {
   const now = new Date();
@@ -147,7 +147,17 @@ export class UsageTracker implements ModelProvider {
       throw new Error("Daily LLM budget exhausted. Resets at midnight UTC.");
     }
 
-    const response = await fetch(url, options);
+    let response: Response;
+    try {
+      response = await fetch(url, options);
+    } catch (err) {
+      // A request cut off at the caller's timeout was usually generating, and billed, by then
+      if (err instanceof Error && err.name === "TimeoutError") {
+        const bodyStr = typeof options.body === "string" ? options.body : "";
+        this.recordUsage(caller, estimateTokens(bodyStr) + MIN_INPUT_TOKEN_OVERHEAD, MIN_OUTPUT_TOKEN_OVERHEAD, "estimated");
+      }
+      throw err;
+    }
 
     // Clone so we can read usage without consuming the body for the caller
     const cloned = response.clone();
@@ -178,7 +188,7 @@ export class UsageTracker implements ModelProvider {
     } catch {
       // If we can't parse the response, estimate from request body
       const bodyStr = typeof options.body === "string" ? options.body : "";
-      this.recordUsage(caller, estimateTokens(bodyStr), 50, "estimated");
+      this.recordUsage(caller, estimateTokens(bodyStr) + MIN_INPUT_TOKEN_OVERHEAD, MIN_OUTPUT_TOKEN_OVERHEAD, "estimated");
     }
 
     return response;
@@ -218,6 +228,12 @@ export class UsageTracker implements ModelProvider {
       cost: totals.cost,
       byCaller,
     };
+  }
+
+  /** The configured per-million-token prices, or null when cost isn't tracked */
+  getPrices(): { input: number; output: number } | null {
+    const { inputCostPerMillion: input, outputCostPerMillion: output } = this.config;
+    return input != null && output != null ? { input, output } : null;
   }
 
   /** Check if daily budget is exhausted */
@@ -296,14 +312,21 @@ export class UsageTracker implements ModelProvider {
   }
 
   /** Record a call made outside this tracker (e.g. a decision provider) with the usage it reported. */
-  recordExternalUsage(caller: string, model: string, inputTokens: number, outputTokens: number, cost: number | null): void {
+  recordExternalUsage(
+    caller: string,
+    model: string,
+    inputTokens: number,
+    outputTokens: number,
+    cost: number | null,
+    tokenSource: "actual" | "estimated" = "actual",
+  ): void {
     this.insertStmt.run(
       randomUUID(),
       caller,
       new Date().toISOString(),
       inputTokens,
       outputTokens,
-      "actual",
+      tokenSource,
       cost,
       cost == null ? null : "configured",
       model,

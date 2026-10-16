@@ -9,6 +9,7 @@ import type { StatusCategory, ThreadContext } from "../types.js";
 import type {
   ChoiceAnswer,
   ChoiceQuestion,
+  DecideOptions,
   DecisionProvider,
   DecisionUsage,
   QuestionSet,
@@ -134,11 +135,12 @@ export async function classifyWithDecisions(
   provider: DecisionProvider,
   input: DecisionClassificationInput,
   thresholds: DecisionThresholds = {},
+  options?: DecideOptions,
 ): Promise<DecisionClassification> {
   const targetedThreshold = thresholds.targetedThreshold ?? 0.5;
   const { workItem, ...base } = buildClassificationQuestions(input);
   const questions: QuestionSet = workItem ? { ...base, workItem } : base;
-  const result = await provider.decide(buildState(input), questions);
+  const result = await provider.decide(buildState(input), questions, options);
   const answers = result.answers as {
     status: ChoiceAnswer;
     targeted: YesNoAnswer;

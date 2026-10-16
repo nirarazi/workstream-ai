@@ -10,6 +10,7 @@ import {
   normalize,
   validateQuestions,
   type Answers,
+  type DecideOptions,
   type DecisionProvider,
   type DecisionResult,
   type QuestionSet,
@@ -20,6 +21,7 @@ import {
 export type CompleteFn = (
   message: string,
   systemPrompt: string,
+  options?: DecideOptions,
 ) => Promise<string | { text: string; usage?: { inputTokens: number; outputTokens: number } }>;
 
 export function buildDecisionPrompt(questions: QuestionSet): string {
@@ -140,16 +142,16 @@ export class LLMDecisionProvider implements DecisionProvider {
   static fromEndpoint(config: { baseUrl: string; model: string; apiKey?: string; reasoningEffort?: string }): LLMDecisionProvider {
     const transport = new OpenAICompatibleProvider({ name: "decisions-llm", ...config });
     return new LLMDecisionProvider(
-      (message, system) => transport.completeWithUsage(message, system),
+      (message, system, options) => transport.completeWithUsage(message, system, [], options),
       config.model,
       `llm:${config.model}`,
     );
   }
 
-  async decide<Qs extends QuestionSet>(state: string, questions: Qs): Promise<DecisionResult<Qs>> {
+  async decide<Qs extends QuestionSet>(state: string, questions: Qs, options?: DecideOptions): Promise<DecisionResult<Qs>> {
     validateQuestions(questions);
     const started = Date.now();
-    const completion = await this.complete(`<state>\n${state}\n</state>`, buildDecisionPrompt(questions));
+    const completion = await this.complete(`<state>\n${state}\n</state>`, buildDecisionPrompt(questions), options);
     const { text, usage } = typeof completion === "string" ? { text: completion, usage: undefined } : completion;
     return {
       answers: parseDecisionResponse(questions, text),

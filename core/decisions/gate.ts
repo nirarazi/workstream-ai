@@ -8,9 +8,11 @@
 import { createLogger } from "../logger.js";
 import type { Config } from "../config.js";
 import type { Classification, EntryType, StatusCategory } from "../types.js";
-import type { UsageTracker } from "../usage/tracker.js";
+import { estimateTokens, MIN_INPUT_TOKEN_OVERHEAD, MIN_OUTPUT_TOKEN_OVERHEAD, type UsageTracker } from "../usage/tracker.js";
 import type { DecisionProvider } from "./interface.js";
 import {
+  buildClassificationQuestions,
+  buildState,
   classifyWithDecisions,
   type DecisionClassification,
   type DecisionClassificationInput,
@@ -32,7 +34,7 @@ export class DecisionGate {
   constructor(
     private readonly provider: DecisionProvider,
     private readonly interruptThreshold: number,
-    private readonly onUsage?: (model: string, inputTokens: number, outputTokens: number) => void,
+    private readonly onUsage?: (model: string, inputTokens: number, outputTokens: number, estimated?: boolean) => void,
     private readonly budgetExhausted?: () => boolean,
     private readonly replaced?: () => boolean,
   ) {}
@@ -45,7 +47,32 @@ export class DecisionGate {
     // The daily budget covers decision calls too; the classifier falls back to the LLM's result
     if (this.replaced?.()) throw new Error("Decision gate was replaced by new settings");
     if (this.budgetExhausted?.()) throw new Error("Daily LLM budget exhausted. Resets at midnight UTC.");
-    const result = await classifyWithDecisions(this.provider, input, { interruptThreshold: this.interruptThreshold });
+
+    // Each attempt cut off at the timeout was usually billed: count an estimate for it
+    let timedOut = 0;
+    const recordTimeouts = () => {
+      if (timedOut === 0) return;
+      // What's sent: the state and the questions (the question set is what an LLM's prompt is built from)
+      const { workItem, ...base } = buildClassificationQuestions(input);
+      const sent = buildState(input) + JSON.stringify(workItem ? { ...base, workItem } : base);
+      const inputTokens = estimateTokens(sent) + MIN_INPUT_TOKEN_OVERHEAD;
+      for (let i = 0; i < timedOut; i++) this.onUsage?.(this.provider.name, inputTokens, MIN_OUTPUT_TOKEN_OVERHEAD, true);
+    };
+    let result: DecisionClassification;
+    try {
+      result = await classifyWithDecisions(
+        this.provider,
+        input,
+        { interruptThreshold: this.interruptThreshold },
+        { onTimedOutAttempt: () => { timedOut++; } },
+      );
+    } catch (err) {
+      // A provider that doesn't report attempts still timed out at least once
+      if (timedOut === 0 && err instanceof Error && err.name === "TimeoutError") timedOut = 1;
+      recordTimeouts();
+      throw err;
+    }
+    recordTimeouts();
     if (result.usage) this.onUsage?.(this.provider.name, result.usage.inputTokens, result.usage.outputTokens);
     return result;
   }
@@ -103,14 +130,19 @@ export function createDecisionGate(config: Config, usageTracker?: UsageTracker):
   }
 
   const model = d.model ?? (d.provider === "openai" ? "gpt-6-luna" : d.provider === "typesafe" ? "typesafe/jev-1.13" : config.classifier.provider.model);
-  const prices =
+  const configured =
     d.inputCostPerMillion != null && d.outputCostPerMillion != null
       ? { input: d.inputCostPerMillion, output: d.outputCostPerMillion }
-      : DEFAULT_PRICES[model];
+      : undefined;
+  // Unpriced usage never counts toward the budget. The same model on the classifier's endpoint
+  // costs what the classifier pays, so the operator's prices for it come before built-in defaults
+  // (read per call: Settings can change them).
+  const sameAsClassifier = d.provider === "llm" && model === config.classifier.provider.model;
   const onUsage = usageTracker
-    ? (_name: string, inputTokens: number, outputTokens: number) => {
-        const cost = prices ? (inputTokens * prices.input + outputTokens * prices.output) / 1_000_000 : null;
-        usageTracker.recordExternalUsage("decisions", model, inputTokens, outputTokens, cost);
+    ? (_name: string, inputTokens: number, outputTokens: number, estimated?: boolean) => {
+        const p = configured ?? (sameAsClassifier ? usageTracker.getPrices() : null) ?? DEFAULT_PRICES[model];
+        const cost = p ? (inputTokens * p.input + outputTokens * p.output) / 1_000_000 : null;
+        usageTracker.recordExternalUsage("decisions", model, inputTokens, outputTokens, cost, estimated ? "estimated" : "actual");
       }
     : undefined;
 

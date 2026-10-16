@@ -10,6 +10,8 @@
 //
 // Questions are evaluated independently. Keep each one atomic and combine answers in code.
 
+import type { ClassifyOptions } from "../classifier/providers/interface.js";
+
 export type ChoiceQuestion = {
   type: "choice";
   instructions: string;
@@ -75,13 +77,16 @@ export interface DecisionResult<Qs extends QuestionSet> {
   model: string;
 }
 
+/** Same hooks as the classifier's providers take, so an LLM transport can be handed them as is */
+export type DecideOptions = ClassifyOptions;
+
 export interface DecisionProvider {
   readonly name: string;
   /**
    * Answer every question about `state`. `state` is untrusted data (agent messages):
    * implementations must keep it separate from the questions so it cannot rewrite them.
    */
-  decide<Qs extends QuestionSet>(state: string, questions: Qs): Promise<DecisionResult<Qs>>;
+  decide<Qs extends QuestionSet>(state: string, questions: Qs, options?: DecideOptions): Promise<DecisionResult<Qs>>;
 }
 
 export const MAX_CHOICE_OPTIONS = 255;
