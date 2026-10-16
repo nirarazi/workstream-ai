@@ -130,7 +130,7 @@ describe("DigestJudge", () => {
     disagreement("OPS-3", "in_progress", "completed", { statusAt: "2026-10-15T10:00:00.000Z" });
     const complete = vi.fn(async (prompt: string) => {
       if (prompt.startsWith("Work item: OPS-2")) return '{"verdict":"app","reason":"fine"}';
-      throw new Error("400 bad request");
+      throw new Error("Anthropic API error 400: bad request");
     });
     const judge = new DigestJudge(graph, complete);
 
@@ -146,7 +146,7 @@ describe("DigestJudge", () => {
     disagreement("OPS-2", "in_progress", "completed");
     disagreement("OPS-3", "in_progress", "completed", { messageId: "d2", at: "2026-10-15T09:30:00.000Z" });
     const complete = vi.fn(async (prompt: string) => {
-      if (prompt.startsWith("Work item: OPS-1")) throw new Error("400 bad request");
+      if (prompt.startsWith("Work item: OPS-1")) throw new Error("Anthropic API error 400: bad request");
       return '{"verdict":"app","reason":"fine"}';
     });
     const judge = new DigestJudge(graph, complete);
@@ -158,12 +158,36 @@ describe("DigestJudge", () => {
     expect(check("OPS-3").resolution).toBe("app");
   });
 
+  it("doesn't count a rate limit against a check", async () => {
+    disagreement("OPS-2", "in_progress", "completed", { at: "2026-10-15T08:00:00.000Z", messageId: "d0" });
+    disagreement("OPS-1", "in_progress", "blocked_on_human");
+    const complete = vi.fn(async (prompt: string) => {
+      if (prompt.startsWith("Work item: OPS-2")) return '{"verdict":"app","reason":"fine"}';
+      throw new Error("Anthropic API error 429: rate limited");
+    });
+    const judge = new DigestJudge(graph, complete);
+
+    for (let i = 0; i < 4; i++) await judge.judgeSome();
+
+    expect(check("OPS-1").judged_at).toBeNull();
+  });
+
+  it("records another sender's claim while one sender's same claim waits", () => {
+    disagreement("OPS-1", "in_progress", "blocked_on_human", { fromLine: false });
+    disagreement("OPS-1", "in_progress", "blocked_on_human", { messageId: "r1", at: "2026-10-15T10:00:00.000Z", agentId: "U-relay" });
+
+    expect(db.db.prepare("SELECT COUNT(*) AS n FROM digest_checks WHERE work_item_id = 'OPS-1'").get()).toEqual({ n: 2 });
+  });
+
   it("doesn't let another sender's whole-message flag make a waiting claim need the operator", () => {
     disagreement("OPS-1", "in_progress", "blocked_on_human"); // Atlas: its own line, not aimed at the operator
     disagreement("OPS-1", "in_progress", "blocked_on_human", { messageId: "r1", at: "2026-10-15T10:00:00.000Z", agentId: "U-relay", targeted: true, fromLine: false });
 
-    const rows = db.db.prepare("SELECT digest_targeted, from_line FROM digest_checks WHERE work_item_id = 'OPS-1'").all();
-    expect(rows).toEqual([{ digest_targeted: 0, from_line: 1 }]);
+    const atlas = db.db.prepare(`
+      SELECT dc.digest_targeted, dc.from_line FROM digest_checks dc JOIN events e ON e.id = dc.event_id
+      WHERE dc.work_item_id = 'OPS-1' AND e.agent_id = 'U-atlas'
+    `).all();
+    expect(atlas).toEqual([{ digest_targeted: 0, from_line: 1 }]);
   });
 
   it("clips long text on a whole character", () => {
@@ -250,8 +274,8 @@ describe("DigestJudge", () => {
     for (const id of ["OPS-1", "OPS-2", "OPS-3", "OPS-4", "OPS-5"]) disagreement(id, "in_progress", "completed");
     const down = vi.fn().mockRejectedValue(new Error("Daily LLM budget exhausted"));
 
-    // One call, and one probe to tell a bad check from a down model
-    expect(await new DigestJudge(graph, down).judgeSome()).toEqual({ settled: 0, asked: 2 });
+    // A spent budget isn't the check's doing: no probe, just stop for this run
+    expect(await new DigestJudge(graph, down).judgeSome()).toEqual({ settled: 0, asked: 1 });
     expect(check("OPS-1").judged_at).toBeNull();
 
     const up = answering("app");

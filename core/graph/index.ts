@@ -732,15 +732,16 @@ export class ContextGraph {
     if (agrees === 0) {
       // The same claim about the item, still waiting to be judged, isn't queued again (a digest posted daily); one
       // that now says the item needs the operator makes the waiting one say so
+      // (the same sender's: another sender's claim is its own)
       const waiting = this.db.db.prepare(`
-        SELECT dc.event_id, e.agent_id IS (SELECT agent_id FROM events WHERE id = ?) AS same_sender
-        FROM digest_checks dc JOIN events e ON e.id = dc.event_id
+        SELECT dc.event_id FROM digest_checks dc JOIN events e ON e.id = dc.event_id
         WHERE dc.work_item_id = ? AND dc.digest_status = ? AND dc.agrees = 0
           AND dc.resolved_at IS NULL AND dc.judged_at IS NULL
-      `).get(check.eventId, check.workItemId, check.digestStatus) as { event_id: string; same_sender: number } | undefined;
+          AND e.agent_id IS (SELECT agent_id FROM events WHERE id = ?)
+      `).get(check.workItemId, check.digestStatus, check.eventId) as { event_id: string } | undefined;
       if (waiting) {
-        // The same sender's own line for the item makes the waiting claim the item's own line (and targeted if it is)
-        if (waiting.same_sender && check.fromLine !== false) {
+        // The sender's own line for the item makes the waiting claim the item's own line (and targeted if it is)
+        if (check.fromLine !== false) {
           this.db.db.prepare(`
             UPDATE digest_checks SET from_line = 1, digest_targeted = MAX(digest_targeted, ?) WHERE event_id = ? AND work_item_id = ?
           `).run(check.digestTargeted ? 1 : 0, waiting.event_id, check.workItemId);

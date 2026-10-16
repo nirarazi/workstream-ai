@@ -124,6 +124,11 @@ export class DigestJudge {
       } catch (err) {
         if (stopped()) break; // settings changed mid-call (e.g. new credentials): write nothing
         this.warn(err);
+        // A rate limit, a server error or a timeout says nothing about the check: just stop asking for this run
+        if (!isRequestError(err)) {
+          modelDown = true;
+          continue;
+        }
         if (!failedFirst && !probed) {
           failedFirst = d;
           probed = true;
@@ -222,6 +227,14 @@ export class DigestJudge {
       log.warn("Couldn't judge digest disagreements", err instanceof Error ? err.message : String(err));
     }
   }
+}
+
+/** The provider refused the request itself (a 4xx other than a rate limit), or its reply couldn't be read */
+function isRequestError(err: unknown): boolean {
+  if (!(err instanceof Error) || err.name === "TimeoutError" || err.name === "AbortError") return false;
+  const status = Number(/API error (\d{3})/.exec(err.message)?.[1]);
+  if (status) return status >= 400 && status < 500 && status !== 429;
+  return err instanceof TypeError && !/fetch failed/i.test(err.message); // e.g. an unexpected reply shape
 }
 
 function checkKey(d: DigestDisagreement): string {
