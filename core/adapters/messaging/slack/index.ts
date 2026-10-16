@@ -688,9 +688,9 @@ export class SlackAdapter implements MessagingAdapter {
       // (Slack bot IDs start with B; people's with U or W)
       if (agent.platform === "slack" && (agent.name === "unknown" || agent.name === agent.platformUserId) && agent.platformUserId.startsWith("B")) {
         await this.learnBotName(agent.platformUserId);
-        const botName = this.botNames.get(agent.platformUserId);
+        const botName = cleanName(this.botNames.get(agent.platformUserId) ?? "");
         if (botName) {
-          graph.renameAgent(agent.id, cleanName(botName));
+          graph.renameAgent(agent.id, botName);
           backfilled++;
           continue;
         }
@@ -907,12 +907,12 @@ export class SlackAdapter implements MessagingAdapter {
    */
   private botNameOf(msg: SlackMessage): string | undefined {
     const name = msg.bot_profile?.name || (msg.bot_id ? this.botNames.get(msg.bot_id) ?? undefined : undefined);
-    return name ? cleanName(name) : undefined;
+    return (name && cleanName(name)) || undefined; // nothing left after cleaning: no name
   }
 
   /**
-   * Looks up, once each, the bots in these messages whose name the messages don't carry (no profile, no posted
-   * name), so their messages aren't from "unknown". A failed lookup is remembered as no name and not retried.
+   * Looks up the bots in these messages whose name the messages don't carry (no profile on the message), so their
+   * messages aren't from "unknown". Each bot once; after a passing failure, again later (see learnBotName).
    */
   private async learnBotNames(messages: SlackMessage[]): Promise<void> {
     for (const msg of messages) {

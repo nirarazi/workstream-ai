@@ -942,6 +942,35 @@ describe("SlackAdapter", () => {
       expect(upsertAgent).not.toHaveBeenCalled();
     });
 
+    it("renames an agent without marking it seen", async () => {
+      const { Database } = await import("../../core/graph/db.js");
+      const { ContextGraph } = await import("../../core/graph/index.js");
+      const db = new Database(":memory:");
+      try {
+        const graph = new ContextGraph(db);
+        graph.upsertAgent({ id: "B0RELAY001", name: "unknown", platform: "slack", platformUserId: "B0RELAY001" });
+        db.db.prepare("UPDATE agents SET last_seen = '2026-10-01T00:00:00.000Z'").run();
+
+        graph.renameAgent("B0RELAY001", "Relay");
+
+        expect(graph.getAgentById("B0RELAY001")).toMatchObject({ name: "Relay", lastSeen: "2026-10-01T00:00:00.000Z" });
+      } finally {
+        db.close();
+      }
+    });
+
+    it("uses the bot's ID when its name is nothing once cleaned", async () => {
+      mockBotsInfo.mockResolvedValue({ ok: true, bot: { name: "[ | ]" } });
+      mockConversationsHistory.mockResolvedValue({
+        messages: [{ ts: "1791000000.000100", text: "tick", bot_id: "B0EMPTY001" }],
+        response_metadata: { next_cursor: "" },
+      });
+
+      const threads = await adapter.readThreads(new Date("2026-10-10T00:00:00Z"));
+
+      expect(threads[0].messages[0].userName).toBe("B0EMPTY001");
+    });
+
     it("leaves people, named bots and other platforms' agents alone", async () => {
       const renameAgent = vi.fn();
       const graph = {
