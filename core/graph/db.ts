@@ -100,6 +100,36 @@ CREATE TABLE IF NOT EXISTS thread_work_items (
   PRIMARY KEY (thread_id, work_item_id)
 );
 
+-- One-off upkeep the engine still owes the stored data, e.g. digest_backfill = pending
+CREATE TABLE IF NOT EXISTS meta (
+  key   TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
+
+-- Work items a message puts in front of the operator by its own line for them (the model's per-item breakdown says
+-- blocked on, or a decision for, the operator): it counts for them though they're only mentioned in its thread
+CREATE TABLE IF NOT EXISTS event_targets (
+  event_id     TEXT NOT NULL REFERENCES events(id),
+  work_item_id TEXT NOT NULL REFERENCES work_items(id),
+  PRIMARY KEY (event_id, work_item_id)
+);
+CREATE INDEX IF NOT EXISTS idx_event_targets_work_item ON event_targets(work_item_id);
+
+-- What a digest (a message naming several work items) says about each, against what the app already believes
+CREATE TABLE IF NOT EXISTS digest_checks (
+  event_id       TEXT NOT NULL REFERENCES events(id),
+  work_item_id   TEXT NOT NULL REFERENCES work_items(id),
+  digest_status  TEXT NOT NULL,
+  digest_targeted INTEGER NOT NULL DEFAULT 0,
+  item_status    TEXT,
+  -- 1 agrees, 0 disagrees, NULL when the app had no status for the item yet
+  agrees         INTEGER,
+  created_at     TEXT NOT NULL,
+  resolved_at    TEXT,
+  resolution     TEXT,
+  PRIMARY KEY (event_id, work_item_id)
+);
+
 CREATE INDEX IF NOT EXISTS idx_events_thread_id ON events(thread_id);
 CREATE INDEX IF NOT EXISTS idx_events_work_item_id ON events(work_item_id);
 CREATE INDEX IF NOT EXISTS idx_threads_work_item_id ON threads(work_item_id);
@@ -111,6 +141,10 @@ CREATE INDEX IF NOT EXISTS idx_twi_work_item ON thread_work_items(work_item_id);
 
 export class Database {
   readonly db: BetterSqlite3Type.Database;
+  /** Messages stored before events.digest existed still need marking (once; cleared when it's done) */
+  get digestBackfillPending(): boolean {
+    return this.db.prepare("SELECT 1 FROM meta WHERE key = 'digest_backfill'").get() !== undefined;
+  }
 
   constructor(dbPath: string = "workstream.db") {
     // Migrate legacy "atc.db" → "workstream.db" if the new name doesn't exist yet
@@ -254,6 +288,16 @@ export class Database {
       this.db.exec("ALTER TABLE events ADD COLUMN action_required_from TEXT DEFAULT NULL");
       this.db.exec("ALTER TABLE events ADD COLUMN next_action TEXT DEFAULT NULL");
       log.info("Migration: added action_required_from and next_action columns to events");
+    }
+
+    // Add digest: the event is a message naming several work items, which informs them but doesn't decide them
+    const eventColsForDigest = this.db.pragma("table_info(events)") as Array<{ name: string }>;
+    if (!eventColsForDigest.some((c) => c.name === "digest")) {
+      this.db.exec("ALTER TABLE events ADD COLUMN digest INTEGER NOT NULL DEFAULT 0");
+      // The engine marks earlier digests once (it has the extractors). Kept in the database, so it isn't lost when
+      // the MCP server or a CLI opens it first, or the engine stops before it's done.
+      this.db.prepare("INSERT OR REPLACE INTO meta (key, value) VALUES ('digest_backfill', 'pending')").run();
+      log.info("Migration: added digest column to events");
     }
 
     // Add is_bot column to agents table

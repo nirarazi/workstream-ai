@@ -152,6 +152,8 @@ export interface Event {
   targetedAtOperator: boolean;
   actionRequiredFrom: string[] | null;
   nextAction: string | null;
+  /** A message naming several work items: shown in their timelines, but it doesn't set their status or inbox */
+  digest?: boolean;
 }
 
 export interface Enrichment {

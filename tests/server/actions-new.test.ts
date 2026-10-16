@@ -362,7 +362,9 @@ describe("the operator's message is logged once", () => {
 
   it("stores an adapter's posted time as ISO", async () => {
     const state = makeState(graph, db);
-    state.messagingAdapter.replyToThread.mockResolvedValue({ messageId: "1791000000.000400", timestamp: "Fri, 16 Oct 2026 04:09:20 GMT" });
+    // A minute ahead, so it's later than the thread's last activity whenever the test runs
+    const later = new Date(Math.ceil((Date.now() + 60_000) / 1000) * 1000);
+    state.messagingAdapter.replyToThread.mockResolvedValue({ messageId: "1791000000.000400", timestamp: later.toUTCString() });
 
     await createApp(state).request("/api/reply", {
       method: "POST",
@@ -370,8 +372,8 @@ describe("the operator's message is logged once", () => {
       body: JSON.stringify({ threadId: "T001", channelId: "C001", message: "Thanks", workItemId: "OPS-200" }),
     });
 
-    expect(eventsFor("1791000000.000400")[0].timestamp).toBe("2026-10-16T04:09:20.000Z");
-    expect(graph.getThreadById("T001")!.lastActivity).toBe("2026-10-16T04:09:20.000Z");
+    expect(eventsFor("1791000000.000400")[0].timestamp).toBe(later.toISOString());
+    expect(graph.getThreadById("T001")!.lastActivity).toBe(later.toISOString());
   });
 
   it("ignores a blank message ID from the adapter, so actions don't collide", async () => {

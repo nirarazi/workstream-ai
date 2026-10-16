@@ -167,6 +167,8 @@ function createMockGraph(): ContextGraph {
     expireInactiveItems: vi.fn().mockReturnValue(0),
     findRecurringWorkItem: vi.fn().mockReturnValue(null),
     linkThreadWorkItem: vi.fn(),
+    addEventTarget: vi.fn(),
+    recordDigestCheck: vi.fn(),
   } as unknown as ContextGraph;
 }
 
@@ -288,6 +290,7 @@ describe("Pipeline", () => {
       expect(linker.linkMessage).toHaveBeenCalledWith(
         thread.messages[0].text,
         "t-1",
+        true, // an agent's message can be a digest
       );
     });
 

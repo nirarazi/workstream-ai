@@ -8,8 +8,10 @@ import type { MessagingAdapter } from "./adapters/messaging/interface.js";
 import type { TaskAdapter } from "./adapters/tasks/interface.js";
 import type { Classifier } from "./classifier/index.js";
 import type { ContextGraph } from "./graph/index.js";
-import type { WorkItemLinker } from "./graph/linker.js";
+import { DIGEST_MIN_ITEMS, namesDigest, type WorkItemLinker } from "./graph/linker.js";
 import { knownTicketPrefixes, looksLikeTicketKey } from "./graph/extractors/default.js";
+
+export { DIGEST_MIN_ITEMS };
 
 const log = createLogger("pipeline");
 
@@ -564,6 +566,14 @@ export class Pipeline {
 
   // --- Private helpers ---
 
+  /**
+   * Only an agent's or a bot's message can be a digest. A human naming several tickets ("OPS-1, OPS-2 and OPS-3 are
+   * approved") is deciding them, and their messages are never kept out of Needs me on that account.
+   */
+  private canBeDigest(message: Message): boolean {
+    return message.senderType !== "human" && !this.isOperator(message);
+  }
+
   private pollIntervalSeconds(): number {
     return this.config?.messaging?.pollInterval ?? DEFAULT_POLL_INTERVAL;
   }
@@ -751,6 +761,8 @@ export class Pipeline {
     const existingThread = this.graph.getThreadById(thread.id);
     const inheritedWorkItemId = existingThread?.workItemId ?? null;
     const allWorkItemIds = new Set<string>();
+    // The item this thread is about: the one it already belongs to, or the open item a repeated alert joins
+    let ownItemId = inheritedWorkItemId;
     if (inheritedWorkItemId) {
       allWorkItemIds.add(inheritedWorkItemId);
     } else if (message.senderType !== "human" && thread.messages[0]?.id === message.id) {
@@ -764,6 +776,7 @@ export class Pipeline {
       if (recurringId) {
         log.debug("Recurring alert joins existing work item", recurringId, thread.id);
         allWorkItemIds.add(recurringId);
+        ownItemId = recurringId;
       }
     }
 
@@ -790,8 +803,11 @@ export class Pipeline {
         reason: cachedResult.reason + " (deduplicated)",
         rawText: message.text,
         timestamp: message.timestamp,
+        targetedAtOperator: cachedResult.targetedAtOperator,
         actionRequiredFrom: cachedResult.actionRequiredFrom,
         nextAction: cachedResult.nextAction,
+        // Same text, same thread: a digest the first time is one now
+        digest: this.canBeDigest(message) && namesDigest(this.linker.extractIds(message.text), ownItemId),
       });
       return cachedResult;
     }
@@ -839,7 +855,7 @@ export class Pipeline {
     }
 
     // Step 1: Link work items from message text (regex — only known prefixes)
-    const extractedIds = this.linker.linkMessage(message.text, thread.id);
+    const extractedIds = this.linker.linkMessage(message.text, thread.id, this.canBeDigest(message));
 
     // Step 2: Classify the message with operator identities and sender context
     // Override senderType if the graph has classified this bot as a notification source
@@ -943,9 +959,15 @@ export class Pipeline {
         isBot: message.senderType === "agent" ? true : message.senderType === "human" ? false : null,
       });
 
+      // A digest makes none of the items it names the thread's own: they're all mentioned. Decided as the linker does,
+      // from the IDs in the text, so the two agree (IDs the model adds don't make a message a digest).
+      const digest = this.canBeDigest(message) && namesDigest(extractedIds, ownItemId);
+
       // Step 4: Upsert thread in graph — preserve manually linked work items
       const isManuallyLinked = existingThread?.manuallyLinked === true;
-      const primaryWorkItemId = allWorkItemIds.size > 0 ? [...allWorkItemIds][0] : null;
+      const primaryWorkItemId = digest
+        ? ownItemId
+        : allWorkItemIds.size > 0 ? [...allWorkItemIds][0] : null;
 
       this.graph.upsertThread({
         id: thread.id,
@@ -962,7 +984,7 @@ export class Pipeline {
       });
 
       // Step 5: Insert event with classification
-      this.graph.insertEvent({
+      const event = this.graph.insertEvent({
         threadId: thread.id,
         messageId: message.id,
         workItemId: primaryWorkItemId,
@@ -976,6 +998,8 @@ export class Pipeline {
         targetedAtOperator: classification.targetedAtOperator,
         actionRequiredFrom: classification.actionRequiredFrom,
         nextAction: classification.nextAction,
+        // A digest still counts for its thread's own item (its work_item_id) wherever an event decides an item
+        digest,
       });
 
       // Step 6: Update work item status and write junction rows
@@ -993,6 +1017,43 @@ export class Pipeline {
         const existing = this.graph.getWorkItemById(workItemId);
         if (existing) {
           const itemClassification = validatedBreakdownMap.get(workItemId);
+          // The message's own line for this item puts it in front of the operator: it counts for the item even where
+          // the item is only mentioned, digest or not
+          const escalates = Boolean(itemClassification?.targetedAtOperator)
+            && (itemClassification!.status === "blocked_on_human" || itemClassification!.status === "needs_decision");
+          if (escalates) this.graph.addEventTarget(event.id, workItemId);
+
+          // A digest doesn't decide the items it names (its thread's own item, if any, is handled as usual, and so is an
+          // item its line says needs the operator): what it says about each is compared with the app's view instead,
+          // with the whole message's status where it gave none
+          if (digest && workItemId !== primaryWorkItemId && !escalates) {
+            const digestStatus = itemClassification?.status ?? classification.status;
+            // Nothing to contradict: what the digest says about this item in particular (not the whole message) sets a
+            // first status, so the item shows in All active. With no confidence, so any message about the item itself
+            // replaces it; never done or noise, which would hold the item there or hide it.
+            if (!existing.currentAtcStatus && itemClassification && itemClassification.status !== "completed" && itemClassification.status !== "noise") {
+              this.graph.upsertWorkItem({
+                id: workItemId,
+                source: existing.source,
+                currentAtcStatus: itemClassification.status,
+                currentConfidence: 0,
+                statusAt: message.timestamp,
+                ...(itemClassification.title && !existing.title ? { title: itemClassification.title } : {}),
+              });
+            }
+            // A digest older than the item's status is compared with a later state, so it isn't checked
+            if (!this.isOlderThanStatus(existing, message)) {
+              this.graph.recordDigestCheck({
+                eventId: event.id,
+                workItemId,
+                digestStatus,
+                digestTargeted: itemClassification?.targetedAtOperator ?? classification.targetedAtOperator,
+                itemStatus: existing.currentAtcStatus,
+                at: message.timestamp,
+              });
+            }
+            continue;
+          }
 
           // Only the primary work item inherits the thread-level classification.
           // Mentioned items must have an explicit breakdown entry — otherwise we

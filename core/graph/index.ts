@@ -125,6 +125,7 @@ function toEvent(row: EventRow): Event {
     targetedAtOperator: Boolean(row.targeted_at_operator ?? 1),
     actionRequiredFrom,
     nextAction: row.next_action ?? null,
+    digest: Boolean(row.digest),
   };
 }
 
@@ -179,6 +180,29 @@ function sameSet(a: Set<string>, b: Set<string>): boolean {
   if (a.size !== b.size) return false;
   for (const x of a) if (!b.has(x)) return false;
   return true;
+}
+
+/**
+ * SQL: event `e` is about work item `item`, so it can decide where the item stands for the operator. That's a message
+ * whose subject is the item (its work_item_id; not a digest marked by the backfill, whose subject came from the old
+ * rule), any non-digest message in the item's own thread, or one whose own line for the item puts it in front of the
+ * operator. A message in a thread that merely mentions the item, or a digest naming it, isn't.
+ */
+function aboutItem(e: string, item: string, viaOwnLine = true): string {
+  // As a set of event IDs, so each branch is an index lookup (an OR with a correlated EXISTS scans every event).
+  // `e` and `item` must be SQL identifiers (table aliases and columns), never values.
+  return `${e}.id IN (
+    SELECT ab.id FROM events ab WHERE ab.work_item_id = ${item} AND ab.digest < 2
+    UNION SELECT ab2.id FROM thread_work_items twa JOIN events ab2 ON ab2.thread_id = twa.thread_id
+      WHERE twa.work_item_id = ${item} AND twa.relation = 'primary' AND ab2.digest = 0${
+    viaOwnLine ? `
+    UNION SELECT et.event_id FROM event_targets et WHERE et.work_item_id = ${item}` : ""})`;
+}
+
+/** SQL: event `e` is aimed at the operator, as a whole or by its own line for work item `item` (identifiers only) */
+function forOperator(e: string, item: string): string {
+  return `(${e}.targeted_at_operator = 1
+    OR EXISTS (SELECT 1 FROM event_targets eto WHERE eto.event_id = ${e}.id AND eto.work_item_id = ${item}))`;
 }
 
 /**
@@ -474,8 +498,7 @@ export class ContextGraph {
       .prepare(`
         UPDATE work_items SET dismissed_at = (
           SELECT MAX(e.timestamp) FROM events e
-          WHERE e.work_item_id = work_items.id
-             OR e.thread_id IN (SELECT thread_id FROM thread_work_items WHERE work_item_id = work_items.id)
+          WHERE ${aboutItem("e", "work_items.id")}
         ), dismiss_reason = 'expired'
         WHERE id IN (
           SELECT wi.id FROM work_items wi
@@ -485,15 +508,13 @@ export class ContextGraph {
             AND (wi.snoozed_until IS NULL OR wi.snoozed_until <= ?)
             AND (
               SELECT MAX(e.timestamp) FROM events e
-              WHERE e.work_item_id = wi.id
-                 OR e.thread_id IN (SELECT thread_id FROM thread_work_items WHERE work_item_id = wi.id)
+              WHERE ${aboutItem("e", "wi.id")}
             ) < ?
             -- not dismissed, or brought back by a later message aimed at the operator (as the inbox does)
             AND (wi.dismissed_at IS NULL OR wi.dismissed_at < (
               SELECT MAX(e.timestamp) FROM events e
-              WHERE (e.work_item_id = wi.id
-                 OR e.thread_id IN (SELECT thread_id FROM thread_work_items WHERE work_item_id = wi.id))
-                AND e.targeted_at_operator = 1
+              WHERE ${aboutItem("e", "wi.id")}
+                AND ${forOperator("e", "wi.id")}
             ))
         )
       `)
@@ -556,17 +577,28 @@ export class ContextGraph {
     return rows.map(toThread);
   }
 
+  /** Makes a thread the given item's own; its other items become mentions, since a thread's messages count for its own */
   linkThread(threadId: string, workItemId: string): void {
-    this.db.db.prepare(
-      "UPDATE threads SET work_item_id = ?, manually_linked = 1 WHERE id = ?"
-    ).run(workItemId, threadId);
+    this.transaction(() => {
+      this.db.db.prepare(
+        "UPDATE threads SET work_item_id = ?, manually_linked = 1 WHERE id = ?"
+      ).run(workItemId, threadId);
+      this.db.db.prepare(
+        "UPDATE thread_work_items SET relation = 'mentioned' WHERE thread_id = ? AND work_item_id <> ?"
+      ).run(threadId, workItemId);
+      this.linkThreadWorkItem(threadId, workItemId, "primary");
+    });
     log.debug("Manually linked thread", threadId, "to", workItemId);
   }
 
+  /** The thread stops being any item's own: its items stay linked as mentions */
   unlinkThread(threadId: string): void {
-    this.db.db.prepare(
-      "UPDATE threads SET work_item_id = NULL, manually_linked = 0 WHERE id = ?"
-    ).run(threadId);
+    this.transaction(() => {
+      this.db.db.prepare(
+        "UPDATE threads SET work_item_id = NULL, manually_linked = 0 WHERE id = ?"
+      ).run(threadId);
+      this.db.db.prepare("UPDATE thread_work_items SET relation = 'mentioned' WHERE thread_id = ?").run(threadId);
+    });
     log.debug("Unlinked thread", threadId);
   }
 
@@ -661,6 +693,74 @@ export class ContextGraph {
   }
 
   /**
+   * Records what a digest said about one of the work items it names, and whether that matches the app's view:
+   * the same kind of state (needs someone, done, or neither). Unresolved disagreements are for a judge to settle.
+   */
+  recordDigestCheck(check: {
+    eventId: string;
+    workItemId: string;
+    digestStatus: StatusCategory;
+    digestTargeted: boolean;
+    itemStatus: StatusCategory | null;
+    at: string;
+  }): void {
+    // The kinds of state that matter to the operator: someone's needed, it's done, or neither (working, or noise)
+    const kind = (s: string) =>
+      s === "blocked_on_human" || s === "needs_decision" ? "needs" : s === "completed" ? "done" : "other";
+    const agrees = check.itemStatus === null ? null : kind(check.digestStatus) === kind(check.itemStatus) ? 1 : 0;
+    this.db.db.prepare(`
+      INSERT OR IGNORE INTO digest_checks (event_id, work_item_id, digest_status, digest_targeted, item_status, agrees, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(check.eventId, check.workItemId, check.digestStatus, check.digestTargeted ? 1 : 0, check.itemStatus, agrees, check.at);
+  }
+
+  /** Records that a message's own line for a work item puts it in front of the operator (see aboutItem) */
+  addEventTarget(eventId: string, workItemId: string): void {
+    this.db.db.prepare("INSERT OR IGNORE INTO event_targets (event_id, work_item_id) VALUES (?, ?)").run(eventId, workItemId);
+  }
+
+  /** Digest checks that disagree with the app and aren't settled yet, oldest first */
+  getOpenDigestDisagreements(limit = 50): Array<{ eventId: string; workItemId: string; digestStatus: string; itemStatus: string | null }> {
+    return (this.db.db.prepare(`
+      SELECT event_id AS eventId, work_item_id AS workItemId, digest_status AS digestStatus, item_status AS itemStatus
+      FROM digest_checks WHERE agrees = 0 AND resolved_at IS NULL ORDER BY created_at LIMIT ?
+    `).all(limit)) as Array<{ eventId: string; workItemId: string; digestStatus: string; itemStatus: string | null }>;
+  }
+
+  /**
+   * Once, for messages stored before digests were told apart: marks those that would be digests now (`isDigest`
+   * given the IDs in the text) as digest = 2, so the change can be undone (`UPDATE events SET digest = 0 WHERE
+   * digest = 2`). Humans' messages are never digests. A message that started its thread made its first item the
+   * thread's own under the old rule, so that item isn't really its own: a digest = 2 counts for no item, unlike a
+   * live digest (1), which still counts for its thread's own. A reply in an item's own thread is left as it was.
+   * Returns the IDs marked.
+   */
+  backfillDigests(isDigest: (ids: string[], ownItemId: string | null) => boolean, extractIds: (text: string) => string[]): string[] {
+    const events = this.db.db.prepare(`
+      SELECT e.id, e.raw_text, t.work_item_id AS own_item,
+        e.timestamp = (SELECT MIN(e2.timestamp) FROM events e2 WHERE e2.thread_id = e.thread_id) AS starts_thread
+      FROM events e
+      JOIN threads t ON t.id = e.thread_id
+      LEFT JOIN agents a ON a.id = e.agent_id
+      WHERE e.digest = 0 AND e.raw_text != '' AND e.message_id NOT LIKE 'operator-%'
+        AND COALESCE(a.is_bot, 1) = 1
+    `).all() as Array<{ id: string; raw_text: string; own_item: string | null; starts_thread: number }>;
+    const mark = this.db.db.prepare("UPDATE events SET digest = 2 WHERE id = ?");
+    const marked: string[] = [];
+    this.transaction(() => {
+      for (const event of events) {
+        const ownItem = event.starts_thread ? null : event.own_item;
+        // A reply in an item's own thread is about that item, so it isn't marked (as the pipeline does)
+        if (ownItem || !isDigest(extractIds(event.raw_text), null)) continue;
+        mark.run(event.id);
+        marked.push(event.id);
+      }
+      this.db.db.prepare("DELETE FROM meta WHERE key = 'digest_backfill'").run(); // done, with the marks
+    });
+    return marked;
+  }
+
+  /**
    * Scan all events' raw_text for work item IDs using the given extractor,
    * and create `mentioned` junction rows for any that are missing.
    * Skips IDs that already have a junction row for that thread.
@@ -718,13 +818,14 @@ export class ContextGraph {
     targetedAtOperator?: boolean;
     actionRequiredFrom?: string[] | null;
     nextAction?: string | null;
+    digest?: boolean;
   }): Event {
     const id = randomUUID();
     const now = new Date().toISOString();
 
     const stmt = this.db.db.prepare(`
-      INSERT OR IGNORE INTO events (id, thread_id, message_id, work_item_id, agent_id, status, confidence, reason, raw_text, timestamp, created_at, entry_type, targeted_at_operator, action_required_from, next_action)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT OR IGNORE INTO events (id, thread_id, message_id, work_item_id, agent_id, status, confidence, reason, raw_text, timestamp, created_at, entry_type, targeted_at_operator, action_required_from, next_action, digest)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     const result = stmt.run(
       id,
@@ -742,6 +843,7 @@ export class ContextGraph {
       (event.targetedAtOperator ?? true) ? 1 : 0,
       event.actionRequiredFrom ? JSON.stringify(event.actionRequiredFrom) : null,
       event.nextAction ?? null,
+      event.digest ? 1 : 0,
     );
 
     if (result.changes === 0) {
@@ -1244,9 +1346,8 @@ export class ContextGraph {
       FROM work_items wi
       INNER JOIN events e ON e.id = (
           SELECT e2.id FROM events e2
-          WHERE (e2.work_item_id = wi.id
-             OR e2.thread_id IN (SELECT thread_id FROM thread_work_items WHERE work_item_id = wi.id))
-            AND e2.targeted_at_operator = 1
+          WHERE ${aboutItem("e2", "wi.id")}
+            AND ${forOperator("e2", "wi.id")}
           ORDER BY e2.timestamp DESC
           LIMIT 1
         )
@@ -1258,8 +1359,7 @@ export class ContextGraph {
         AND (wi.merged_into IS NULL)
         AND NOT EXISTS (
           SELECT 1 FROM events e4
-          WHERE (e4.work_item_id = wi.id
-             OR e4.thread_id IN (SELECT thread_id FROM thread_work_items WHERE work_item_id = wi.id))
+          WHERE ${aboutItem("e4", "wi.id", false)}
             AND e4.targeted_at_operator = 0
             AND e4.status IN ('blocked_on_human', 'needs_decision')
             AND e4.confidence >= ?
@@ -1319,9 +1419,8 @@ export class ContextGraph {
         AND (wi.merged_into IS NULL)
         AND (wi.dismissed_at IS NULL OR EXISTS (
           SELECT 1 FROM events e3
-          WHERE (e3.work_item_id = wi.id
-             OR e3.thread_id IN (SELECT thread_id FROM thread_work_items WHERE work_item_id = wi.id))
-            AND e3.targeted_at_operator = 1
+          WHERE ${aboutItem("e3", "wi.id")}
+            AND ${forOperator("e3", "wi.id")}
             AND e3.timestamp > wi.dismissed_at
         ))
       ORDER BY
@@ -1382,9 +1481,8 @@ export class ContextGraph {
         AND (wi.current_atc_status IS NULL OR wi.current_atc_status NOT IN ('completed', 'noise'))
         AND NOT EXISTS (
           SELECT 1 FROM events e3
-          WHERE (e3.work_item_id = wi.id
-             OR e3.thread_id IN (SELECT thread_id FROM thread_work_items WHERE work_item_id = wi.id))
-            AND e3.targeted_at_operator = 1
+          WHERE ${aboutItem("e3", "wi.id")}
+            AND ${forOperator("e3", "wi.id")}
             AND e3.timestamp > wi.dismissed_at
         )
       ORDER BY wi.dismissed_at DESC
