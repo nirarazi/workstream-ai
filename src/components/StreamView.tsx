@@ -1,11 +1,12 @@
 import { useState, useEffect, useRef, useCallback, type JSX } from "react";
 import {
-  fetchInbox, fetchAllActive, fetchDismissed, fetchDone, setBadgeCount,
+  fetchInbox, fetchAllActive, fetchDismissed, fetchDone, fetchDigestChecks, setBadgeCount,
   mergeWorkItems, unmergeWorkItem,
-  type ActionableItem, type StreamFilter, type Mentionable,
+  type ActionableItem, type StreamFilter, type Mentionable, type DigestCheck,
 } from "../lib/api";
 import FilterTabs from "./stream/FilterTabs";
 import StreamListItem from "./stream/StreamListItem";
+import DigestChecks from "./stream/DigestChecks";
 import StreamDetail from "./stream/StreamDetail";
 import UndoToast from "./stream/UndoToast";
 import { type ActionState } from "./StatusBadge";
@@ -35,6 +36,8 @@ export default function StreamView({
   const [doneItems, setDoneItems] = useState<ActionableItem[]>([]);
   // All finished items: the list itself stops at the latest 200
   const [doneTotal, setDoneTotal] = useState(0);
+  // Digest disagreements left for the operator: shown at the top of Needs me, and counted with it
+  const [digestChecks, setDigestChecks] = useState<DigestCheck[]>([]);
   const [search, setSearch] = useState("");
   const [selectedWorkItemId, setSelectedWorkItemId] = useState<string | null>(null);
   const [actionStates, setActionStates] = useState<Map<string, ActionState>>(new Map());
@@ -60,16 +63,18 @@ export default function StreamView({
 
   const poll = useCallback(async () => {
     try {
-      const [inbox, allActive, dismissed, done] = await Promise.all([
+      const [inbox, allActive, dismissed, done, checks] = await Promise.all([
         fetchInbox(),
         fetchAllActive(),
-        // The Dismissed and Done tabs are secondary: if one fails, keep its last list rather than stall the inbox
+        // The Dismissed and Done tabs and digest checks are secondary: if one fails, keep its last list
         fetchDismissed().catch(() => null),
         fetchDone().catch(() => null),
+        fetchDigestChecks().catch(() => null),
       ]);
       setNeedsMeItems(inbox.items);
       setAllActiveItems(allActive.items);
       if (dismissed) setDismissedItems(dismissed.items);
+      if (checks) setDigestChecks(checks.items);
       if (done) {
         setDoneItems(done.items);
         setDoneTotal(done.total ?? done.items.length);
@@ -78,7 +83,7 @@ export default function StreamView({
       setLastSyncAt(new Date());
       setSyncError(false);
 
-      setBadgeCount(inbox.items.length);
+      setBadgeCount(inbox.items.length + (checks?.items.length ?? 0));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to fetch");
       setSyncError(true);
@@ -126,7 +131,7 @@ export default function StreamView({
   const currentItems = tabItems.filter((i) => matchesSearch(i, search));
 
   const counts = {
-    needsMe: needsMeItems.length,
+    needsMe: needsMeItems.length + digestChecks.length,
     snoozed: snoozedItems.length,
     allActive: allActiveItems.length,
     done: doneTotal,
@@ -256,7 +261,10 @@ export default function StreamView({
           {error && (
             <div className="px-4 py-2 text-xs text-red-400">{error}</div>
           )}
-          {sortedItems.length === 0 && !error && (
+          {filter === "needs-me" && !search.trim() && (
+            <DigestChecks checks={digestChecks} onDecided={poll} onOpen={(id) => setSelectedWorkItemId(id)} />
+          )}
+          {sortedItems.length === 0 && !error && !(filter === "needs-me" && digestChecks.length > 0 && !search.trim()) && (
             <div className="px-4 py-8 text-center text-gray-600 text-sm">
               {search.trim()
                 ? `Nothing matches “${search.trim()}” in this tab.`

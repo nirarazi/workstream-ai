@@ -428,6 +428,31 @@ export async function fetchDone(): Promise<{ items: ActionableItem[]; total?: nu
   return apiFetch("/api/stream/done");
 }
 
+/** A digest's claim about a work item that the judge couldn't settle: the operator decides */
+export interface DigestCheck {
+  eventId: string;
+  workItemId: string;
+  title: string | null;
+  appStatus: string | null;
+  digestStatus: string;
+  digestSaysNeedsYou: boolean;
+  digestText: string;
+  digestAt: string;
+  sender: string | null;
+  judgeNote: string | null;
+}
+
+export async function fetchDigestChecks(): Promise<{ items: DigestCheck[] }> {
+  return apiFetch("/api/digest-checks");
+}
+
+export async function decideDigestCheck(eventId: string, workItemId: string, verdict: "app" | "digest"): Promise<{ ok: boolean }> {
+  return apiFetch("/api/digest-checks/decide", {
+    method: "POST",
+    body: JSON.stringify({ eventId, workItemId, verdict }),
+  });
+}
+
 export async function togglePin(workItemId: string): Promise<PinResponse> {
   return apiFetch(`/api/work-item/${encodeURIComponent(workItemId)}/pin`, {
     method: "POST",

@@ -45,6 +45,24 @@ Reply with JSON only: {"verdict": "app" | "digest" | "unsure", "reason": "<one s
 - "digest": the item's own messages support the digest, or the digest reports something newer they don't contradict.
 - "unsure": the messages don't settle it.`;
 
+/**
+ * Settles a digest check that no longer needs judging: the item is gone, has moved on since the digest (a message
+ * about it, or the operator), the same sender's later line has spoken about it, or the two now agree. True if settled.
+ */
+export function settleIfStale(graph: ContextGraph, d: DigestDisagreement): boolean {
+  const item = graph.getWorkItemById(d.workItemId);
+  if (!item || item.mergedInto) {
+    graph.resolveDigestCheck(d.eventId, d.workItemId, "gone");
+  } else if ((item.statusAt && item.statusAt > d.createdAt) || graph.hasLaterDigestCheck(d.workItemId, d.createdAt, d.eventId)) {
+    graph.resolveDigestCheck(d.eventId, d.workItemId, "superseded");
+  } else if (item.currentAtcStatus && statusKind(item.currentAtcStatus) === statusKind(d.digestStatus)) {
+    graph.resolveDigestCheck(d.eventId, d.workItemId, "agrees");
+  } else {
+    return false;
+  }
+  return true;
+}
+
 /** Untrusted text as data: no angle brackets (so it can't open or close a tag, in any spelling), clipped */
 function asData(text: string, max: number): string {
   // Cut on a whole character: half an emoji (a lone surrogate) makes some providers reject the request
@@ -159,20 +177,8 @@ export class DigestJudge {
     return { settled, asked };
   }
 
-  /** Settles a check that doesn't need the model: the item is gone, has moved on, or a later digest has spoken */
   private settleForFree(d: DigestDisagreement): boolean {
-    const item = this.graph.getWorkItemById(d.workItemId);
-    if (!item || item.mergedInto) {
-      this.graph.resolveDigestCheck(d.eventId, d.workItemId, "gone");
-    } else if ((item.statusAt && item.statusAt > d.createdAt) || this.graph.hasLaterDigestCheck(d.workItemId, d.createdAt, d.eventId)) {
-      // A message about the item (or the operator) since, or a newer digest's word on it: this one is out of date
-      this.graph.resolveDigestCheck(d.eventId, d.workItemId, "superseded");
-    } else if (item.currentAtcStatus && statusKind(item.currentAtcStatus) === statusKind(d.digestStatus)) {
-      this.graph.resolveDigestCheck(d.eventId, d.workItemId, "agrees");
-    } else {
-      return false;
-    }
-    return true;
+    return settleIfStale(this.graph, d);
   }
 
   /** Acts on the model's verdict; true when the check is settled (false: it waits for the operator) */

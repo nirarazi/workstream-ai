@@ -17,7 +17,7 @@ import type { MessagingAdapter, PostedMessage } from "./adapters/messaging/inter
 import type { TaskAdapter } from "./adapters/tasks/interface.js";
 import { createRateLimiter, type RateLimiter } from "./rate-limiter.js";
 import { Summarizer } from "./summarizer/index.js";
-import { DigestJudge } from "./digests/judge.js";
+import { DigestJudge, settleIfStale } from "./digests/judge.js";
 import { detectAnomalies, type FleetItemInput } from "./graph/anomalies.js";
 import { Sidekick, type SidekickMessage } from "./sidekick/index.js";
 import { buildUnifiedStatus, buildTimeline, usableName } from "./stream.js";
@@ -454,6 +454,64 @@ export function createApp(state: EngineState): Hono {
   app.get("/api/stream/all-active", (c) => {
     const items = state.graph.getAllActiveItems();
     return c.json({ items });
+  });
+
+  // --- GET /api/digest-checks ---
+  // What digests disagree with the app about that the judge couldn't settle: the operator decides. Ones that went
+  // stale meanwhile (the item moved on, or its sender said something newer about it) are settled first.
+  app.get("/api/digest-checks", (c) => {
+    const checks = state.graph.getDigestChecksForOperator().filter((d) => !settleIfStale(state.graph, d));
+    const items = checks.map((d) => {
+      const workItem = state.graph.getWorkItemById(d.workItemId)!;
+      return {
+        eventId: d.eventId,
+        workItemId: d.workItemId,
+        title: workItem.title,
+        appStatus: workItem.currentAtcStatus,
+        digestStatus: d.digestStatus,
+        digestSaysNeedsYou: d.digestTargeted,
+        digestText: d.digestText,
+        digestAt: d.createdAt,
+        sender: d.senderName,
+        judgeNote: d.judgeReason,
+      };
+    });
+    return c.json({ items });
+  });
+
+  // --- POST /api/digest-checks/decide ---
+  // The operator's verdict on a digest check: "app" keeps the item as it is, "digest" takes the digest's view of it
+  app.post("/api/digest-checks/decide", async (c) => {
+    const body = await c.req.json<{ eventId?: unknown; workItemId?: unknown; verdict?: unknown }>().catch(() => ({}) as Record<string, unknown>);
+    const { eventId, workItemId, verdict } = body as { eventId?: unknown; workItemId?: unknown; verdict?: unknown };
+    if (typeof eventId !== "string" || typeof workItemId !== "string" || (verdict !== "app" && verdict !== "digest")) {
+      return c.json({ error: "Expected eventId, workItemId and verdict (app or digest)" }, 400);
+    }
+    const check = state.graph.getDigestCheckForOperator(eventId, workItemId);
+    if (!check) return c.json({ error: "No digest check waiting for that" }, 404);
+    if (verdict === "app") {
+      state.graph.resolveDigestCheck(eventId, workItemId, "operator-app");
+      return c.json({ ok: true });
+    }
+    const item = state.graph.getWorkItemById(workItemId)!;
+    const now = new Date().toISOString();
+    const status = check.digestStatus as StatusCategory;
+    state.graph.transaction(() => {
+      state.graph.upsertWorkItem({
+        id: workItemId,
+        source: item.source,
+        currentAtcStatus: status,
+        currentConfidence: 1,
+        statusAt: now, // the operator's word is the newest on it
+        snoozedUntil: item.snoozedUntil,
+      });
+      const needs = status === "blocked_on_human" || status === "needs_decision";
+      if (needs && item.currentAtcStatus === "completed") state.graph.setReopened(workItemId, now);
+      if (!needs) state.graph.setReopened(workItemId, null);
+      if (needs && check.digestTargeted) state.graph.addEventTarget(eventId, workItemId);
+      state.graph.resolveDigestCheck(eventId, workItemId, "operator-digest");
+    });
+    return c.json({ ok: true });
   });
 
   // --- GET /api/stream/done ---

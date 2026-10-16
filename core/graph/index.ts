@@ -807,6 +807,26 @@ export class ContextGraph {
     `).run(now, resolution, verdict?.verdict ?? null, verdict?.reason ?? null, verdict ? now : null, eventId, workItemId);
   }
 
+  /** Digest checks the judge left for the operator, oldest first, with who sent the digest and why it's waiting */
+  getDigestChecksForOperator(limit = 50): Array<DigestDisagreement & { judgeReason: string | null; senderName: string | null }> {
+    return (this.db.db.prepare(`
+      SELECT dc.event_id AS eventId, dc.work_item_id AS workItemId, dc.digest_status AS digestStatus,
+        dc.digest_targeted AS digestTargeted, dc.item_status AS itemStatus, dc.created_at AS createdAt, dc.from_line AS fromLine,
+        e.raw_text AS digestText, e.thread_id AS threadId, dc.judge_reason AS judgeReason, a.name AS senderName
+      FROM digest_checks dc
+      JOIN events e ON e.id = dc.event_id
+      LEFT JOIN agents a ON a.id = e.agent_id
+      WHERE dc.judge_verdict = 'unsure' AND dc.resolved_at IS NULL
+      ORDER BY dc.created_at LIMIT ?
+    `).all(limit) as Array<Omit<DigestDisagreement, "digestTargeted" | "fromLine"> & { digestTargeted: number; fromLine: number; judgeReason: string | null; senderName: string | null }>)
+      .map((r) => ({ ...r, digestTargeted: Boolean(r.digestTargeted), fromLine: Boolean(r.fromLine) }));
+  }
+
+  /** One digest check left for the operator, if it's still waiting */
+  getDigestCheckForOperator(eventId: string, workItemId: string): (DigestDisagreement & { judgeReason: string | null; senderName: string | null }) | null {
+    return this.getDigestChecksForOperator(500).find((d) => d.eventId === eventId && d.workItemId === workItemId) ?? null;
+  }
+
   /** The judge couldn't settle a digest check: it waits for the operator */
   markDigestCheckUnsure(eventId: string, workItemId: string, reason: string): void {
     this.db.db.prepare(`
