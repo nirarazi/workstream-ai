@@ -1076,7 +1076,7 @@ export class Pipeline {
           // Their message counts for the item wherever it's posted, with their line for it, so it can hand it off
           if (operatorsWord && (itemClassification || workItemId !== primaryWorkItemId)) {
             this.graph.addEventSubject(event.id, workItemId, itemClassification
-              ? { status: theirStatus, actionRequiredFrom: itemClassification.actionRequiredFrom }
+              ? { status: theirStatus, actionRequiredFrom: itemClassification.actionRequiredFrom, confidence: itemClassification.confidence }
               : undefined);
           }
 

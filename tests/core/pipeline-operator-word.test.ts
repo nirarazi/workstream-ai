@@ -165,6 +165,17 @@ describe("Pipeline: the operator's word", () => {
     ]);
   });
 
+  it("doesn't hand an item off on a line the model was unsure of", async () => {
+    const { graph, pipeline } = setup("OPS-1 shipped. OPS-2 maybe waiting on Dana?", answer({
+      status: "completed", confidence: 0.95, workItemIds: ["OPS-1", "OPS-2"],
+      breakdown: [line("OPS-1", "completed"), { ...line("OPS-2", "blocked_on_human", ["U-dana"]), confidence: 0.3 }],
+    }));
+
+    await pipeline.processOnce();
+
+    expect(graph.getActionableItems().map((i) => i.workItem.id)).toContain("OPS-2");
+  });
+
   it("doesn't let an older message of theirs, classified late, undo a newer status", async () => {
     const { graph, pipeline } = setup("Progress on OPS-2 this week", answer({}));
     graph.upsertWorkItem({ id: "OPS-2", source: "jira", currentAtcStatus: "blocked_on_human", statusAt: "2026-10-16T13:00:00.000Z" });
