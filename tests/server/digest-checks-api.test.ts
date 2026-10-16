@@ -129,6 +129,15 @@ describe("digest checks for the operator", () => {
     expect(graph.getActionableItems().map((i) => i.workItem.id)).toEqual(["OPS-5"]);
   });
 
+  it("brings a dismissed item back when the operator agrees the digest says it needs them", async () => {
+    const eventId = waiting("OPS-2", "in_progress", "blocked_on_human", true);
+    graph.dismissWorkItem("OPS-2");
+
+    await decide({ eventId, workItemId: "OPS-2", verdict: "digest" });
+
+    expect(graph.getActionableItems().map((i) => i.workItem.id)).toEqual(["OPS-2"]);
+  });
+
   it("leaves an item out of Needs me when the operator agrees it's blocked on someone else", async () => {
     const eventId = waiting("OPS-2", "in_progress", "blocked_on_human", false);
 

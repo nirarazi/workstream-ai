@@ -515,7 +515,11 @@ export function createApp(state: EngineState): Hono {
         });
         if (needs && item.currentAtcStatus === "completed") state.graph.setReopened(workItemId, now);
         if (!needs) state.graph.setReopened(workItemId, null);
-        if (needs && check.digestTargeted) state.graph.addEventTarget(eventId, workItemId);
+        if (needs && check.digestTargeted) {
+          state.graph.addEventTarget(eventId, workItemId);
+          // The operator just said it needs them: an earlier dismissal doesn't keep it out of Needs me
+          state.graph.clearDismissed(workItemId);
+        }
       }
       // In the item's timeline, like the operator's other actions
       state.graph.insertEvent({

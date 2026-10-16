@@ -487,6 +487,11 @@ export class ContextGraph {
     return this.db.db.transaction(fn).immediate() as T;
   }
 
+  /** Brings a dismissed work item back (its dismissal no longer applies) */
+  clearDismissed(workItemId: string): void {
+    this.db.db.prepare("UPDATE work_items SET dismissed_at = NULL, dismiss_reason = NULL WHERE id = ?").run(workItemId);
+  }
+
   /** Moves a thread's last activity forward to `at` (ISO), e.g. when the operator posts in it; never backwards */
   noteThreadActivity(threadId: string, at: string): void {
     this.db.db
