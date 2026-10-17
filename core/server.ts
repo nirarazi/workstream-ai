@@ -3,6 +3,7 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { serveStatic } from "@hono/node-server/serve-static";
+import { DEV_UI_HEADER, DEV_UI_ORIGINS, isDevUiSecret } from "./dev-ui.js";
 import { createLogger } from "./logger.js";
 import { loadConfig, findProjectRoot, resetConfig, type Config } from "./config.js";
 import { Database } from "./graph/db.js";
@@ -52,18 +53,15 @@ export interface EngineState {
 
 const LOOPBACK_NAMES = new Set(["127.0.0.1", "localhost", "[::1]"]);
 
-/** The Vite dev server's origins, trusted only when the dev scripts start the engine: otherwise any program on that port could post as the operator. */
-const DEV_UI_ORIGINS = ["http://localhost:5173", "http://127.0.0.1:5173"];
-
-/** The browser origins the UI runs on: Tauri WebView (macOS/Linux, then Windows), the engine itself in web mode, and the Vite dev server in development. */
-function appOrigins(port: number, devUi: boolean): string[] {
+/** The browser origins the UI runs on: Tauri WebView (macOS/Linux, then Windows) and the engine itself in web mode. */
+function appOrigins(port: number): string[] {
   return [
-    ...(devUi ? DEV_UI_ORIGINS : []),
     "tauri://localhost",
     "https://tauri.localhost",
     "http://tauri.localhost",
     `http://localhost:${port}`,
     `http://127.0.0.1:${port}`,
+    `http://[::1]:${port}`,
   ];
 }
 
@@ -186,9 +184,12 @@ function usablePosted(posted: PostedMessage | void): PostedMessage | undefined {
   return { messageId: posted.messageId, timestamp: new Date(posted.timestamp).toISOString() };
 }
 
-export function createApp(state: EngineState): Hono {
+export function createApp(state: EngineState, { projectRoot }: { projectRoot?: string } = {}): Hono {
   const app = new Hono();
-  const origins = appOrigins(state.config.server.port, process.env.WORKSTREAM_DEV_UI === "true");
+  const origins = appOrigins(state.config.server.port);
+  // In development the UI comes through the Vite dev server's proxy, which adds its secret: without it, a page from
+  // whatever else serves that port could act as the operator
+  const devUiRoot = process.env.WORKSTREAM_DEV_UI === "true" ? projectRoot ?? findProjectRoot() : null;
 
   // CORS stops other sites reading responses but not sending writes, so the engine can post to Slack
   // as the operator: refuse names other than this machine (DNS rebinding), writes from other origins,
@@ -198,9 +199,13 @@ export function createApp(state: EngineState): Hono {
     if (host && !LOOPBACK_NAMES.has(hostName(host).toLowerCase())) {
       return c.json({ error: "Forbidden host" }, 403);
     }
+    const origin = c.req.header("origin");
+    const fromDevUi = origin !== undefined && DEV_UI_ORIGINS.includes(origin);
+    if (fromDevUi && !(devUiRoot && isDevUiSecret(devUiRoot, c.req.header(DEV_UI_HEADER)))) {
+      return c.json({ error: "Forbidden origin" }, 403);
+    }
     if (c.req.method !== "GET" && c.req.method !== "HEAD" && c.req.method !== "OPTIONS") {
-      const origin = c.req.header("origin");
-      if (origin !== undefined && !origins.includes(origin)) {
+      if (origin !== undefined && !fromDevUi && !origins.includes(origin)) {
         return c.json({ error: "Forbidden origin" }, 403);
       }
       if (!(c.req.header("content-type") ?? "").toLowerCase().startsWith("application/json")) {
@@ -208,6 +213,7 @@ export function createApp(state: EngineState): Hono {
       }
     }
     await next();
+    c.res.headers.set("X-Content-Type-Options", "nosniff");
   });
 
   app.use(
@@ -1933,7 +1939,7 @@ async function main(): Promise<void> {
   // 8. Create and start Hono server — before pipeline polling so the server
   //    is reachable immediately (initial poll can block for minutes with rate limiting)
   const app = createApp(state);
-  if (process.env.WORKSTREAM_DEV_UI === "true") log.info("Development mode: trusting the Vite dev server on port 5173");
+  if (process.env.WORKSTREAM_DEV_UI === "true") log.info("Development mode: trusting the Vite dev server's proxy on port 5173");
 
   // Static file serving in web mode
   if (process.env.WORKSTREAM_SERVE_STATIC === "true") {

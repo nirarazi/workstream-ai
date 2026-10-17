@@ -238,9 +238,10 @@ let resolvedBaseUrl: string | null = null;
 async function getBaseUrl(): Promise<string> {
   if (resolvedBaseUrl) return resolvedBaseUrl;
 
-  // In the desktop app, ask the Rust side for the engine's URL; fall back to the default.
+  // In the desktop app, ask the Rust side for the engine's URL; fall back to the default. Its dev build goes through
+  // the Vite dev server's proxy like a browser, as the engine trusts the dev server only through it.
   // (The Tauri package is bundled for the browser too, so importing it doesn't mean we're in the app.)
-  if ("__TAURI_INTERNALS__" in window) {
+  if ("__TAURI_INTERNALS__" in window && !import.meta.env.DEV) {
     try {
       const { invoke } = await import("@tauri-apps/api/core");
       resolvedBaseUrl = await invoke<string>("get_engine_url");

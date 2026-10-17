@@ -50,7 +50,7 @@ fn set_badge_count(app: tauri::AppHandle, count: u32) {
 fn engine_shell_command(project_root: &std::path::Path) -> String {
     let root = project_root.display();
     if cfg!(debug_assertions) {
-        // The dev build's UI is the Vite dev server, so the engine must trust its origin
+        // The dev build's UI comes through the Vite dev server's proxy, which the engine trusts only in development
         format!("cd '{}' && exec env WORKSTREAM_DEV_UI=true npx tsx watch core/server.ts", root)
     } else {
         format!("cd '{}' && exec npx tsx core/server.ts", root)
