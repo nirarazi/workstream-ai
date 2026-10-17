@@ -251,10 +251,9 @@ async function getBaseUrl(): Promise<string> {
     return resolvedBaseUrl;
   }
 
-  // In a browser: the configured engine, or the page's own origin (the engine in web mode, Vite's proxy in dev).
-  // Web mode's policy only lets the UI talk to its own origin, so VITE_ENGINE_URL is for the dev server.
-  const envUrl = import.meta.env.VITE_ENGINE_URL as string | undefined;
-  resolvedBaseUrl = envUrl || window.location.origin;
+  // In a browser: the page's own origin, the engine in web mode or the dev server's proxy in development
+  // (WORKSTREAM_ENGINE_URL points the proxy elsewhere)
+  resolvedBaseUrl = window.location.origin;
   return resolvedBaseUrl;
 }
 

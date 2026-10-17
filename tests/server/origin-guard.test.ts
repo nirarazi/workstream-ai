@@ -1,4 +1,5 @@
-import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import { EventEmitter } from "node:events";
+import { lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import type { IncomingMessage } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -9,7 +10,7 @@ import { Classifier } from "../../core/classifier/index.js";
 import { WorkItemLinker } from "../../core/graph/linker.js";
 import { DefaultExtractor } from "../../core/graph/extractors/default.js";
 import { createApp, type EngineState } from "../../core/server.js";
-import { DEV_UI_DIR, DEV_UI_HEADER, createDevUiSecret, devUiProxy, isDevUiSecret } from "../../core/dev-ui.js";
+import { DEV_UI_DIR, DEV_UI_HEADER, createDevUiSecret, devUiServer, isDevUiSecret, isOwnUiRequest } from "../../core/dev-ui.js";
 
 function makeState(): EngineState {
   const db = new Database(":memory:");
@@ -125,10 +126,11 @@ describe("the Vite dev server is trusted only through its own proxy, in developm
     rmSync(root, { recursive: true, force: true });
   });
 
+  // Through the proxy a request keeps the dev server's address as its Host
   const request = (path: string, origin: string, extra: Record<string, string> = {}, method = "POST") =>
     createApp(state, { projectRoot: root }).request(path, {
       method,
-      headers: { Origin: origin, "Content-Type": "application/json", ...extra },
+      headers: { Origin: origin, Host: new URL(origin).host, "Content-Type": "application/json", ...extra },
       body: method === "POST" ? REPLY : undefined,
     });
 
@@ -158,6 +160,18 @@ describe("the Vite dev server is trusted only through its own proxy, in developm
     expect((await request("/api/reply", "http://localhost:5173", { [DEV_UI_HEADER]: fresh })).status).toBe(200);
   });
 
+  it("refuses a page from the other loopback address on that port, even with the secret added", async () => {
+    vi.stubEnv("WORKSTREAM_DEV_UI", "true");
+    const res = await request("/api/reply", "http://127.0.0.1:5173", { [DEV_UI_HEADER]: secret, Host: "localhost:5173" });
+    expect(res.status).toBe(403);
+  });
+
+  it("says why, in development, when the secret is missing", async () => {
+    vi.stubEnv("WORKSTREAM_DEV_UI", "true");
+    const res = await request("/api/reply", "http://localhost:5173");
+    expect(((await res.json()) as { error: string }).error).toMatch(/dev server's current secret/);
+  });
+
   it("refuses the dev server outside development, secret or not", async () => {
     vi.stubEnv("WORKSTREAM_DEV_UI", "");
     expect((await request("/api/reply", "http://localhost:5173", { [DEV_UI_HEADER]: secret })).status).toBe(403);
@@ -177,27 +191,82 @@ describe("the dev server's proxy", () => {
   });
   afterEach(() => rmSync(root, { recursive: true, force: true }));
 
-  const from = (remoteAddress: string) => ({ socket: { remoteAddress } }) as unknown as IncomingMessage;
+  const req = (remoteAddress: string, headers: Record<string, string> = {}) =>
+    ({ socket: { remoteAddress }, headers: { host: "localhost:5173", ...headers } }) as unknown as IncomingMessage;
+
+  /** Starts a dev server run: its plugin's server, then "listening"; returns the header it adds */
+  function run(listen = true) {
+    const { plugin, proxy } = devUiServer(root, "http://127.0.0.1:9847");
+    const httpServer = new EventEmitter();
+    (plugin.configureServer as (server: unknown) => void)({ httpServer });
+    if (listen) httpServer.emit("listening");
+    let onProxyReq: (r: { setHeader: (n: string, v: string) => void }) => void = () => {};
+    (proxy.configure as (p: unknown) => void)({ on: (_event: string, fn: typeof onProxyReq) => (onProxyReq = fn) });
+    return {
+      proxy,
+      header: () => {
+        const set: Record<string, string> = {};
+        onProxyReq({ setHeader: (n, v) => (set[n] = v) });
+        return set[DEV_UI_HEADER];
+      },
+    };
+  }
 
   it("forwards requests from this machine only, so the network can't reach the engine through it", () => {
-    const { bypass } = devUiProxy(root, "http://127.0.0.1:9847");
-    for (const address of ["127.0.0.1", "::1", "::ffff:127.0.0.1"]) expect(bypass(from(address)), address).toBeUndefined();
-    for (const address of ["192.168.1.20", "::ffff:10.0.0.5", "fe80::1", ""]) expect(bypass(from(address)), address).toBe(false);
+    for (const address of ["127.0.0.1", "::1", "::ffff:127.0.0.1"]) expect(isOwnUiRequest(req(address)), address).toBe(true);
+    for (const address of ["192.168.1.20", "::ffff:10.0.0.5", "fe80::1", ""]) expect(isOwnUiRequest(req(address)), address).toBe(false);
   });
 
-  it("adds a fresh secret that only this user can read", () => {
-    const first = devUiProxy(root, "http://127.0.0.1:9847").headers[DEV_UI_HEADER];
-    const second = devUiProxy(root, "http://127.0.0.1:9847").headers[DEV_UI_HEADER];
+  it("forwards only its own pages' requests, so other local pages can't read or act through it", () => {
+    expect(isOwnUiRequest(req("127.0.0.1", { origin: "http://localhost:5173", "sec-fetch-site": "same-origin" }))).toBe(true);
+    for (const headers of [
+      { origin: "http://localhost:3000" },
+      { origin: "http://127.0.0.1:5173" },
+      { origin: "http://evil.localhost:8080" },
+      { "sec-fetch-site": "same-site" },
+      { "sec-fetch-site": "cross-site" },
+    ]) {
+      expect(isOwnUiRequest(req("127.0.0.1", headers)), JSON.stringify(headers)).toBe(false);
+    }
+    const { proxy } = run();
+    expect((proxy.bypass as (r: IncomingMessage) => unknown)(req("127.0.0.1", { origin: "http://localhost:3000" }))).toBe(false);
+  });
+
+  it("adds a fresh secret once listening, readable only by this user", () => {
+    const first = run().header();
+    const second = run().header();
     expect(first).toMatch(/^[0-9a-f]{64}$/);
     expect(second).not.toBe(first);
     expect(isDevUiSecret(root, second)).toBe(true);
-    expect(statSync(join(root, DEV_UI_DIR, "ui-secret")).mode & 0o777).toBe(0o600);
-    expect(statSync(join(root, DEV_UI_DIR)).mode & 0o777).toBe(0o700);
+    if (process.platform !== "win32") {
+      expect(statSync(join(root, DEV_UI_DIR, "ui-secret")).mode & 0o777).toBe(0o600);
+      expect(statSync(join(root, DEV_UI_DIR)).mode & 0o777).toBe(0o700);
+    }
   });
 
-  it("isn't served by the dev server, nor committed", () => {
+  it("leaves the running dev server's secret alone when another run doesn't start", () => {
+    const live = run().header();
+    expect(run(false).header()).toBeUndefined();
+    expect(isDevUiSecret(root, live)).toBe(true);
+  });
+
+  it.skipIf(process.platform === "win32")("never writes the secret through a link", () => {
+    mkdirSync(join(root, DEV_UI_DIR), { mode: 0o700 });
+    const elsewhere = join(root, "elsewhere");
+    writeFileSync(elsewhere, "untouched");
+    symlinkSync(elsewhere, join(root, DEV_UI_DIR, "ui-secret"));
+    createDevUiSecret(root);
+    expect(readFileSync(elsewhere, "utf8")).toBe("untouched");
+    expect(lstatSync(join(root, DEV_UI_DIR, "ui-secret")).isSymbolicLink()).toBe(false);
+  });
+
+  it("names the secret's folder in the dev server's deny list and in .gitignore (an end-to-end run checked it isn't served)", () => {
     expect(readFileSync("vite.config.ts", "utf8")).toContain("here(DEV_UI_DIR)");
     expect(readFileSync(".gitignore", "utf8").split("\n")).toContain(`${DEV_UI_DIR}/`);
+  });
+
+  it("turns off the dev server's own CORS, which would let other local pages read through it", () => {
+    expect(readFileSync("vite.config.ts", "utf8")).toMatch(/\bcors: false\b/);
   });
 });
 

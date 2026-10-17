@@ -195,14 +195,19 @@ export function createApp(state: EngineState, { projectRoot }: { projectRoot?: s
   // as the operator: refuse names other than this machine (DNS rebinding), writes from other origins,
   // and writes that aren't JSON (those can be sent without a preflight). Local tools send no Origin.
   app.use("/api/*", async (c, next) => {
+    c.header("X-Content-Type-Options", "nosniff");
     const host = c.req.header("host");
     if (host && !LOOPBACK_NAMES.has(hostName(host).toLowerCase())) {
       return c.json({ error: "Forbidden host" }, 403);
     }
     const origin = c.req.header("origin");
     const fromDevUi = origin !== undefined && DEV_UI_ORIGINS.includes(origin);
-    if (fromDevUi && !(devUiRoot && isDevUiSecret(devUiRoot, c.req.header(DEV_UI_HEADER)))) {
-      return c.json({ error: "Forbidden origin" }, 403);
+    // Through the proxy the request keeps the dev server's own address, so its origin must be that address
+    if (fromDevUi && !(devUiRoot && origin === `http://${host}` && isDevUiSecret(devUiRoot, c.req.header(DEV_UI_HEADER)))) {
+      const error = devUiRoot
+        ? "Development UI request without the dev server's current secret: reload the page, or restart npm run dev"
+        : "Forbidden origin";
+      return c.json({ error }, 403);
     }
     if (c.req.method !== "GET" && c.req.method !== "HEAD" && c.req.method !== "OPTIONS") {
       if (origin !== undefined && !fromDevUi && !origins.includes(origin)) {
@@ -213,7 +218,6 @@ export function createApp(state: EngineState, { projectRoot }: { projectRoot?: s
       }
     }
     await next();
-    c.res.headers.set("X-Content-Type-Options", "nosniff");
   });
 
   app.use(
