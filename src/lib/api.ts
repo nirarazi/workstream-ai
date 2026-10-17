@@ -588,24 +588,29 @@ export async function setBadgeCount(count: number): Promise<void> {
 
 // ---------------------------------------------------------------------------
 // External URL opener — uses Tauri shell plugin in WebView, falls back to
-// window.open in browser.
+// window.open in browser. Only web and email links open (see openableUrl).
 // ---------------------------------------------------------------------------
 
-/** Only web links open: links can come from message content, and other schemes (file:, app handlers) reach the OS */
+/** Schemes that may open. Keep in step with plugins.shell.open in src-tauri/tauri.conf.json */
+const OPENABLE_SCHEMES = new Set(["https:", "http:", "mailto:"]);
+
+/**
+ * The link as it will open, or null if it may not: links can come from message content, so only web and email
+ * links open, never local files or other apps' handlers. The parsed form, so what's checked is what opens.
+ */
 export function openableUrl(url: string): string | null {
   try {
     const parsed = new URL(url);
-    return parsed.protocol === "https:" || parsed.protocol === "http:" ? parsed.href : null;
+    return OPENABLE_SCHEMES.has(parsed.protocol) ? parsed.href : null;
   } catch {
     return null;
   }
 }
 
 export async function openExternalUrl(raw: string): Promise<void> {
-  // The parsed form, so what's checked is what opens
   const url = openableUrl(raw);
   if (!url) {
-    console.warn("Not opening a link that isn't http(s)");
+    console.warn("Not opening a link that isn't a web or email link");
     return;
   }
   try {
