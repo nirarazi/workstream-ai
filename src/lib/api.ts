@@ -588,16 +588,46 @@ export async function setBadgeCount(count: number): Promise<void> {
 
 // ---------------------------------------------------------------------------
 // External URL opener — uses Tauri shell plugin in WebView, falls back to
-// window.open in browser.
+// window.open in browser. Only web and email links open (see openableUrl).
 // ---------------------------------------------------------------------------
 
-export async function openExternalUrl(url: string): Promise<void> {
+/** Schemes that may open. Keep in step with plugins.shell.open in src-tauri/tauri.conf.json */
+const OPENABLE_SCHEMES = new Set(["https:", "http:", "mailto:"]);
+
+/**
+ * The link as it will open, or null if it may not: links can come from message content, so only web and email
+ * links open, never local files or other apps' handlers. The parsed form, so what's checked is what opens.
+ */
+export function openableUrl(url: string): string | null {
   try {
-    const { open } = await import("@tauri-apps/plugin-shell");
-    await open(url);
+    const parsed = new URL(url);
+    if (!OPENABLE_SCHEMES.has(parsed.protocol)) return null;
+    if (parsed.protocol === "mailto:") {
+      // Just the address: query fields (attachments, in some mail clients) are the sender's to choose, not a message's
+      parsed.search = "";
+      // An empty address has nothing to open, and the desktop app's check refuses it
+      if (!parsed.pathname) return null;
+    }
+    // Email links keep spaces unencoded; the desktop app's check refuses any
+    return /\s/.test(parsed.href) ? null : parsed.href;
   } catch {
-    window.open(url, "_blank", "noreferrer");
+    return null;
   }
+}
+
+export async function openExternalUrl(raw: string): Promise<void> {
+  const url = openableUrl(raw);
+  if (!url) {
+    console.warn("Not opening a link that isn't a web or email link");
+    return;
+  }
+  // In the desktop app, the shell's refusal is final; the browser fallback is for the web UI
+  if ("__TAURI_INTERNALS__" in window) {
+    const { open } = await import("@tauri-apps/plugin-shell");
+    await open(url).catch((err: unknown) => console.warn("Couldn't open the link", err));
+    return;
+  }
+  window.open(url, "_blank", "noreferrer");
 }
 
 // ---------------------------------------------------------------------------

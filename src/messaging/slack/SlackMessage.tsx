@@ -1,6 +1,6 @@
 import type { JSX } from "react";
 import { parseSlackMessage, resolveEmoji, type Segment } from "./format";
-import { openExternalUrl } from "../../lib/api";
+import { openExternalUrl, openableUrl } from "../../lib/api";
 
 interface SlackMessageProps {
   text: string;
@@ -44,11 +44,15 @@ function renderSegment(seg: Segment, i: number): JSX.Element {
       );
 
     case "link":
+      // A link that wouldn't open shows as its text, not as something to click
+      if (!openableUrl(seg.url)) return <span key={i}>{seg.label}</span>;
       return (
         <button
           key={i}
           type="button"
           onClick={() => openExternalUrl(seg.url)}
+          // Where it really goes: a message's label can say anything
+          title={seg.url}
           className="text-cyan-400 hover:underline cursor-pointer"
         >
           {seg.label}
