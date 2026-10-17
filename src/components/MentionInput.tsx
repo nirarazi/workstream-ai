@@ -222,25 +222,27 @@ const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(function 
     const lines = text.split("\n");
     // Each command fires an input event: decorate once at the end, not once per line
     insertingRef.current = true;
-    const first = lines[0] ? document.execCommand?.("insertText", false, lines[0]) : document.execCommand?.("insertLineBreak");
-    if (first) {
-      lines.forEach((line, i) => {
-        if (i === 0) return;
-        if (i > 1 || lines[0]) document.execCommand("insertLineBreak");
-        if (line) document.execCommand("insertText", false, line);
-      });
-    } else {
-      range.deleteContents();
-      const node = document.createTextNode(text);
-      range.insertNode(node);
-      range.setStartAfter(node);
-      range.collapse(true);
-      sel.removeAllRanges();
-      sel.addRange(range);
-      handleInput();
+    try {
+      const first = lines[0] ? document.execCommand?.("insertText", false, lines[0]) : document.execCommand?.("insertLineBreak");
+      if (first) {
+        lines.forEach((line, i) => {
+          if (i === 0) return;
+          if (i > 1 || lines[0]) document.execCommand("insertLineBreak");
+          if (line) document.execCommand("insertText", false, line);
+        });
+      } else {
+        range.deleteContents();
+        const node = document.createTextNode(text);
+        range.insertNode(node);
+        range.setStartAfter(node);
+        range.collapse(true);
+        sel.removeAllRanges();
+        sel.addRange(range);
+      }
+    } finally {
+      insertingRef.current = false;
     }
-    insertingRef.current = false;
-    if (first) handleInput();
+    handleInput();
     // Decorate even when the text ends in a mention trigger, so nothing pasted is left in a hidden marker
     decorateInput?.(el);
   }

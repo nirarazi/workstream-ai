@@ -82,6 +82,12 @@ describe("serializing the reply", () => {
 });
 
 describe("where pasted text goes", () => {
+  it("clears the placeholder", () => {
+    const { editor } = renderInput();
+    fireEvent.paste(editor, { clipboardData: clipboard({ "text/plain": "hello" }) });
+    expect(editor.className).not.toContain("before:content");
+  });
+
   it("at the caret", () => {
     const { editor, ref } = renderInput();
     editor.textContent = "ab";
