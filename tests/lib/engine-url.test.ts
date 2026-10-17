@@ -2,7 +2,7 @@
 
 import { describe, it, expect, vi, afterEach } from "vitest";
 
-const invoke = vi.fn(async (_cmd: string) => "http://127.0.0.1:9999");
+const invoke = vi.hoisted(() => vi.fn(async (_cmd: string) => "http://127.0.0.1:9999"));
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 
 afterEach(() => {

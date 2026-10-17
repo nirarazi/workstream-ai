@@ -250,7 +250,8 @@ async function getBaseUrl(): Promise<string> {
     return resolvedBaseUrl;
   }
 
-  // In a browser: the configured engine, or the page's own origin (the engine in web mode, Vite's proxy in dev)
+  // In a browser: the configured engine, or the page's own origin (the engine in web mode, Vite's proxy in dev).
+  // Web mode's policy only lets the UI talk to its own origin, so VITE_ENGINE_URL is for the dev server.
   const envUrl = import.meta.env.VITE_ENGINE_URL as string | undefined;
   resolvedBaseUrl = envUrl || window.location.origin;
   return resolvedBaseUrl;
@@ -575,11 +576,12 @@ export function fetchSetupAdapters(): Promise<SetupAdaptersResponse> {
 // ---------------------------------------------------------------------------
 
 export async function setBadgeCount(count: number): Promise<void> {
+  if (!("__TAURI_INTERNALS__" in window)) return;
   try {
-    const tauri = await import("@tauri-apps/api/core");
-    await (tauri as { invoke: (cmd: string, args?: Record<string, unknown>) => Promise<void> }).invoke("set_badge_count", { count });
+    const { invoke } = await import("@tauri-apps/api/core");
+    await invoke("set_badge_count", { count });
   } catch {
-    // Not in Tauri or command unavailable — silently ignore
+    // Command unavailable — silently ignore
   }
 }
 

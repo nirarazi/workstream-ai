@@ -2,6 +2,7 @@
 
 import { Hono } from "hono";
 import { cors } from "hono/cors";
+import { serveStatic } from "@hono/node-server/serve-static";
 import { createLogger } from "./logger.js";
 import { loadConfig, findProjectRoot, resetConfig, type Config } from "./config.js";
 import { Database } from "./graph/db.js";
@@ -74,8 +75,8 @@ export const WEB_UI_CSP =
   "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; " +
   "connect-src 'self'; object-src 'none'; base-uri 'none'; frame-src 'none'; form-action 'none'; frame-ancestors 'none'";
 
-/** Adds the web UI's security headers to everything outside the API. Register it before serving the files. */
-export function useWebUiHeaders(app: Hono): void {
+/** Serves the built UI from `root` (web mode) under its security headers. Everything under /api/ is left alone. */
+export function serveWebUi(app: Hono, root: string): void {
   app.use("/*", async (c, next) => {
     await next();
     if (c.req.path.startsWith("/api/")) return;
@@ -83,6 +84,7 @@ export function useWebUiHeaders(app: Hono): void {
     c.res.headers.set("X-Content-Type-Options", "nosniff");
     c.res.headers.set("Referrer-Policy", "no-referrer");
   });
+  app.use("/*", serveStatic({ root }));
 }
 
 function hostName(host: string): string {
@@ -1935,9 +1937,7 @@ async function main(): Promise<void> {
 
   // Static file serving in web mode
   if (process.env.WORKSTREAM_SERVE_STATIC === "true") {
-    const { serveStatic } = await import("@hono/node-server/serve-static");
-    useWebUiHeaders(app);
-    app.use("/*", serveStatic({ root: "./dist" }));
+    serveWebUi(app, "./dist");
     log.info("Serving static files from ./dist/");
   }
 
