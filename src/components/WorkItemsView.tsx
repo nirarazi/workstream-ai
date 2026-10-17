@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback, useMemo, type JSX } from "react";
-import { fetchFleet, fetchAgents, agentsToMentionables, type FleetItem, type Agent, type Mentionable } from "../lib/api";
+import { fetchFleet, fetchAgents, agentsToMentionables, type FleetItem, type Agent, type Mentionable, engineUrl } from "../lib/api";
 import { timeAgo } from "../lib/time";
 import StatusBadge from "./StatusBadge";
 import FleetFilters from "./FleetFilters";
@@ -155,7 +155,7 @@ export default function WorkItemsView(_props: WorkItemsViewProps): JSX.Element {
                   {item.agent ? (
                     <div className="flex items-center gap-2">
                       {item.agent.avatarUrl ? (
-                        <img src={item.agent.avatarUrl} className="h-5 w-5 rounded-full" />
+                        <img src={engineUrl(item.agent.avatarUrl)} className="h-5 w-5 rounded-full" />
                       ) : (
                         <span className="flex h-5 w-5 items-center justify-center rounded-full bg-gray-700 text-xs text-gray-400">
                           {item.agent.name.charAt(0)}

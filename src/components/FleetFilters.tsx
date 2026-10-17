@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, type JSX } from "react";
+import { engineUrl } from "../lib/api";
 import type { Agent } from "../lib/api";
 
 interface FleetFiltersProps {
@@ -113,7 +114,7 @@ function AgentMultiSelect({
               </span>
               {agent.avatarUrl ? (
                 <img
-                  src={agent.avatarUrl}
+                  src={engineUrl(agent.avatarUrl)}
                   alt=""
                   className="h-4 w-4 rounded-full"
                 />

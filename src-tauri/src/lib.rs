@@ -32,7 +32,7 @@ impl Drop for Sidecar {
     }
 }
 
-// Also allowed by connect-src in tauri.conf.json's CSP: change both together
+// Also allowed by connect-src and img-src in tauri.conf.json's CSP: change both together
 #[tauri::command]
 fn get_engine_url() -> String {
     "http://127.0.0.1:9847".to_string()

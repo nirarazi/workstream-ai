@@ -3,6 +3,7 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { serveStatic } from "@hono/node-server/serve-static";
+import { AvatarStore } from "./avatars.js";
 import { DEV_UI_HEADER, DEV_UI_ORIGINS, isDevUiSecret } from "./dev-ui.js";
 import { createLogger } from "./logger.js";
 import { loadConfig, findProjectRoot, resetConfig, type Config } from "./config.js";
@@ -67,10 +68,11 @@ function appOrigins(port: number): string[] {
 
 /**
  * The policy for the UI when the engine serves it (web mode): the desktop app's (app.security.csp in
- * src-tauri/tauri.conf.json), talking only to this engine, and never framed by another page.
+ * src-tauri/tauri.conf.json), talking only to this engine and loading images (avatars) only from it, and never framed
+ * by another page.
  */
 export const WEB_UI_CSP =
-  "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; " +
+  "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; " +
   "connect-src 'self'; object-src 'none'; base-uri 'none'; frame-src 'none'; form-action 'none'; frame-ancestors 'none'";
 
 /** Serves the built UI from `root` (web mode) under its security headers. Everything under /api/ is left alone. */
@@ -218,6 +220,29 @@ export function createApp(state: EngineState, { projectRoot }: { projectRoot?: s
       }
     }
     await next();
+  });
+
+  // The UI loads avatars only from the engine: every avatar URL in a response becomes a path served below
+  const avatars = new AvatarStore(() => state.graph.getAllAgents().map((a) => a.avatarUrl));
+  app.use("/api/*", async (c, next) => {
+    await next();
+    if (c.req.path.startsWith("/api/avatars/") || !(c.res.headers.get("content-type") ?? "").includes("application/json")) return;
+    const res = c.res;
+    const headers = new Headers(res.headers);
+    headers.delete("content-length");
+    const body = JSON.stringify(avatars.rewrite(await res.json()));
+    c.res = undefined;
+    c.res = new Response(body, { status: res.status, headers });
+  });
+
+  app.get("/api/avatars/:id{[0-9a-f]{32}}", async (c) => {
+    const image = await avatars.get(c.req.param("id"));
+    if (!image) return c.json({ error: "No such avatar" }, 404);
+    return c.body(image.body as Uint8Array<ArrayBuffer>, 200, {
+      "Content-Type": image.type,
+      "Cache-Control": "private, max-age=86400",
+      "Content-Security-Policy": "default-src 'none'; sandbox",
+    });
   });
 
   app.use(

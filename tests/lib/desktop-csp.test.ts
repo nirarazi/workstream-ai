@@ -25,7 +25,7 @@ describe("desktop webview CSP", () => {
       // React's style attributes. An inline <style> in the page would make Tauri add a nonce, and browsers then ignore 'unsafe-inline'
       "style-src": ["'self'", "'unsafe-inline'"],
       // Avatars come from the messaging platform's servers
-      "img-src": ["'self'", "data:", "https:"],
+      "img-src": ["'self'", "data:", "http://127.0.0.1:9847"],
       "font-src": ["'self'", "data:"],
       // The shell's IPC (macOS/Linux, then Windows) and the local engine
       "connect-src": ["'self'", "ipc:", "http://ipc.localhost", "http://127.0.0.1:9847"],
