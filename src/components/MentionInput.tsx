@@ -31,6 +31,13 @@ interface MentionInputProps {
 const ZWS = "\u200B";
 
 /**
+ * Characters that don't show but can change what's sent: zero-width and joiner controls (not the zero-width joiner
+ * emoji use), reordering controls (bidirectional), the byte order mark, and tag characters and supplementary variation
+ * selectors, which some models read as hidden text
+ */
+const INVISIBLE = /[\u200B\u200C\u200E\u200F\u202A-\u202E\u2060-\u2064\u2066-\u2069\uFEFF\u{E0000}-\u{E007F}\u{E0100}-\u{E01EF}]/gu;
+
+/**
  * Rich text input with @mention typeahead.
  *
  * Uses a contentEditable div internally. Mention "pills" are non-editable spans
@@ -76,25 +83,33 @@ const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(function 
     if (!el) return "";
 
     let result = "";
-    // Line breaks typed with Shift+Enter arrive as <br> or as a new <div> per line, and mentions can sit inside either
+    let lineBreakFirst = false;
+    const add = (part: string) => {
+      if (lineBreakFirst && result && !result.endsWith("\n")) result += "\n";
+      lineBreakFirst = false;
+      result += part;
+    };
+    // Line breaks typed with Shift+Enter arrive as "\n", <br> or a <div> per line, and mentions can sit inside any of
+    // them. Only DIV and P count as lines: nothing else that makes blocks can get in, as pastes are plain text.
     const walk = (parent: Node) => {
       for (const node of parent.childNodes) {
         if (node.nodeType === Node.TEXT_NODE) {
-          result += node.textContent ?? "";
+          if (node.textContent) add(node.textContent);
         } else if (node instanceof HTMLElement && node.dataset.mentionId) {
-          result += serializeMention(node.dataset.mentionId);
+          add(serializeMention(node.dataset.mentionId));
         } else if (node instanceof HTMLBRElement) {
-          result += "\n";
+          add("\n");
         } else if (node instanceof HTMLElement) {
           const block = node.tagName === "DIV" || node.tagName === "P";
-          if (block && result && !result.endsWith("\n")) result += "\n";
+          if (block) lineBreakFirst = true;
           walk(node);
+          if (block) lineBreakFirst = true;
         }
       }
     };
     walk(el);
-    // Strip zero-width spaces from serialized output
-    return result.replace(/\u200B/g, "").trim();
+    // Strip characters that don't show (zero-width spaces among them, the cursor's landing pads after mentions)
+    return result.replace(INVISIBLE, "").trim();
   }, [serializeMention]);
 
   // Expose serialize/clear to parent via ref
@@ -168,39 +183,59 @@ const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(function 
 
   // --- Input handling ---
 
-  // Pasted or dropped content goes in as plain text: markup could hide text that would still be posted as the
-  // operator, or load images from someone else's server
+  // Pasted or dropped content goes in as plain text without invisible characters: markup could hide text that
+  // would still be posted as the operator, or load images from someone else's server
   function insertPlainText(e: React.ClipboardEvent<HTMLDivElement> | React.DragEvent<HTMLDivElement>) {
+    const el = editorRef.current;
     const data = "clipboardData" in e ? e.clipboardData : e.dataTransfer;
     e.preventDefault();
-    const text = data?.getData("text/plain").replace(/\r\n?/g, "\n") ?? "";
-    if (!text) return;
+    const text = data?.getData("text/plain").replace(/\r\n?/g, "\n").replace(INVISIBLE, "") ?? "";
+    const sel = window.getSelection();
+    if (!text || !el || !sel) return;
+
+    let range: Range | null = sel.rangeCount > 0 ? sel.getRangeAt(0) : null;
     if ("dataTransfer" in e) {
-      const caret = document.caretRangeFromPoint?.(e.clientX, e.clientY);
-      if (caret) {
-        const sel = window.getSelection();
-        sel?.removeAllRanges();
-        sel?.addRange(caret);
-      }
+      const caret = document.caretPositionFromPoint?.(e.clientX, e.clientY);
+      range = caret ? document.createRange() : document.caretRangeFromPoint?.(e.clientX, e.clientY) ?? range;
+      if (caret && range) range.setStart(caret.offsetNode, caret.offset);
     }
-    // insertText keeps the browser's undo history; where it's unavailable, insert a text node at the caret
-    if (!document.execCommand?.("insertText", false, text)) {
-      const sel = window.getSelection();
-      const el = editorRef.current;
-      if (!sel || sel.rangeCount === 0 || !el || !el.contains(sel.getRangeAt(0).startContainer)) {
-        el?.append(text);
-      } else {
-        const range = sel.getRangeAt(0);
-        range.deleteContents();
-        const node = document.createTextNode(text);
-        range.insertNode(node);
-        range.setStartAfter(node);
-        range.collapse(true);
-        sel.removeAllRanges();
-        sel.addRange(range);
-      }
+    if (!range || !el.contains(range.startContainer)) {
+      range = document.createRange();
+      range.selectNodeContents(el);
+      range.collapse(false);
     }
-    handleInput();
+    // Never inside a mention: its text isn't what's sent
+    const pill = (range.startContainer instanceof Element ? range.startContainer : range.startContainer.parentElement)
+      ?.closest("[data-mention-id]");
+    if (pill) {
+      range.setStartAfter(pill);
+      range.collapse(true);
+    }
+    sel.removeAllRanges();
+    sel.addRange(range);
+
+    // Line by line through the browser's editing commands keeps undo, and the text flat (the editor keeps "\n" as
+    // is) rather than a <div> per line. Where they're unavailable, insert a text node at the caret.
+    const lines = text.split("\n");
+    const first = lines[0] ? document.execCommand?.("insertText", false, lines[0]) : document.execCommand?.("insertLineBreak");
+    if (first) {
+      lines.forEach((line, i) => {
+        if (i === 0) return;
+        if (i > 1 || lines[0]) document.execCommand("insertLineBreak");
+        if (line) document.execCommand("insertText", false, line);
+      });
+    } else {
+      range.deleteContents();
+      const node = document.createTextNode(text);
+      range.insertNode(node);
+      range.setStartAfter(node);
+      range.collapse(true);
+      sel.removeAllRanges();
+      sel.addRange(range);
+      handleInput();
+    }
+    // Decorate even when the text ends in a mention trigger, so nothing pasted is left in a hidden marker
+    decorateInput?.(el);
   }
 
   function updateEmpty() {
@@ -369,6 +404,8 @@ const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(function 
           onKeyDown={handleKeyDown}
           onPaste={insertPlainText}
           onDrop={insertPlainText}
+          // Dragging text within the editor would copy it, as drops are taken as plain text: cut and paste instead
+          onDragStart={(e) => e.preventDefault()}
           data-placeholder={placeholder}
           className={`
             min-h-[34px] w-full whitespace-pre-wrap break-words
