@@ -66,6 +66,25 @@ function appOrigins(port: number, devUi: boolean): string[] {
   ];
 }
 
+/**
+ * The policy for the UI when the engine serves it (web mode): the desktop app's (app.security.csp in
+ * src-tauri/tauri.conf.json), talking only to this engine, and never framed by another page.
+ */
+export const WEB_UI_CSP =
+  "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; " +
+  "connect-src 'self'; object-src 'none'; base-uri 'none'; frame-src 'none'; form-action 'none'; frame-ancestors 'none'";
+
+/** Adds the web UI's security headers to everything outside the API. Register it before serving the files. */
+export function useWebUiHeaders(app: Hono): void {
+  app.use("/*", async (c, next) => {
+    await next();
+    if (c.req.path.startsWith("/api/")) return;
+    c.res.headers.set("Content-Security-Policy", WEB_UI_CSP);
+    c.res.headers.set("X-Content-Type-Options", "nosniff");
+    c.res.headers.set("Referrer-Policy", "no-referrer");
+  });
+}
+
 function hostName(host: string): string {
   return host.startsWith("[") ? host.slice(0, host.indexOf("]") + 1) : host.split(":")[0];
 }
@@ -1917,6 +1936,7 @@ async function main(): Promise<void> {
   // Static file serving in web mode
   if (process.env.WORKSTREAM_SERVE_STATIC === "true") {
     const { serveStatic } = await import("@hono/node-server/serve-static");
+    useWebUiHeaders(app);
     app.use("/*", serveStatic({ root: "./dist" }));
     log.info("Serving static files from ./dist/");
   }

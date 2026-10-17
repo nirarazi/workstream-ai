@@ -238,22 +238,19 @@ let resolvedBaseUrl: string | null = null;
 async function getBaseUrl(): Promise<string> {
   if (resolvedBaseUrl) return resolvedBaseUrl;
 
-  // Try Tauri environment first
-  try {
-    const tauri = await import("@tauri-apps/api/core");
-    // If the import succeeds we're inside a Tauri WebView.
-    // Try to get a configured URL from the Rust side; fall back to default.
+  // In the desktop app, ask the Rust side for the engine's URL; fall back to the default.
+  // (The Tauri package is bundled for the browser too, so importing it doesn't mean we're in the app.)
+  if ("__TAURI_INTERNALS__" in window) {
     try {
-      const url = await (tauri as { invoke: (cmd: string) => Promise<string> }).invoke("get_engine_url");
-      resolvedBaseUrl = url;
+      const { invoke } = await import("@tauri-apps/api/core");
+      resolvedBaseUrl = await invoke<string>("get_engine_url");
     } catch {
       resolvedBaseUrl = DEFAULT_ENGINE_URL;
     }
     return resolvedBaseUrl;
-  } catch {
-    // Not in Tauri — use Vite env or origin
   }
 
+  // In a browser: the configured engine, or the page's own origin (the engine in web mode, Vite's proxy in dev)
   const envUrl = import.meta.env.VITE_ENGINE_URL as string | undefined;
   resolvedBaseUrl = envUrl || window.location.origin;
   return resolvedBaseUrl;
