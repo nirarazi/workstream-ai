@@ -22,7 +22,7 @@ describe("desktop webview CSP", () => {
     expect(Object.fromEntries(entries)).toEqual({
       "default-src": ["'self'"],
       "script-src": ["'self'"],
-      // React's style attributes; Tauri would replace this with a nonce if the page had an inline <style>
+      // React's style attributes. An inline <style> in the page would make Tauri add a nonce, and browsers then ignore 'unsafe-inline'
       "style-src": ["'self'", "'unsafe-inline'"],
       // Avatars come from the messaging platform's servers
       "img-src": ["'self'", "data:", "https:"],
