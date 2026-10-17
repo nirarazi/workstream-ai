@@ -53,7 +53,7 @@ agents via MCP ─────────────────────�
   - **Work items:** every active work item in one filterable table. A new Fleet view of the agents themselves is being designed.
   - **Sidekick:** a question-answering pane over the context graph (`core/sidekick/`).
   - **Settings screen:** credentials, model and inbox preferences.
-- **Desktop shell** (`src-tauri/`): Tauri 2. It currently starts the engine from the project directory. A self-contained build is on the roadmap. Release builds run the UI under a strict content security policy (`app.security.csp` in `tauri.conf.json`); `npm run tauri dev` loads the Vite dev server, which has none.
+- **Desktop shell** (`src-tauri/`): Tauri 2. It currently starts the engine from the project directory. A self-contained build is on the roadmap. Release builds run the UI under a strict content security policy (`app.security.csp` in `tauri.conf.json`), and so does web mode (`WEB_UI_CSP` in `core/server.ts`, kept in step by a test); `npm run tauri dev` loads the Vite dev server, which has none.
 
 ---
 
