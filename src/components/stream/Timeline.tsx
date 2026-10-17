@@ -1,6 +1,6 @@
 import { useRef, useEffect, useLayoutEffect, useState, useCallback } from "react";
 import { timeAgo } from "../../lib/time";
-import { openExternalUrl } from "../../lib/api";
+import { openExternalUrl, engineUrl } from "../../lib/api";
 import { PlatformMessage } from "../../messaging/registry";
 import { buildSlackThreadUrl } from "../../messaging/slack/urls";
 import type { TimelineEntry as TimelineEntryType, Mentionable } from "../../lib/api";
@@ -155,7 +155,7 @@ export default function Timeline({ entries, hasOlder, platformMeta, mentionables
               {/* Avatar */}
               {entry.agentAvatarUrl && !isOperator ? (
                 <img
-                  src={entry.agentAvatarUrl}
+                  src={engineUrl(entry.agentAvatarUrl)}
                   alt={name}
                   className="w-7 h-7 rounded-full flex-shrink-0 object-cover"
                 />

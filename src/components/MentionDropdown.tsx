@@ -1,4 +1,5 @@
 import { useEffect, useRef, type JSX } from "react";
+import { engineUrl } from "../lib/api";
 import type { Mentionable } from "../lib/api";
 
 interface MentionDropdownProps {
@@ -54,7 +55,7 @@ export default function MentionDropdown({
           }`}
         >
           {m.avatarUrl ? (
-            <img src={m.avatarUrl} alt="" className="h-5 w-5 rounded-full shrink-0" />
+            <img src={engineUrl(m.avatarUrl)} alt="" className="h-5 w-5 rounded-full shrink-0" />
           ) : (
             <span className="flex h-5 w-5 items-center justify-center rounded-full bg-gray-600 text-[10px] font-semibold text-gray-300 shrink-0">
               {m.name.charAt(0).toUpperCase()}

@@ -571,6 +571,14 @@ export function fetchSetupAdapters(): Promise<SetupAdaptersResponse> {
   return apiFetch("/api/setup/adapters");
 }
 
+/**
+ * Where the UI loads something the engine serves, given the path an API response named (avatars). Responses come
+ * after the engine's address is known, so it's resolved by then.
+ */
+export function engineUrl(path: string): string {
+  return path.startsWith("/api/") ? `${resolvedBaseUrl ?? ""}${path}` : path;
+}
+
 // ---------------------------------------------------------------------------
 // Badge — sets the dock badge count (macOS) via Tauri command
 // ---------------------------------------------------------------------------

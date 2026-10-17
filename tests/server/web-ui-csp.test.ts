@@ -57,14 +57,15 @@ describe("web mode's security headers", () => {
     }
   });
 
-  it("is the desktop app's policy, except that it talks to this engine and can't be framed", () => {
+  it("is the desktop app's policy, except that it talks to and loads images from this engine, and can't be framed", () => {
     const conf = JSON.parse(readFileSync("src-tauri/tauri.conf.json", "utf8")) as { app: { security: { csp: string } } };
     const desktop = directives(conf.app.security.csp);
     const web = directives(WEB_UI_CSP);
     expect(web["connect-src"]).toBe("'self'");
+    expect(web["img-src"]).toBe("'self' data:");
     expect(web["frame-ancestors"]).toBe("'none'");
-    const { "connect-src": _d, ...desktopRest } = desktop;
-    const { "connect-src": _w, "frame-ancestors": _f, ...webRest } = web;
+    const { "connect-src": _d, "img-src": _di, ...desktopRest } = desktop;
+    const { "connect-src": _w, "img-src": _wi, "frame-ancestors": _f, ...webRest } = web;
     expect(webRest).toEqual(desktopRest);
   });
 });

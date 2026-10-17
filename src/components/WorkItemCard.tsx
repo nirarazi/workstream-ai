@@ -1,6 +1,6 @@
 import { useState, useRef, type JSX } from "react";
 import type { ActionableItem, Mentionable } from "../lib/api";
-import { postAction, postReply, openExternalUrl } from "../lib/api";
+import { postAction, postReply, openExternalUrl, engineUrl } from "../lib/api";
 import CreateTicketButton from "./CreateTicketButton";
 import { timeAgo } from "../lib/time";
 import StatusBadge from "./StatusBadge";
@@ -179,7 +179,7 @@ export default function WorkItemCard({ item, platformMeta, userMap, mentionables
           {agent && (
             <div className="shrink-0 pt-0.5">
               {agent.avatarUrl ? (
-                <img src={agent.avatarUrl} alt={agent.name} className="h-7 w-7 rounded-full" />
+                <img src={engineUrl(agent.avatarUrl)} alt={agent.name} className="h-7 w-7 rounded-full" />
               ) : (
                 <AvatarFallback name={agent.name} />
               )}
