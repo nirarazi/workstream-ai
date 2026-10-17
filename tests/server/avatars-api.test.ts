@@ -40,22 +40,28 @@ function makeState(): EngineState {
 
 describe("avatars through the engine", () => {
   let state: EngineState;
-  const fetchMock = vi.fn(async () => new Response(new Uint8Array([1, 2, 3]), { headers: { "Content-Type": "image/png" } }));
+  const request = vi.fn(async (_url: string, _signal: AbortSignal) => ({
+    status: 200,
+    header: (name: string) => ({ "content-type": "image/png" })[name.toLowerCase()],
+    body: (async function* () {
+      yield new Uint8Array([1, 2, 3]);
+    })(),
+    discard: () => {},
+  }));
+  const app = () => createApp(state, { avatarRequest: request });
 
   beforeEach(() => {
     state = makeState();
     state.graph.upsertAgent({ name: "Atlas", platform: "slack", platformUserId: "U0ATLAS0001", avatarUrl: AVATAR, isBot: true });
-    vi.stubGlobal("fetch", fetchMock);
   });
 
   afterEach(() => {
     state.db.close();
-    vi.unstubAllGlobals();
-    fetchMock.mockClear();
+    request.mockClear();
   });
 
   it("names each avatar by a path on the engine, never its original URL", async () => {
-    const res = await createApp(state).request("/api/agents");
+    const res = await app().request("/api/agents");
     const text = await res.text();
     expect(text).not.toContain("avatars.example");
     const { agents } = JSON.parse(text) as { agents: Array<{ avatarUrl: string }> };
@@ -64,28 +70,39 @@ describe("avatars through the engine", () => {
   });
 
   it("serves the image, inert even if opened directly", async () => {
-    const app = createApp(state);
-    const { agents } = (await (await app.request("/api/agents")).json()) as { agents: Array<{ avatarUrl: string }> };
-    const res = await app.request(agents[0].avatarUrl);
+    const engine = app();
+    const { agents } = (await (await engine.request("/api/agents")).json()) as { agents: Array<{ avatarUrl: string }> };
+    const res = await engine.request(agents[0].avatarUrl);
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toBe("image/png");
     expect(res.headers.get("content-security-policy")).toBe("default-src 'none'; sandbox");
     expect(res.headers.get("x-content-type-options")).toBe("nosniff");
     expect(new Uint8Array(await res.arrayBuffer())).toEqual(new Uint8Array([1, 2, 3]));
-    expect(String((fetchMock.mock.calls[0] as unknown[])[0])).toBe(AVATAR);
+    expect(request.mock.calls[0][0]).toBe(AVATAR);
   });
 
-  it("finds an avatar the engine stored, even before handing it out (after a restart)", async () => {
-    const paths: string[] = [];
-    const first = createApp(state);
-    paths.push(((await (await first.request("/api/agents")).json()) as { agents: Array<{ avatarUrl: string }> }).agents[0].avatarUrl);
-    expect((await createApp(state).request(paths[0])).status).toBe(200);
+  it("serves a member's avatar after a restart, before handing it out again", async () => {
+    const { agents } = (await (await app().request("/api/agents")).json()) as { agents: Array<{ avatarUrl: string }> };
+    expect((await app().request(agents[0].avatarUrl)).status).toBe(200);
+  });
+
+  it("leaves responses that aren't JSON, and keeps status and CORS headers on those it rewrites", async () => {
+    const engine = app();
+    const preflight = await engine.request("/api/agents", {
+      method: "OPTIONS",
+      headers: { Origin: "tauri://localhost", "Access-Control-Request-Method": "GET" },
+    });
+    expect(preflight.status).toBe(204);
+    const res = await engine.request("/api/agents", { headers: { Origin: "tauri://localhost" } });
+    expect(res.headers.get("access-control-allow-origin")).toBe("tauri://localhost");
+    const missing = await engine.request("/api/work-item/nope");
+    expect(missing.status).toBe(404);
   });
 
   it("fetches nothing for an id it doesn't know, or a URL in the path", async () => {
-    const app = createApp(state);
-    expect((await app.request(`/api/avatars/${"0".repeat(32)}`)).status).toBe(404);
-    expect((await app.request(`/api/avatars/${encodeURIComponent("https://evil.example/x.png")}`)).status).toBe(404);
-    expect(fetchMock).not.toHaveBeenCalled();
+    const engine = app();
+    expect((await engine.request(`/api/avatars/${"0".repeat(32)}`)).status).toBe(404);
+    expect((await engine.request(`/api/avatars/${encodeURIComponent("https://evil.example/x.png")}`)).status).toBe(404);
+    expect(request).not.toHaveBeenCalled();
   });
 });

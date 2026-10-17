@@ -1,23 +1,41 @@
-// tests/core/avatars.test.ts — The engine serves avatars itself, fetching only what it handed out, and safely
+// tests/core/avatars.test.ts — The engine serves members' avatars itself: only stored ones, and safely
 
-import { describe, it, expect, vi } from "vitest";
-import { AvatarStore } from "../../core/avatars.js";
+import { describe, it, expect, vi, afterEach } from "vitest";
+import { AvatarStore, httpsRequest, isPrivateAddress, publicOnlyLookup, type AvatarResponse } from "../../core/avatars.js";
 
 const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
-const image = (type = "image/png", body: Uint8Array = PNG, extra: Record<string, string> = {}) =>
-  new Response(body, { status: 200, headers: { "Content-Type": type, ...extra } });
-const redirect = (location: string) => new Response(null, { status: 302, headers: { Location: location } });
+const URL_A = "https://avatars.example/u/atlas_48.png";
 
-function store(responses: Array<Response | Error>, known: string[] = []) {
-  const fetchMock = vi.fn(async (_url: string | URL | Request, _init?: RequestInit) => {
+function response(status: number, headers: Record<string, string>, body: Uint8Array = new Uint8Array()): AvatarResponse & { discarded: boolean } {
+  const res = {
+    status,
+    header: (name: string) => headers[name.toLowerCase()],
+    body: (async function* () {
+      yield body;
+    })(),
+    discarded: false,
+    discard: () => {
+      res.discarded = true;
+    },
+  };
+  return res;
+}
+const image = (type = "image/png", body: Uint8Array = PNG, extra: Record<string, string> = {}) =>
+  response(200, { "content-type": type, ...extra }, body);
+const redirect = (location: string) => response(302, { location });
+
+function store(responses: Array<AvatarResponse | Error>, stored: string[] = [URL_A]) {
+  const request = vi.fn(async (_url: string, _signal: AbortSignal) => {
     const next = responses.shift();
     if (!next || next instanceof Error) throw next ?? new Error("no response");
     return next;
   });
-  return { avatars: new AvatarStore(() => known, fetchMock as unknown as typeof fetch), fetchMock };
+  const avatars = new AvatarStore(() => stored, request);
+  const idFor = (url: string) => avatars.pathFor(url)!.split("/").pop()!;
+  return { avatars, request, idFor };
 }
 
-const URL_A = "https://avatars.example/u/atlas_48.png";
+afterEach(() => vi.useRealTimers());
 
 describe("avatars in API responses", () => {
   it("become paths on the engine, wherever they sit", () => {
@@ -41,56 +59,112 @@ describe("avatars in API responses", () => {
 });
 
 describe("serving an avatar", () => {
-  it("fetches the URL it handed out, once", async () => {
-    const { avatars, fetchMock } = store([image()]);
-    const id = avatars.pathFor(URL_A)!.split("/").pop()!;
-    expect(await avatars.get(id)).toEqual({ body: Buffer.from(PNG), type: "image/png" });
-    expect(await avatars.get(id)).not.toBeNull();
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(String(fetchMock.mock.calls[0][0])).toBe(URL_A);
+  it("fetches a member's stored avatar, once", async () => {
+    const { avatars, request, idFor } = store([image()]);
+    expect(await avatars.get(idFor(URL_A))).toEqual({ body: Buffer.from(PNG), type: "image/png" });
+    expect(await avatars.get(idFor(URL_A))).not.toBeNull();
+    expect(request).toHaveBeenCalledTimes(1);
+    expect(request.mock.calls[0][0]).toBe(URL_A);
   });
 
-  it("knows nothing a request names: only ids of URLs the engine holds", async () => {
-    const { avatars, fetchMock } = store([image()]);
+  it("serves only members' stored avatars, never a URL some response named (a model's answer, say)", async () => {
+    const injected = "https://attacker.example/beacon.png";
+    const { avatars, request, idFor } = store([image()]);
+    avatars.rewrite({ sources: [{ args: { avatarUrl: injected } }] });
+    expect(await avatars.get(idFor(injected))).toBeNull();
     expect(await avatars.get("0".repeat(32))).toBeNull();
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(request).not.toHaveBeenCalled();
   });
 
-  it("finds an avatar handed out before a restart among the ones the engine knows", async () => {
-    const before = store([]).avatars.pathFor(URL_A)!.split("/").pop()!;
-    const { avatars } = store([image()], ["https://avatars.example/other.png", URL_A]);
-    expect(await avatars.get(before)).not.toBeNull();
+  it("serves a member's avatar stored after it started", async () => {
+    const stored: string[] = [];
+    vi.useFakeTimers();
+    const { avatars, idFor } = store([image()], stored);
+    expect(await avatars.get(idFor(URL_A))).toBeNull();
+    stored.push(URL_A);
+    vi.advanceTimersByTime(1000);
+    expect(await avatars.get(idFor(URL_A))).not.toBeNull();
   });
 
-  it.each(["image/svg+xml", "text/html", "application/octet-stream", ""])("refuses a %s response", async (type) => {
-    const { avatars } = store([image(type)]);
-    expect(await avatars.get(avatars.pathFor(URL_A)!.split("/").pop()!)).toBeNull();
+  it("downloads once however many ask at once", async () => {
+    let release: (r: AvatarResponse) => void = () => {};
+    const request = vi.fn(() => new Promise<AvatarResponse>((resolve) => (release = resolve)));
+    const avatars = new AvatarStore(() => [URL_A], request);
+    const id = avatars.pathFor(URL_A)!.split("/").pop()!;
+    const all = Promise.all(Array.from({ length: 10 }, () => avatars.get(id)));
+    release(image());
+    expect((await all).every((i) => i !== null)).toBe(true);
+    expect(request).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["image/svg+xml", "text/html", "application/octet-stream", ""])("refuses a %s response, and lets it go", async (type) => {
+    const res = image(type);
+    const { avatars, idFor } = store([res]);
+    expect(await avatars.get(idFor(URL_A))).toBeNull();
+    expect(res.discarded).toBe(true);
   });
 
   it("refuses an image over the size limit, whatever it says its length is", async () => {
-    const big = new Uint8Array(1024 * 1024 + 1);
-    for (const extra of [{}, { "Content-Length": String(big.byteLength) }]) {
-      const { avatars } = store([image("image/png", big, extra)]);
-      expect(await avatars.get(avatars.pathFor(URL_A)!.split("/").pop()!)).toBeNull();
+    const big = new Uint8Array(256 * 1024 + 1);
+    for (const extra of [{}, { "content-length": String(big.byteLength) }]) {
+      const { avatars, idFor } = store([image("image/png", big, extra)]);
+      expect(await avatars.get(idFor(URL_A))).toBeNull();
     }
   });
 
-  it("follows a few https redirects, and never one to http", async () => {
-    const ok = store([redirect("https://cdn.example/a.png"), image()]);
-    expect(await ok.avatars.get(ok.avatars.pathFor(URL_A)!.split("/").pop()!)).not.toBeNull();
+  it("follows a few https redirects, relative ones too, and never one to http", async () => {
+    const ok = store([redirect("/elsewhere/a.png"), image()]);
+    expect(await ok.avatars.get(ok.idFor(URL_A))).not.toBeNull();
+    expect(ok.request.mock.calls[1][0]).toBe("https://avatars.example/elsewhere/a.png");
     const down = store([redirect("http://169.254.169.254/latest/meta-data"), image()]);
-    expect(await down.avatars.get(down.avatars.pathFor(URL_A)!.split("/").pop()!)).toBeNull();
-    expect(down.fetchMock).toHaveBeenCalledTimes(1);
+    expect(await down.avatars.get(down.idFor(URL_A))).toBeNull();
+    expect(down.request).toHaveBeenCalledTimes(1);
     const loop = store(Array.from({ length: 5 }, () => redirect("https://cdn.example/again")));
-    expect(await loop.avatars.get(loop.avatars.pathFor(URL_A)!.split("/").pop()!)).toBeNull();
-    expect(loop.fetchMock).toHaveBeenCalledTimes(4);
+    expect(await loop.avatars.get(loop.idFor(URL_A))).toBeNull();
+    expect(loop.request).toHaveBeenCalledTimes(4);
   });
 
-  it("doesn't retry a failed avatar on every request", async () => {
-    const { avatars, fetchMock } = store([new Error("offline"), image()]);
-    const id = avatars.pathFor(URL_A)!.split("/").pop()!;
-    expect(await avatars.get(id)).toBeNull();
-    expect(await avatars.get(id)).toBeNull();
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+  it("retries a failed avatar after a while, not on every request", async () => {
+    vi.useFakeTimers();
+    const { avatars, request, idFor } = store([new Error("offline"), image()]);
+    expect(await avatars.get(idFor(URL_A))).toBeNull();
+    expect(await avatars.get(idFor(URL_A))).toBeNull();
+    expect(request).toHaveBeenCalledTimes(1);
+    vi.advanceTimersByTime(10 * 60 * 1000);
+    expect(await avatars.get(idFor(URL_A))).not.toBeNull();
+  });
+
+  it("keeps its cache within a total size", async () => {
+    const urls = Array.from({ length: 100 }, (_, i) => `https://avatars.example/${i}.png`);
+    const body = new Uint8Array(256 * 1024);
+    const { avatars, request, idFor } = store(urls.map(() => image("image/png", body)), urls);
+    for (const url of urls) await avatars.get(idFor(url));
+    // 100 × 256 KB is over the 20 MB budget, so the first ones were let go and come back by fetching again
+    await avatars.get(idFor(urls[0]));
+    expect(request).toHaveBeenCalledTimes(101);
+  });
+});
+
+describe("where avatars may come from", () => {
+  it.each([
+    "127.0.0.1", "10.1.2.3", "172.20.0.1", "192.168.1.1", "169.254.169.254", "100.64.0.1", "0.0.0.0",
+    "::1", "::", "fd00::1", "fe80::1", "::ffff:127.0.0.1", "::ffff:10.0.0.1", "not an address",
+  ])("never %s", (address) => {
+    expect(isPrivateAddress(address)).toBe(true);
+  });
+
+  it.each(["93.184.216.34", "2606:4700::1111", "::ffff:93.184.216.34"])("a public address like %s", (address) => {
+    expect(isPrivateAddress(address)).toBe(false);
+  });
+
+  it("refuses a name that resolves to this machine", async () => {
+    const err = await new Promise<Error | null>((resolve) => publicOnlyLookup("localhost", {}, (e) => resolve(e)));
+    expect(err?.message).toMatch(/private address/);
+  });
+
+  it("refuses a private address written into the URL, without connecting", async () => {
+    for (const url of ["https://127.0.0.1/a.png", "https://[::1]/a.png", "https://10.0.0.1/a.png"]) {
+      await expect(httpsRequest(url, AbortSignal.timeout(1000)), url).rejects.toThrow(/private address/);
+    }
   });
 });

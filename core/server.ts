@@ -3,7 +3,7 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { serveStatic } from "@hono/node-server/serve-static";
-import { AvatarStore } from "./avatars.js";
+import { AvatarStore, type AvatarRequest } from "./avatars.js";
 import { DEV_UI_HEADER, DEV_UI_ORIGINS, isDevUiSecret } from "./dev-ui.js";
 import { createLogger } from "./logger.js";
 import { loadConfig, findProjectRoot, resetConfig, type Config } from "./config.js";
@@ -186,7 +186,10 @@ function usablePosted(posted: PostedMessage | void): PostedMessage | undefined {
   return { messageId: posted.messageId, timestamp: new Date(posted.timestamp).toISOString() };
 }
 
-export function createApp(state: EngineState, { projectRoot }: { projectRoot?: string } = {}): Hono {
+export function createApp(
+  state: EngineState,
+  { projectRoot, avatarRequest }: { projectRoot?: string; avatarRequest?: AvatarRequest } = {},
+): Hono {
   const app = new Hono();
   const origins = appOrigins(state.config.server.port);
   // In development the UI comes through the Vite dev server's proxy, which adds its secret: without it, a page from
@@ -223,16 +226,23 @@ export function createApp(state: EngineState, { projectRoot }: { projectRoot?: s
   });
 
   // The UI loads avatars only from the engine: every avatar URL in a response becomes a path served below
-  const avatars = new AvatarStore(() => state.graph.getAllAgents().map((a) => a.avatarUrl));
+  const avatars = new AvatarStore(() => state.graph.getAllAgents().map((a) => a.avatarUrl), avatarRequest);
   app.use("/api/*", async (c, next) => {
     await next();
     if (c.req.path.startsWith("/api/avatars/") || !(c.res.headers.get("content-type") ?? "").includes("application/json")) return;
+    // One place rather than each endpoint, so none can hand the UI an outside image
     const res = c.res;
+    let data: unknown;
+    try {
+      data = await res.clone().json();
+    } catch {
+      return;
+    }
     const headers = new Headers(res.headers);
     headers.delete("content-length");
-    const body = JSON.stringify(avatars.rewrite(await res.json()));
+    // Cleared first: Hono would otherwise merge the old response's headers, its length among them, back in
     c.res = undefined;
-    c.res = new Response(body, { status: res.status, headers });
+    c.res = new Response(JSON.stringify(avatars.rewrite(data)), { status: res.status, headers });
   });
 
   app.get("/api/avatars/:id{[0-9a-f]{32}}", async (c) => {
