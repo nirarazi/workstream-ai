@@ -49,7 +49,7 @@ for (const [net, prefix] of [
 ] as const) {
   PRIVATE.addSubnet(net, prefix, "ipv4");
 }
-for (const [net, prefix] of [["::", 127], ["fc00::", 7], ["fe80::", 10], ["ff00::", 8], ["64:ff9b::", 96], ["2002::", 16]] as const) {
+for (const [net, prefix] of [["::", 96], ["fc00::", 7], ["fe80::", 10], ["ff00::", 8], ["64:ff9b::", 96], ["2002::", 16]] as const) {
   PRIVATE.addSubnet(net, prefix, "ipv6");
 }
 
