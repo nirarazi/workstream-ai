@@ -34,6 +34,7 @@ const REFUSED = [
   "vscode://file/tmp/x",
   "data:text/html,hi",
   "tel:+15555550100",
+  "mailto:",
   "/relative/path",
   "",
 ];

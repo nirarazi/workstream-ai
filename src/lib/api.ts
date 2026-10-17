@@ -601,7 +601,8 @@ const OPENABLE_SCHEMES = new Set(["https:", "http:", "mailto:"]);
 export function openableUrl(url: string): string | null {
   try {
     const parsed = new URL(url);
-    return OPENABLE_SCHEMES.has(parsed.protocol) ? parsed.href : null;
+    // An empty address ("mailto:") has nothing to open, and the desktop app's check refuses it
+    return OPENABLE_SCHEMES.has(parsed.protocol) && (parsed.protocol !== "mailto:" || parsed.pathname) ? parsed.href : null;
   } catch {
     return null;
   }
