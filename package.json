@@ -17,8 +17,8 @@
     "eval:sample": "tsx core/eval/sample.ts",
     "eval:label": "tsx core/eval/label.ts",
     "eval:run": "tsx core/eval/run.ts",
-    "engine": "tsx watch core/server.ts",
-    "dev:web": "concurrently \"tsx watch core/server.ts\" \"vite\"",
+    "engine": "WORKSTREAM_DEV_UI=true tsx watch core/server.ts",
+    "dev:web": "concurrently \"WORKSTREAM_DEV_UI=true tsx watch core/server.ts\" \"vite\"",
     "start:web": "vite build && WORKSTREAM_SERVE_STATIC=true tsx core/server.ts"
   },
   "license": "MIT",
