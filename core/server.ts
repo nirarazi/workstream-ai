@@ -51,11 +51,13 @@ export interface EngineState {
 
 const LOOPBACK_NAMES = new Set(["127.0.0.1", "localhost", "[::1]"]);
 
-/** The browser origins the UI runs on: Vite dev server, Tauri WebView (macOS/Linux, then Windows), and the engine itself in web mode. */
-function appOrigins(port: number): string[] {
+/** The Vite dev server's origins, trusted only when the dev scripts start the engine: otherwise any program on that port could post as the operator. */
+const DEV_UI_ORIGINS = ["http://localhost:5173", "http://127.0.0.1:5173"];
+
+/** The browser origins the UI runs on: Tauri WebView (macOS/Linux, then Windows), the engine itself in web mode, and the Vite dev server in development. */
+function appOrigins(port: number, devUi: boolean): string[] {
   return [
-    "http://localhost:5173",
-    "http://127.0.0.1:5173",
+    ...(devUi ? DEV_UI_ORIGINS : []),
     "tauri://localhost",
     "https://tauri.localhost",
     "http://tauri.localhost",
@@ -165,7 +167,7 @@ function usablePosted(posted: PostedMessage | void): PostedMessage | undefined {
 
 export function createApp(state: EngineState): Hono {
   const app = new Hono();
-  const origins = appOrigins(state.config.server.port);
+  const origins = appOrigins(state.config.server.port, process.env.WORKSTREAM_DEV_UI === "true");
 
   // CORS stops other sites reading responses but not sending writes, so the engine can post to Slack
   // as the operator: refuse names other than this machine (DNS rebinding), writes from other origins,
@@ -1726,6 +1728,8 @@ async function main(): Promise<void> {
         if (eqIndex === -1) continue;
         const key = trimmed.slice(0, eqIndex);
         const value = trimmed.slice(eqIndex + 1);
+        // Only the dev scripts may trust the Vite dev server, never a saved setting
+        if (key === "WORKSTREAM_DEV_UI") continue;
         if (!process.env[key]) {
           process.env[key] = value;
         }
@@ -1908,6 +1912,7 @@ async function main(): Promise<void> {
   // 8. Create and start Hono server — before pipeline polling so the server
   //    is reachable immediately (initial poll can block for minutes with rate limiting)
   const app = createApp(state);
+  if (process.env.WORKSTREAM_DEV_UI === "true") log.info("Development mode: trusting the Vite dev server on port 5173");
 
   // Static file serving in web mode
   if (process.env.WORKSTREAM_SERVE_STATIC === "true") {
