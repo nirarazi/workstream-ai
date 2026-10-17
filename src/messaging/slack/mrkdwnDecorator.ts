@@ -48,7 +48,11 @@ function setCursorOffset(editor: HTMLDivElement, offset: number): void {
     const len = node.textContent?.length ?? 0;
     if (n + len >= offset) {
       const r = document.createRange();
-      r.setStart(node, offset - n);
+      // At the end of a closing marker, put the caret after the formatted span: text typed or pasted there
+      // would otherwise land in the hidden marker, and be sent without being seen
+      const wrap = node.parentElement?.closest("[data-mrkdwn]");
+      if (wrap && offset - n === len && wrap.lastChild?.contains(node)) r.setStartAfter(wrap);
+      else r.setStart(node, offset - n);
       r.collapse(true);
       sel.removeAllRanges();
       sel.addRange(r);
