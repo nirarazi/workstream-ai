@@ -11,7 +11,13 @@ vi.mock("@tauri-apps/plugin-shell", () => ({ open: shellOpen }));
 import { openableUrl, openExternalUrl } from "../../src/lib/api.js";
 import SlackMessage from "../../src/messaging/slack/SlackMessage.js";
 
+/** Runs the test as the desktop app (Tauri marks its webview with this global) */
+function inDesktopApp(): void {
+  (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {};
+}
+
 afterEach(() => {
+  delete (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__;
   cleanup();
   shellOpen.mockReset();
   vi.restoreAllMocks();
@@ -35,6 +41,8 @@ const REFUSED = [
   "data:text/html,hi",
   "tel:+15555550100",
   "mailto:",
+  "mailto:dana@example.com x",
+  "mailto: dana@example.com",
   "/relative/path",
   "",
 ];
@@ -46,6 +54,10 @@ describe("openableUrl", () => {
     expect(openableUrl("HTTPS://Example.COM/a")).toBe("https://example.com/a");
     expect(openableUrl("https://bücher.example/x")).toBe("https://xn--bcher-kva.example/x");
     expect(openableUrl("mailto:dana@example.com")).toBe("mailto:dana@example.com");
+  });
+
+  it("keeps only the address of an email link", () => {
+    expect(openableUrl("mailto:dana@example.com?attach=/etc/hosts&subject=hi")).toBe("mailto:dana@example.com");
   });
 
   it("refuses other schemes and anything that isn't a URL", () => {
@@ -63,6 +75,7 @@ describe("openableUrl", () => {
 
 describe("openExternalUrl", () => {
   it("opens a web link", async () => {
+    inDesktopApp();
     await openExternalUrl("https://example.com/pr/42");
     expect(shellOpen).toHaveBeenCalledWith("https://example.com/pr/42");
   });
@@ -70,15 +83,27 @@ describe("openExternalUrl", () => {
   it("opens nothing, through the shell or the browser, for another scheme", async () => {
     vi.spyOn(console, "warn").mockImplementation(() => {});
     const windowOpen = vi.spyOn(window, "open").mockImplementation(() => null);
-    await openExternalUrl("file:///Applications/Calculator.app");
+    for (const desktop of [true, false]) {
+      if (desktop) inDesktopApp();
+      await openExternalUrl("file:///Applications/Calculator.app");
+    }
     expect(shellOpen).not.toHaveBeenCalled();
     expect(windowOpen).not.toHaveBeenCalled();
   });
 
-  it("falls back to the browser with the same parsed link when the shell can't open it", async () => {
-    shellOpen.mockRejectedValueOnce(new Error("not in the desktop app"));
+  it("in the desktop app, leaves a link the shell refuses unopened", async () => {
+    inDesktopApp();
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    shellOpen.mockRejectedValueOnce(new Error("refused by the shell's scope"));
+    const windowOpen = vi.spyOn(window, "open").mockImplementation(() => null);
+    await openExternalUrl("https://example.com/a");
+    expect(windowOpen).not.toHaveBeenCalled();
+  });
+
+  it("in a browser, opens the same parsed link in a new tab", async () => {
     const windowOpen = vi.spyOn(window, "open").mockImplementation(() => null);
     await openExternalUrl("  https://example.com/a b");
+    expect(shellOpen).not.toHaveBeenCalled();
     expect(windowOpen).toHaveBeenCalledWith("https://example.com/a%20b", "_blank", "noreferrer");
   });
 });

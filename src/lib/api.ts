@@ -601,8 +601,15 @@ const OPENABLE_SCHEMES = new Set(["https:", "http:", "mailto:"]);
 export function openableUrl(url: string): string | null {
   try {
     const parsed = new URL(url);
-    // An empty address ("mailto:") has nothing to open, and the desktop app's check refuses it
-    return OPENABLE_SCHEMES.has(parsed.protocol) && (parsed.protocol !== "mailto:" || parsed.pathname) ? parsed.href : null;
+    if (!OPENABLE_SCHEMES.has(parsed.protocol)) return null;
+    if (parsed.protocol === "mailto:") {
+      // Just the address: query fields (attachments, in some mail clients) are the sender's to choose, not a message's
+      parsed.search = "";
+      // An empty address has nothing to open, and the desktop app's check refuses it
+      if (!parsed.pathname) return null;
+    }
+    // Email links keep spaces unencoded; the desktop app's check refuses any
+    return /\s/.test(parsed.href) ? null : parsed.href;
   } catch {
     return null;
   }
@@ -614,12 +621,13 @@ export async function openExternalUrl(raw: string): Promise<void> {
     console.warn("Not opening a link that isn't a web or email link");
     return;
   }
-  try {
+  // In the desktop app, the shell's refusal is final; the browser fallback is for the web UI
+  if ("__TAURI_INTERNALS__" in window) {
     const { open } = await import("@tauri-apps/plugin-shell");
-    await open(url);
-  } catch {
-    window.open(url, "_blank", "noreferrer");
+    await open(url).catch((err: unknown) => console.warn("Couldn't open the link", err));
+    return;
   }
+  window.open(url, "_blank", "noreferrer");
 }
 
 // ---------------------------------------------------------------------------
