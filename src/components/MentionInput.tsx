@@ -76,15 +76,23 @@ const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(function 
     if (!el) return "";
 
     let result = "";
-    for (const node of el.childNodes) {
-      if (node.nodeType === Node.TEXT_NODE) {
-        result += node.textContent ?? "";
-      } else if (node instanceof HTMLElement && node.dataset.mentionId) {
-        result += serializeMention(node.dataset.mentionId);
-      } else if (node instanceof HTMLElement) {
-        result += node.textContent ?? "";
+    // Line breaks typed with Shift+Enter arrive as <br> or as a new <div> per line, and mentions can sit inside either
+    const walk = (parent: Node) => {
+      for (const node of parent.childNodes) {
+        if (node.nodeType === Node.TEXT_NODE) {
+          result += node.textContent ?? "";
+        } else if (node instanceof HTMLElement && node.dataset.mentionId) {
+          result += serializeMention(node.dataset.mentionId);
+        } else if (node instanceof HTMLBRElement) {
+          result += "\n";
+        } else if (node instanceof HTMLElement) {
+          const block = node.tagName === "DIV" || node.tagName === "P";
+          if (block && result && !result.endsWith("\n")) result += "\n";
+          walk(node);
+        }
       }
-    }
+    };
+    walk(el);
     // Strip zero-width spaces from serialized output
     return result.replace(/\u200B/g, "").trim();
   }, [serializeMention]);
@@ -159,6 +167,41 @@ const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(function 
   }, [decorateInput]);
 
   // --- Input handling ---
+
+  // Pasted or dropped content goes in as plain text: markup could hide text that would still be posted as the
+  // operator, or load images from someone else's server
+  function insertPlainText(e: React.ClipboardEvent<HTMLDivElement> | React.DragEvent<HTMLDivElement>) {
+    const data = "clipboardData" in e ? e.clipboardData : e.dataTransfer;
+    e.preventDefault();
+    const text = data?.getData("text/plain").replace(/\r\n?/g, "\n") ?? "";
+    if (!text) return;
+    if ("dataTransfer" in e) {
+      const caret = document.caretRangeFromPoint?.(e.clientX, e.clientY);
+      if (caret) {
+        const sel = window.getSelection();
+        sel?.removeAllRanges();
+        sel?.addRange(caret);
+      }
+    }
+    // insertText keeps the browser's undo history; where it's unavailable, insert a text node at the caret
+    if (!document.execCommand?.("insertText", false, text)) {
+      const sel = window.getSelection();
+      const el = editorRef.current;
+      if (!sel || sel.rangeCount === 0 || !el || !el.contains(sel.getRangeAt(0).startContainer)) {
+        el?.append(text);
+      } else {
+        const range = sel.getRangeAt(0);
+        range.deleteContents();
+        const node = document.createTextNode(text);
+        range.insertNode(node);
+        range.setStartAfter(node);
+        range.collapse(true);
+        sel.removeAllRanges();
+        sel.addRange(range);
+      }
+    }
+    handleInput();
+  }
 
   function updateEmpty() {
     const el = editorRef.current;
@@ -324,9 +367,11 @@ const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(function 
           suppressContentEditableWarning
           onInput={handleInput}
           onKeyDown={handleKeyDown}
+          onPaste={insertPlainText}
+          onDrop={insertPlainText}
           data-placeholder={placeholder}
           className={`
-            min-h-[34px] w-full
+            min-h-[34px] w-full whitespace-pre-wrap break-words
             px-3 py-1.5 text-sm text-gray-100 outline-none
             ${isEmpty ? "before:content-[attr(data-placeholder)] before:text-gray-500 before:pointer-events-none" : ""}
           `}
