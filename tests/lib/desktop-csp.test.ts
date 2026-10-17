@@ -3,37 +3,47 @@
 import { readFileSync } from "node:fs";
 import { describe, it, expect } from "vitest";
 
-const conf = JSON.parse(readFileSync("src-tauri/tauri.conf.json", "utf8")) as { app: { security: { csp: string | null } } };
-
-/** The policy as directive → sources */
-function directives(csp: string): Map<string, string[]> {
-  return new Map(csp.split(";").map((d) => d.trim()).filter(Boolean).map((d) => {
-    const [name, ...sources] = d.split(/\s+/);
-    return [name, sources];
-  }));
-}
+const conf = JSON.parse(readFileSync("src-tauri/tauri.conf.json", "utf8")) as {
+  app: { security: Record<string, unknown> & { csp?: string | null } };
+};
+const csp = conf.app.security.csp ?? "";
+const entries = csp.split(";").map((d) => d.trim()).filter(Boolean).map((d) => {
+  const [name, ...sources] = d.split(/\s+/);
+  return [name, sources] as const;
+});
 
 describe("desktop webview CSP", () => {
-  const policy = directives(conf.app.security.csp ?? "");
-
-  it("is set", () => {
-    expect(conf.app.security.csp).toBeTruthy();
+  it("names each directive once (a browser enforces the first of two)", () => {
+    const names = entries.map(([name]) => name);
+    expect(new Set(names).size).toBe(names.length);
   });
 
-  it("runs only the app's own scripts", () => {
-    expect(policy.get("script-src")).toEqual(["'self'"]);
-    expect(policy.get("default-src")).toEqual(["'self'"]);
+  it("is exactly this policy: loosening any directive must be a deliberate change here", () => {
+    expect(Object.fromEntries(entries)).toEqual({
+      "default-src": ["'self'"],
+      "script-src": ["'self'"],
+      // React's style attributes; Tauri would replace this with a nonce if the page had an inline <style>
+      "style-src": ["'self'", "'unsafe-inline'"],
+      // Avatars come from the messaging platform's servers
+      "img-src": ["'self'", "data:", "https:"],
+      "font-src": ["'self'", "data:"],
+      // The shell's IPC (macOS/Linux, then Windows) and the local engine
+      "connect-src": ["'self'", "ipc:", "http://ipc.localhost", "http://127.0.0.1:9847"],
+      "object-src": ["'none'"],
+      "base-uri": ["'none'"],
+      "frame-src": ["'none'"],
+      "form-action": ["'none'"],
+    });
   });
 
-  it("talks only to the app, its shell and the local engine", () => {
-    for (const source of policy.get("connect-src") ?? []) {
-      expect(["'self'", "ipc:", "http://ipc.localhost", "http://127.0.0.1:9847"], source).toContain(source);
-    }
+  it("isn't switched off or rewritten by other security settings", () => {
+    expect(Object.keys(conf.app.security).sort()).toEqual(["csp"]);
   });
 
-  it("allows no plugins, frames, form posts or base changes", () => {
-    for (const name of ["object-src", "frame-src", "base-uri", "form-action"]) {
-      expect(policy.get(name), name).toEqual(["'none'"]);
-    }
+  it("has a page without inline scripts or styles, which would change how Tauri applies it", () => {
+    const html = readFileSync("index.html", "utf8");
+    expect(html).not.toMatch(/<style[\s>]/i);
+    // Every script is loaded from a file
+    for (const tag of html.match(/<script\b[^>]*>/gi) ?? []) expect(tag).toMatch(/\ssrc=/);
   });
 });
