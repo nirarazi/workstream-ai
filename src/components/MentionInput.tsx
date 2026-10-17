@@ -31,11 +31,13 @@ interface MentionInputProps {
 const ZWS = "\u200B";
 
 /**
- * Characters that don't show but can change what's sent: zero-width and joiner controls (not the zero-width joiner
- * emoji use), reordering controls (bidirectional), the byte order mark, and tag characters and supplementary variation
- * selectors, which some models read as hidden text
+ * Characters that don't show but can change what's sent, dropped from text that comes from elsewhere (pastes, drops,
+ * prefilled replies): zero-width and filler characters, reordering controls (bidirectional embeddings, overrides and
+ * isolates), the byte order mark, variation selectors other than emoji presentation, and tag characters, which some
+ * models read as hidden text. Kept: the joiners and direction marks that scripts and emoji need.
  */
-const INVISIBLE = /[\u200B\u200C\u200E\u200F\u202A-\u202E\u2060-\u2064\u2066-\u2069\uFEFF\u{E0000}-\u{E007F}\u{E0100}-\u{E01EF}]/gu;
+const INVISIBLE =
+  /[\u00AD\u034F\u115F\u1160\u180E\u200B\u202A-\u202E\u2060-\u2064\u2066-\u2069\u3164\uFE00-\uFE0E\uFEFF\u{E0000}-\u{E007F}\u{E0100}-\u{E01EF}]/gu;
 
 /**
  * Rich text input with @mention typeahead.
@@ -56,6 +58,7 @@ const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(function 
   decorateInput,
 }, ref): JSX.Element {
   const editorRef = useRef<HTMLDivElement>(null);
+  const insertingRef = useRef(false);
   const [showDropdown, setShowDropdown] = useState(false);
   const [mentionQuery, setMentionQuery] = useState("");
   const [selectedIndex, setSelectedIndex] = useState(0);
@@ -64,7 +67,7 @@ const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(function 
   // Prefill editor when requested
   useEffect(() => {
     if (!prefill?.text || !editorRef.current) return;
-    editorRef.current.textContent = prefill.text;
+    editorRef.current.textContent = prefill.text.replace(INVISIBLE, "");
     setIsEmpty(false);
     editorRef.current.focus();
     // Move cursor to end
@@ -108,8 +111,8 @@ const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(function 
       }
     };
     walk(el);
-    // Strip characters that don't show (zero-width spaces among them, the cursor's landing pads after mentions)
-    return result.replace(INVISIBLE, "").trim();
+    // Strip zero-width spaces from serialized output
+    return result.replace(/\u200B/g, "").trim();
   }, [serializeMention]);
 
   // Expose serialize/clear to parent via ref
@@ -217,6 +220,8 @@ const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(function 
     // Line by line through the browser's editing commands keeps undo, and the text flat (the editor keeps "\n" as
     // is) rather than a <div> per line. Where they're unavailable, insert a text node at the caret.
     const lines = text.split("\n");
+    // Each command fires an input event: decorate once at the end, not once per line
+    insertingRef.current = true;
     const first = lines[0] ? document.execCommand?.("insertText", false, lines[0]) : document.execCommand?.("insertLineBreak");
     if (first) {
       lines.forEach((line, i) => {
@@ -234,6 +239,8 @@ const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(function 
       sel.addRange(range);
       handleInput();
     }
+    insertingRef.current = false;
+    if (first) handleInput();
     // Decorate even when the text ends in a mention trigger, so nothing pasted is left in a hidden marker
     decorateInput?.(el);
   }
@@ -245,6 +252,7 @@ const MentionInput = forwardRef<MentionInputHandle, MentionInputProps>(function 
   }
 
   function handleInput() {
+    if (insertingRef.current) return;
     updateEmpty();
 
     const sel = window.getSelection();

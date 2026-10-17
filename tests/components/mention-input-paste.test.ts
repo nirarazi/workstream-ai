@@ -128,8 +128,28 @@ describe("where pasted text goes", () => {
   it("without characters that don't show, which could change what's sent", () => {
     const { editor, ref } = renderInput();
     const tags = String.fromCodePoint(0xe0064, 0xe0065, 0xe0070);
-    fireEvent.paste(editor, { clipboardData: clipboard({ "text/plain": `LGTM${tags}\u202Eok\u200B\uFEFF` }) });
+    fireEvent.paste(editor, { clipboardData: clipboard({ "text/plain": `LGTM${tags}\u202Eok\u200B\uFEFF\u3164\u00AD` }) });
     expect(ref.current!.serialize()).toBe("LGTMok");
+  });
+
+  it("keeping the direction marks and joiners that scripts and emoji need, also when typed", () => {
+    const { editor, ref } = renderInput();
+    const text = "\u05D0\u200F OPS-101\u200E \u0645\u06CC\u200C\u062E\u0648\u0627\u0647\u0645 \u{1F469}\u200D\u{1F4BB} \u2764\uFE0F";
+    fireEvent.paste(editor, { clipboardData: clipboard({ "text/plain": text }) });
+    expect(ref.current!.serialize()).toBe(text);
+    editor.textContent = "\u{1F3F4}\u{E0067}\u{E0062}\u{E0065}\u{E006E}\u{E0067}\u{E007F}";
+    expect(ref.current!.serialize()).toBe(editor.textContent);
+  });
+
+  it("decorating once, not once per line", () => {
+    const decorate = vi.fn();
+    const { editor } = renderInput(decorate);
+    (document as unknown as Record<string, unknown>).execCommand = vi.fn(() => {
+      editor.dispatchEvent(new Event("input", { bubbles: true }));
+      return true;
+    });
+    fireEvent.paste(editor, { clipboardData: clipboard({ "text/plain": Array.from({ length: 50 }, (_, i) => `line ${i}`).join("\n") }) });
+    expect(decorate).toHaveBeenCalledTimes(1);
   });
 
   it("not at all for a dropped file", () => {
@@ -163,5 +183,19 @@ describe("serializing lines", () => {
     const { editor, ref } = renderInput();
     editor.innerHTML = 'hi<div><span data-mrkdwn="*"><span>*</span>ask <span data-mention-id="U0OPERATOR1">@Dana</span><span>*</span></span></div>';
     expect(ref.current!.serialize()).toBe("hi\n*ask <@U0OPERATOR1>*");
+  });
+});
+
+describe("a prefilled reply", () => {
+  it("drops characters that don't show, as it can come from message content", () => {
+    const ref = createRef<MentionInputHandle>();
+    render(createElement(MentionInput, {
+      ref,
+      mentionables: [],
+      serializeMention: (id: string) => `<@${id}>`,
+      onSubmit: () => {},
+      prefill: { text: "Approved\u202E, proceed\u{E0064}", key: 1 },
+    }));
+    expect(ref.current!.serialize()).toBe("Approved, proceed");
   });
 });
