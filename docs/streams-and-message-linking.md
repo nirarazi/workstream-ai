@@ -264,6 +264,18 @@ Reports and notifications never create an item and never link two items. The tic
 
 The reports hold ids, keys, current item titles and agents' lane tags, but no raw message text.
 
+## Measuring a Grouping
+
+Every grouping, the current one or a proposal, is scored against the operator's own verdicts before it replaces anything.
+
+- **Labels** (`eval-data/linking/labels.json`, gitignored, private file in a private directory) are keyed by a message's platform identity, `<platform>:<channel id>:<message id>` (for Slack the message id is its `ts`), not by `events.id`, which is a random id per stored row that changes under a re-ingest or relink. A message stored under several threads is one labeled unit. The file names its format version and key format, and a file in a newer or different one is refused. There are two kinds of label: a pair verdict, same work or different work, and a "not work" mark on one message.
+- **`npm run eval:pairs -- [--grouping current,relink] [--per-stratum 10] [--seed 42]`** draws pairs and asks about each in the terminal: `s` same work, `d` different work, `1`/`2` mark message A/B not work, `u` skip, `n` note, `q` save and quit. It saves after every label and never asks about a labeled pair again. Pairs come from strata built to find both errors, over the union of the groupings named, so each verdict scores all of them:
+  - over-merge: two messages one grouping puts in one item, preferring ones far apart in time, in different threads and from different senders;
+  - split: two messages some grouping keeps apart that share a thread, a sender and channel within 24 hours, a ticket or PR in their own lines, or a capitalised word (a cheap stand-in for a shared subject).
+
+  Each message shows its sender, channel, time, own lines and a few messages around it. Which item a grouping put it in isn't shown. The database is read from a private read-only copy, as the re-link dry run reads it.
+- **`npm run eval:linking -- [--grouping current,relink] [--gold clusters.json]`** prints the groupings side by side: pairwise precision (low means unrelated work merged), recall (low means one piece of work split) and F1, the over-merged and split pair counts, the share of labeled messages in items that aren't work, and per-stratum agreement. Rates carry Wilson 95% intervals, since labeled sets are small. Pairs are drawn by stratum, so the numbers describe the labeled pairs, not every pair. `--gold` adds B-cubed precision and recall against a full clustering of message keys.
+
 ---
 
 ## Design Principles

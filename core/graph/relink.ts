@@ -30,7 +30,7 @@ import {
   writeSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, join, sep } from "node:path";
 import { parse as parseYaml } from "yaml";
 import { loadConfig } from "../config.js";
 import type { StatusCategory } from "../types.js";
@@ -840,12 +840,15 @@ export interface RelinkRun {
 }
 
 /**
- * The reports' directory, <root>/eval-data/relink, made private (0700). Refused if either directory is a symlink or
- * resolves anywhere else, so the reports can't be redirected out of the project's gitignored eval-data/.
+ * A private (0700) directory directly under the project's eval-data/: <root>/eval-data/relink by default, or another
+ * one such as eval-data/linking. Refused if either directory is a symlink or resolves anywhere else, so the reports
+ * can't be redirected out of the project's gitignored eval-data/.
  */
-export function prepareOutDir(root: string): string {
+export function prepareOutDir(root: string, sub: string = RELINK_OUT_DIR): string {
+  const name = sub.startsWith(`eval-data${sep}`) ? sub.slice(`eval-data${sep}`.length) : "";
+  if (!name || name !== basename(name) || name === "." || name === "..") throw new Error(`Refusing to write outside eval-data/: ${sub}`);
   const realRoot = realpathSync(root);
-  const outDir = join(realRoot, RELINK_OUT_DIR);
+  const outDir = join(realRoot, "eval-data", name);
   for (const dir of [join(realRoot, "eval-data"), outDir]) {
     if (existsSync(dir) && lstatSync(dir).isSymbolicLink()) throw new Error(`Refusing to write: ${dir} is a symlink`);
     mkdirSync(dir, { mode: 0o700 , recursive: true });
@@ -855,10 +858,10 @@ export function prepareOutDir(root: string): string {
   return outDir;
 }
 
-/** Writes one report: to a fresh private file (never through a link, never over one), then renamed into place */
-function writeReport(outDir: string, name: string, content: string): string {
+/** Writes one file in `outDir`: to a fresh private file (never through a link, never over one), then renamed into place */
+export function writePrivateFile(outDir: string, name: string, content: string): string {
   const path = join(outDir, name);
-  if (dirname(path) !== outDir) throw new Error(`Refusing to write outside ${RELINK_OUT_DIR}: ${name}`);
+  if (dirname(path) !== outDir) throw new Error(`Refusing to write outside ${outDir}: ${name}`);
   const temp = join(outDir, `.${name}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`);
   const fd = openSync(temp, fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL | fsConstants.O_NOFOLLOW, 0o600);
   try {
@@ -949,6 +952,6 @@ export async function runRelink(options: RelinkOptions): Promise<RelinkRun> {
     "decisions.jsonl": result.decisions.map((d) => JSON.stringify(d)).join("\n") + "\n",
     "subject-rule-candidates.json": JSON.stringify(subjectRuleCandidates(snapshot), null, 2) + "\n",
   };
-  const written = Object.entries(files).map(([name, content]) => writeReport(outDir, name, content));
+  const written = Object.entries(files).map(([name, content]) => writePrivateFile(outDir, name, content));
   return { outDir, files: written, summary };
 }
