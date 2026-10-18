@@ -121,6 +121,8 @@ describe("Pipeline: digests", () => {
   it("doesn't put a digest-seeded item in Needs me through a later reply in the digest's thread", async () => {
     const answer: Classification = { ...DIGEST_ANSWER, workItemIds: ["OPS-7", "OPS-8", "OPS-9"], breakdown: [breakdown("OPS-9", "blocked_on_human")] };
     const { graph, pipeline, adapter, classify, message } = setup("Round-up: OPS-7, OPS-8 moving, OPS-9 blocked on Dana", answer);
+    // A digest doesn't create the items it names (see below): these are known already, with no status of their own
+    for (const id of ["OPS-7", "OPS-8", "OPS-9"]) graph.upsertWorkItem({ id, source: "jira", title: id });
     await pipeline.processOnce();
     expect(graph.getWorkItemById("OPS-9")!.currentAtcStatus).toBe("blocked_on_human");
 
@@ -253,8 +255,10 @@ describe("Pipeline: digests", () => {
     expect(graph.getActionableItems().map((i) => i.workItem.id)).not.toContain("OPS-2");
   });
 
-  it("gives an item it alone knows about a first status from its own line, still outside Needs me", async () => {
+  it("gives a known item with no status yet a first status from its own line, still outside Needs me", async () => {
     const { graph, pipeline } = setup(DIGEST_TEXT, DIGEST_ANSWER);
+    // Known items with no status (a digest doesn't create the ones it only names: see below)
+    for (const id of ["OPS-1", "OPS-2", "OPS-3"]) graph.upsertWorkItem({ id, source: "jira", title: id });
 
     await pipeline.processOnce();
 
@@ -273,6 +277,7 @@ describe("Pipeline: digests", () => {
       title: "Daily", targetedAtOperator: false, actionRequiredFrom: null, nextAction: null,
     };
     const { graph, pipeline, adapter, classify, message } = setup("Daily: OPS-7, OPS-8, OPS-9 all moving", answer);
+    for (const id of ["OPS-7", "OPS-8", "OPS-9"]) graph.upsertWorkItem({ id, source: "jira", title: id });
     await pipeline.processOnce();
     expect(graph.getWorkItemById("OPS-7")!.currentAtcStatus).toBeNull();
     // Every named item is still checked, with the whole message's status
@@ -391,9 +396,33 @@ describe("Pipeline: IDs only mentioned in passing", () => {
     expect(db.db.prepare("SELECT COUNT(*) AS n FROM thread_work_items").get()).toEqual({ n: 0 });
   });
 
-  it("creates a new thread's own ticket, but not one it only mentions", async () => {
+  it("makes no work items for the tickets a digest names, though the model lists them all", async () => {
+    const { graph, pipeline } = setup(DIGEST_TEXT, DIGEST_ANSWER);
+
+    await pipeline.processOnce();
+
+    for (const id of ["OPS-1", "OPS-2", "OPS-3", "thread:T-DIGEST"]) expect(graph.getWorkItemById(id)).toBeNull();
+    expect(db.db.prepare("SELECT COUNT(*) AS n FROM digest_checks").get()).toEqual({ n: 0 });
+  });
+
+  it("still creates an item a digest's own line puts in front of the operator, so the ask isn't lost", async () => {
+    const answer: Classification = {
+      ...DIGEST_ANSWER,
+      breakdown: [breakdown("OPS-1", "blocked_on_human"), breakdown("OPS-2", "needs_decision", true), breakdown("OPS-3", "completed")],
+    };
+    const { graph, pipeline } = setup(DIGEST_TEXT, answer);
+
+    await pipeline.processOnce();
+
+    expect(graph.getWorkItemById("OPS-2")).not.toBeNull();
+    expect(graph.getWorkItemById("OPS-1")).toBeNull();
+    expect(graph.getWorkItemById("OPS-3")).toBeNull();
+    expect(db.db.prepare("SELECT work_item_id FROM event_targets").all()).toEqual([{ work_item_id: "OPS-2" }]);
+  });
+
+  it("creates a new thread's own ticket, but not one it only mentions, though the model lists both", async () => {
     const { graph, pipeline } = setup("OPS-101 is ready for review, same approach as ENG-202", {
-      status: "in_progress", entryType: "progress", confidence: 0.9, reason: "ready for review", workItemIds: ["OPS-101"],
+      status: "in_progress", entryType: "progress", confidence: 0.9, reason: "ready for review", workItemIds: ["OPS-101", "ENG-202"],
       title: "Review", targetedAtOperator: false, actionRequiredFrom: null, nextAction: null,
     }, "T-OWN");
 
@@ -403,5 +432,30 @@ describe("Pipeline: IDs only mentioned in passing", () => {
     expect(graph.getWorkItemById("ENG-202")).toBeNull();
     expect(graph.getThreadById("T-OWN")!.workItemId).toBe("OPS-101");
     expect(graph.getEventByMessageId("m1", "T-OWN")!.workItemId).toBe("OPS-101");
+  });
+
+  it("doesn't create a ticket a reply in another ticket's thread mentions, though the model lists it", async () => {
+    const { graph, pipeline } = setup("Unblocked by the fix in ENG-202", {
+      status: "in_progress", entryType: "progress", confidence: 0.9, reason: "unblocked", workItemIds: ["OPS-101", "ENG-202"],
+      title: "Unblocked", targetedAtOperator: false, actionRequiredFrom: null, nextAction: null,
+    }, "T-OWN");
+    graph.upsertWorkItem({ id: "OPS-101", source: "jira", title: "Rollout" });
+    graph.upsertThread({ id: "T-OWN", channelId: "C1", channelName: "fleet-ops", platform: "slack", workItemId: "OPS-101" });
+
+    await pipeline.processOnce();
+
+    expect(graph.getWorkItemById("ENG-202")).toBeNull();
+    expect(graph.getEventByMessageId("m1", "T-OWN")!.workItemId).toBe("OPS-101");
+  });
+
+  it("still takes up a model-suggested ID that isn't in the text", async () => {
+    const { graph, pipeline } = setup("The rollout fix is ready for review", {
+      status: "in_progress", entryType: "progress", confidence: 0.9, reason: "ready", workItemIds: ["OPS-102"],
+      title: "Rollout fix", targetedAtOperator: false, actionRequiredFrom: null, nextAction: null,
+    }, "T-OWN");
+
+    await pipeline.processOnce();
+
+    expect(graph.getWorkItemById("OPS-102")).not.toBeNull();
   });
 });

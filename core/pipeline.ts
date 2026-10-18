@@ -959,10 +959,23 @@ export class Pipeline {
       }
       // A digest makes none of the items it names the thread's own: they're all mentioned. Decided as the linker does,
       // from all the IDs in the text, linked or not, so the two agree (IDs the model adds don't make a message a digest).
-      const digest = this.canBeDigest(message) && namesDigest(this.linker.extractIds(message.text), ownItemId);
+      const namedIds = new Set(this.linker.extractIds(message.text));
+      const digest = this.canBeDigest(message) && namesDigest(namedIds, ownItemId);
 
       for (const llmId of classification.workItemIds) {
-        if (!extractedSet.has(llmId)) {
+        if (namedIds.has(llmId) && !extractedSet.has(llmId)) {
+          // In the text, but the linker left it out: only mentioned in passing, and not a work item. The model listing
+          // it doesn't make it one, unless the message's own line for it puts it in front of the operator (an ask
+          // mustn't be lost because its ticket wasn't known yet).
+          const line = classification.breakdown?.find((b) => b.workItemId === llmId);
+          const escalates = !this.isOperator(message) && Boolean(line?.targetedAtOperator)
+            && (line!.status === "blocked_on_human" || line!.status === "needs_decision");
+          if (!escalates) {
+            log.debug("Not creating a work item for an ID only mentioned:", llmId);
+            continue;
+          }
+          this.graph.upsertWorkItem({ id: llmId, source: "inferred", title: line!.title || llmId });
+        } else if (!extractedSet.has(llmId)) {
           // LLM suggested an ID that the regex didn't find — validate before creating
           if (!this.isValidWorkItemId(llmId)) {
             log.debug("Discarding LLM-suggested ID that doesn't match known prefixes:", llmId);
