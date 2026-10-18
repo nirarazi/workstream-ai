@@ -148,6 +148,7 @@ Classifier evaluation: `npm run eval:sample`, `eval:label` and `eval:run` build 
 - **Match the surrounding code:** its naming, comment density and idioms. Keep the core platform-agnostic, so nothing outside an adapter knows which platform it's talking to.
 - **Theming:** see [docs/theming.md](docs/theming.md) for the color system and status colors.
 - **Roadmap:** [docs/roadmap.md](docs/roadmap.md) has current priorities, eval results and open design questions.
+- **Work model:** [docs/work-model.md](docs/work-model.md) is the design for work items and how messages are linked to them.
 
 ---
 

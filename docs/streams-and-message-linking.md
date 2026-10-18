@@ -1,5 +1,9 @@
 # Streams and Message-to-Work-Item Linking
 
+> **Direction:** [work-model.md](work-model.md) sets out where this is going: opaque work item ids with keys,
+> operator corrections kept as constraints, status deciding surfacing rather than membership, and scored
+> clustering in place of first-rule-wins. This doc still describes how linking works today.
+
 ## The Core Challenge
 
 workstream.ai reads raw messages from messaging platforms and must decide: **which work item does this message belong to?** Get it right, and the inbox shows coherent streams of work. Get it wrong, and the operator sees 30 separate "Build failed" items instead of one stream, or misses a critical block because it was linked to the wrong item.

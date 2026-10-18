@@ -213,6 +213,15 @@ accuracy on the reference fleet) has never been measured.
 - **Revisit when corrections have grown the label set** (item 5). The most promising piece is using the
   embedding classifier to decide *whose* item it is, alongside the LLM.
 
+**Work model and work item identity** (design: [`docs/work-model.md`](work-model.md)). A re-link dry run over
+real history found about half of proposed items right and a third merging unrelated work. The design replaces
+phases 3–8 of the work item redesign (after phase 1, PR #44, and phase 2, the resolver and dry run, PR #45: 3 keys
+table and typed refs; 4 resolver in the pipeline; 5 lifecycle and done policy; 6 asks, owner and baton; 7 streams;
+8 apply the re-link) with: pair labels and precision/recall first, then opaque ids with a keys table,
+operator corrections as constraints, asks attached to messages, subject keys, the resolver in shadow mode,
+routines and runs, and a done policy before streams. Applying the re-link as first planned would discard operator
+merges and must not ship.
+
 ## Then — strategic
 
 9. **MCP over Streamable HTTP, on spec 2026-07-28.** The reference fleet runs on a cloud VM, so the stdio-only
