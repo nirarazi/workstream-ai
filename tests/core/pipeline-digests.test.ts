@@ -377,3 +377,31 @@ describe("Pipeline: digests", () => {
     expect(judge.judgeSome).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("Pipeline: IDs only mentioned in passing", () => {
+  it("makes no work items, nor a conversation item, for a digest naming tickets the model doesn't take up", async () => {
+    const { graph, pipeline } = setup(DIGEST_TEXT, { ...DIGEST_ANSWER, workItemIds: [], breakdown: [] });
+
+    await pipeline.processOnce();
+
+    for (const id of ["OPS-1", "OPS-2", "OPS-3", "thread:T-DIGEST"]) expect(graph.getWorkItemById(id)).toBeNull();
+    const event = graph.getEventByMessageId("m1", "T-DIGEST")!;
+    expect(event.digest).toBe(true);
+    expect(event.workItemId).toBeNull();
+    expect(db.db.prepare("SELECT COUNT(*) AS n FROM thread_work_items").get()).toEqual({ n: 0 });
+  });
+
+  it("creates a new thread's own ticket, but not one it only mentions", async () => {
+    const { graph, pipeline } = setup("OPS-101 is ready for review, same approach as ENG-202", {
+      status: "in_progress", entryType: "progress", confidence: 0.9, reason: "ready for review", workItemIds: ["OPS-101"],
+      title: "Review", targetedAtOperator: false, actionRequiredFrom: null, nextAction: null,
+    }, "T-OWN");
+
+    await pipeline.processOnce();
+
+    expect(graph.getWorkItemById("OPS-101")).not.toBeNull();
+    expect(graph.getWorkItemById("ENG-202")).toBeNull();
+    expect(graph.getThreadById("T-OWN")!.workItemId).toBe("OPS-101");
+    expect(graph.getEventByMessageId("m1", "T-OWN")!.workItemId).toBe("OPS-101");
+  });
+});

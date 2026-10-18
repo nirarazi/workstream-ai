@@ -35,20 +35,29 @@ export class WorkItemLinker {
   }
 
   /**
-   * Extract work item IDs from message text, ensure each exists in the graph,
-   * write junction rows for all extracted IDs (first = primary, rest = mentioned; all mentioned in a digest),
-   * and keep threads.work_item_id in sync for backwards compatibility.
-   * Returns the list of extracted work item IDs.
+   * Extract work item IDs from message text and link the thread to them: junction rows (first = primary, rest =
+   * mentioned; all mentioned in a digest), and threads.work_item_id kept in sync for backwards compatibility.
+   * Only the thread's own ticket is created when it's new: the first ID in a message that isn't a digest, in a thread
+   * that has no ticket of its own yet. Other IDs are linked only when they're work items already, so an ID mentioned
+   * in passing (in a digest, a plan, a reply about another ticket) doesn't become an item nobody works on here.
+   * Returns the IDs linked; extractIds has all the message names.
    */
   linkMessage(text: string, threadId: string, canBeDigest = true): string[] {
-    const workItemIds = this.extractIds(text);
+    const extracted = this.extractIds(text);
     const ownItemId = this.graph.getThreadById(threadId)?.workItemId ?? null;
-    const digest = canBeDigest && namesDigest(workItemIds, ownItemId);
+    const digest = canBeDigest && namesDigest(extracted, ownItemId);
 
-    for (const id of workItemIds) {
+    const ticketOfItsOwn = ownItemId !== null && !ownItemId.startsWith("thread:");
+    const workItemIds = extracted.filter((id, i) => {
+      if (this.graph.getWorkItemById(id)) return true;
+      if (i > 0 || digest || ticketOfItsOwn) {
+        log.debug("Not creating a work item for an ID only mentioned", id);
+        return false;
+      }
       this.graph.upsertWorkItem({ id, source: "extracted" });
-      log.debug("Ensured work item exists", id);
-    }
+      log.debug("Created work item for the thread's own ticket", id);
+      return true;
+    });
 
     // Write junction rows for all extracted IDs
     for (let i = 0; i < workItemIds.length; i++) {

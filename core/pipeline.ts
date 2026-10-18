@@ -893,6 +893,7 @@ export class Pipeline {
     }
 
     // Step 1: Link work items from message text (regex — only known prefixes)
+    // (the items linked: an ID only mentioned in passing isn't made a work item, so it's linked only if it is one)
     const extractedIds = this.linker.linkMessage(message.text, thread.id, this.canBeDigest(message));
 
     // Step 2: Classify the message with operator identities and sender context
@@ -956,6 +957,9 @@ export class Pipeline {
       for (const id of extractedIds) {
         allWorkItemIds.add(id);
       }
+      // A digest makes none of the items it names the thread's own: they're all mentioned. Decided as the linker does,
+      // from all the IDs in the text, linked or not, so the two agree (IDs the model adds don't make a message a digest).
+      const digest = this.canBeDigest(message) && namesDigest(this.linker.extractIds(message.text), ownItemId);
 
       for (const llmId of classification.workItemIds) {
         if (!extractedSet.has(llmId)) {
@@ -974,8 +978,9 @@ export class Pipeline {
       }
 
       // Step 2b: If no work item IDs found and this isn't noise, create a synthetic work item
-      // keyed by thread ID so the conversation stays grouped under one item
-      if (allWorkItemIds.size === 0 && classification.status !== "noise") {
+      // keyed by thread ID so the conversation stays grouped under one item. Not for a digest naming only IDs that
+      // aren't work items: it's about those, not a conversation of its own.
+      if (allWorkItemIds.size === 0 && classification.status !== "noise" && !digest) {
         const syntheticId = `thread:${thread.id}`;
         // A message classified late (held for a retry) mustn't overwrite the state a newer message already set
         if (!this.isOlderThanStatus(this.graph.getWorkItemById(syntheticId), message)) {
@@ -1001,10 +1006,6 @@ export class Pipeline {
         avatarUrl: message.userAvatarUrl ?? null,
         isBot: message.senderType === "agent" ? true : message.senderType === "human" ? false : null,
       });
-
-      // A digest makes none of the items it names the thread's own: they're all mentioned. Decided as the linker does,
-      // from the IDs in the text, so the two agree (IDs the model adds don't make a message a digest).
-      const digest = this.canBeDigest(message) && namesDigest(extractedIds, ownItemId);
 
       // Step 4: Upsert thread in graph — preserve manually linked work items
       const isManuallyLinked = existingThread?.manuallyLinked === true;

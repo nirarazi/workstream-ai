@@ -175,6 +175,7 @@ function createMockGraph(): ContextGraph {
 function createMockLinker(): WorkItemLinker {
   return {
     linkMessage: vi.fn().mockReturnValue([]),
+    extractIds: vi.fn().mockReturnValue([]),
   } as unknown as WorkItemLinker;
 }
 
