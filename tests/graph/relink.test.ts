@@ -13,6 +13,7 @@ import {
   parseRelinkArgs,
   runRelink,
   subjectRuleCandidates,
+  RelinkStopped,
   sweepStaleCopies,
   type Snapshot,
 } from "../../core/graph/relink.js";
@@ -107,7 +108,7 @@ describe("relink dry run", () => {
 
   const relinkTemps = () => readdirSync(tmpdir()).filter((f) => f.startsWith("workstream-relink-")).sort();
 
-  it("opens a private copy read-only: writes are refused, and the copy is gone after", () => {
+  it("opens a private copy read-only: writes are refused, and the copy is gone after", async () => {
     const temps = relinkTemps();
     const copy = openReadOnly(dbPath);
     try {
@@ -121,19 +122,19 @@ describe("relink dry run", () => {
     expect(relinkTemps()).toEqual(temps);
   });
 
-  it("refuses a database that doesn't exist, and doesn't create one", () => {
+  it("refuses a database that doesn't exist, and doesn't create one", async () => {
     const missing = join(dir, "data", "missing.db");
     expect(() => openReadOnly(missing)).toThrow();
     expect(existsSync(missing)).toBe(false);
-    expect(() => runRelink({ dbPath: missing, root })).toThrow();
+    await expect(runRelink({ dbPath: missing, root })).rejects.toThrow();
     expect(existsSync(join(root, "eval-data"))).toBe(false);
   });
 
-  it("leaves the database unchanged and writes only under eval-data/relink/", () => {
+  it("leaves the database unchanged and writes only under eval-data/relink/", async () => {
     const before = hash(dbPath);
     const mtime = statSync(dbPath).mtimeMs;
     const dataFiles = readdirSync(join(dir, "data")).sort();
-    const run = runRelink({ dbPath, root });
+    const run = await runRelink({ dbPath, root });
 
     expect(hash(dbPath)).toBe(before);
     expect(statSync(dbPath).mtimeMs).toBe(mtime);
@@ -148,7 +149,7 @@ describe("relink dry run", () => {
     for (const f of run.files) expect(statSync(f).mode & 0o777).toBe(0o600);
   });
 
-  it("reads a log with no shared-memory file, and still creates nothing beside the database", () => {
+  it("reads a log with no shared-memory file, and still creates nothing beside the database", async () => {
     // A log left without its -shm (copied, or after a crash)
     const engine = new Database(dbPath);
     const other = join(dir, "other");
@@ -163,13 +164,13 @@ describe("relink dry run", () => {
     const files = readdirSync(other).sort();
     expect(files).toEqual(["workstream.db", "workstream.db-wal"]);
     const before = hash(join(other, "workstream.db"));
-    const { summary } = runRelink({ dbPath: join(other, "workstream.db"), root });
+    const { summary } = await runRelink({ dbPath: join(other, "workstream.db"), root });
     expect(summary.before.items).toBe(9);
     expect(readdirSync(other).sort()).toEqual(files);
     expect(hash(join(other, "workstream.db"))).toBe(before);
   });
 
-  it("copies again when the source changes during the copy, and refuses a copy that fails its check", () => {
+  it("copies again when the source changes during the copy, and refuses a copy that fails its check", async () => {
     const attempts: number[] = [];
     const copy = openReadOnly(dbPath, {
       afterCopy: (attempt) => {
@@ -195,53 +196,99 @@ describe("relink dry run", () => {
     expect(relinkTemps()).toEqual(temps);
   });
 
-  it("cleans up on SIGINT, SIGTERM and exit while open, and stops listening once closed", () => {
+  it("removes its copy at exit while open, and stops listening once closed; signals are the CLI's", async () => {
     const counts = () => ["SIGINT", "SIGTERM", "exit"].map((e) => process.listenerCount(e));
     const before = counts();
     const copy = openReadOnly(dbPath);
-    expect(counts()).toEqual(before.map((n) => n + 1));
+    expect(counts()).toEqual([before[0], before[1], before[2] + 1]);
     copy.close();
     expect(counts()).toEqual(before);
   });
 
-  it("leaves no temp file behind when a report can't be written", () => {
+  it("stops before writing any reports when aborted during the load, and removes its copy", async () => {
+    const temps = relinkTemps();
+    const stop = new AbortController();
+    const run = runRelink({ dbPath, root, signal: stop.signal, openHooks: { afterCopy: () => stop.abort("SIGINT") } });
+    await expect(run).rejects.toBeInstanceOf(RelinkStopped);
+    expect(existsSync(join(root, "eval-data"))).toBe(false);
+    expect(relinkTemps()).toEqual(temps);
+  });
+
+  it("says whether the copy was stable", async () => {
+    let writes = 0;
+    const changeEveryCopy = () => {
+      const engine = new Database(dbPath);
+      new ContextGraph(engine).upsertWorkItem({ id: `OPS-2${writes++}`, source: "extracted", title: "Busy" });
+      engine.close();
+    };
+    await runRelink({ dbPath, root, openHooks: { afterCopy: changeEveryCopy } });
+    expect(JSON.parse(readFileSync(join(root, "eval-data", "relink", "summary.json"), "utf-8")).copyStable).toBe(false);
+    await runRelink({ dbPath, root });
+    expect(JSON.parse(readFileSync(join(root, "eval-data", "relink", "summary.json"), "utf-8")).copyStable).toBe(true);
+  });
+
+  it("continues a request made in a digest's thread with the replies that follow it", async () => {
+    const db = new Database(dbPath);
+    const graph = new ContextGraph(db);
+    let minute = 0;
+    const add = (messageId: string, agentId: string, text: string, status: "completed" | "in_progress" | "needs_decision", digest = false) => {
+      graph.upsertThread({ id: "dg", channelId: "C0OPS", channelName: "ops", platform: "slack" });
+      graph.insertEvent({ threadId: "dg", messageId, agentId, rawText: text, workItemId: null, status, confidence: 0.9, digest, timestamp: new Date(Date.UTC(2026, 0, 8, 9, minute++)).toISOString() });
+    };
+    add("d1", "U0RELAY", "Daily digest\n- OPS-101 in review\n- OPS-103 blocked\n- OPS-104 not started", "in_progress", true);
+    add("d2", "U0OPERATOR1", "Atlas, can you look at the export failure?", "in_progress");
+    add("d3", "U0ATLAS", "Looked: the export job runs out of memory, fixing now", "in_progress");
+    add("d4", "U0ATLAS", "Fixed and redeployed", "completed");
+    db.close();
+
+    const { summary } = await runRelink({ dbPath, root });
+    const items = JSON.parse(readFileSync(join(root, "eval-data", "relink", "items.json"), "utf-8")) as {
+      proposed: Array<{ keys: string[]; events: string[] }>;
+    };
+    const request = items.proposed.find((i) => i.keys.includes("message:dg/d2"));
+    expect(request?.keys).toEqual(["message:dg/d2"]); // the digest's thread isn't claimed
+    expect(request?.events).toHaveLength(3);
+    expect(summary.reports.asks).toBe(0);
+  });
+
+  it("leaves no temp file behind when a report can't be written", async () => {
     mkdirSync(join(root, "eval-data", "relink", "summary.json"), { recursive: true });
     writeFileSync(join(root, "eval-data", "relink", "summary.json", "keep"), "");
-    expect(() => runRelink({ dbPath, root })).toThrow();
+    await expect(runRelink({ dbPath, root })).rejects.toThrow();
     expect(readdirSync(join(root, "eval-data", "relink")).filter((f) => f.endsWith(".tmp"))).toEqual([]);
   });
 
-  it("refuses to write through a symlinked eval-data or eval-data/relink", () => {
+  it("refuses to write through a symlinked eval-data or eval-data/relink", async () => {
     const elsewhere = join(dir, "elsewhere");
     mkdirSync(elsewhere);
     symlinkSync(elsewhere, join(root, "eval-data"));
-    expect(() => runRelink({ dbPath, root })).toThrow(/symlink/);
+    await expect(runRelink({ dbPath, root })).rejects.toThrow(/symlink/);
     expect(readdirSync(elsewhere)).toEqual([]);
 
     rmSync(join(root, "eval-data"));
     mkdirSync(join(root, "eval-data"));
     symlinkSync(elsewhere, join(root, "eval-data", "relink"));
-    expect(() => runRelink({ dbPath, root })).toThrow(/symlink/);
+    await expect(runRelink({ dbPath, root })).rejects.toThrow(/symlink/);
     expect(readdirSync(elsewhere)).toEqual([]);
   });
 
-  it("reads ticket prefixes from the project's config like the engine, before the tracker's", () => {
+  it("reads ticket prefixes from the project's config like the engine, before the tracker's", async () => {
     mkdirSync(join(root, "config"));
     copyFileSync(join(process.cwd(), "config", "default.yaml"), join(root, "config", "default.yaml"));
     writeFileSync(join(root, "config", "local.yaml"), "taskAdapter:\n  ticketPrefixes: [\"eng-\"]\n");
-    runRelink({ dbPath, root });
+    await runRelink({ dbPath, root });
     const report = JSON.parse(readFileSync(join(root, "eval-data", "relink", "summary.json"), "utf-8"));
     // The configured prefixes and the ones the tracker taught it, as the engine combines them
     expect(report.ticketPrefixes).toEqual(["ENG-", "OPS-"]);
-    runRelink({ dbPath, root, prefixes: ["mkt-"] });
+    await runRelink({ dbPath, root, prefixes: ["mkt-"] });
     expect(JSON.parse(readFileSync(join(root, "eval-data", "relink", "summary.json"), "utf-8")).ticketPrefixes).toEqual(["MKT-"]);
 
     rmSync(join(root, "config", "local.yaml"));
-    runRelink({ dbPath, root });
+    await runRelink({ dbPath, root });
     expect(JSON.parse(readFileSync(join(root, "eval-data", "relink", "summary.json"), "utf-8")).ticketPrefixes).toEqual(["OPS-"]);
   });
 
-  it("only a thread's first, non-noise report keeps its replies from claiming it", () => {
+  it("only a thread's first, non-noise report keeps its replies from claiming it", async () => {
     const db = new Database(dbPath);
     const graph = new ContextGraph(db);
     let minute = 0;
@@ -258,7 +305,7 @@ describe("relink dry run", () => {
     add("t7", "m15", "U0ATLAS", "Started OPS-107: the import retry", "in_progress");
     db.close();
 
-    runRelink({ dbPath, root });
+    await runRelink({ dbPath, root });
     const items = JSON.parse(readFileSync(join(root, "eval-data", "relink", "items.json"), "utf-8")) as {
       proposed: Array<{ keys: string[]; events: string[] }>;
     };
@@ -267,7 +314,7 @@ describe("relink dry run", () => {
     expect(items.proposed.find((i) => i.keys.includes("ticket:OPS-107"))?.keys).toContain("thread:t7");
   });
 
-  it("doesn't let a digest's thread be claimed by its replies", () => {
+  it("doesn't let a digest's thread be claimed by its replies", async () => {
     const db = new Database(dbPath);
     const graph = new ContextGraph(db);
     const reply = (messageId: string, text: string, minute: number) =>
@@ -276,7 +323,7 @@ describe("relink dry run", () => {
     reply("m10", "OPS-103: picking it up next", 1);
     db.close();
 
-    runRelink({ dbPath, root });
+    await runRelink({ dbPath, root });
     const items = JSON.parse(readFileSync(join(root, "eval-data", "relink", "items.json"), "utf-8")) as {
       proposed: Array<{ keys: string[]; events: string[] }>;
     };
@@ -288,7 +335,7 @@ describe("relink dry run", () => {
     expect(items.proposed.some((i) => i.keys.includes("thread:t4"))).toBe(false);
   });
 
-  it("reads a database the engine has open in place, read-only, and sees its unflushed writes", () => {
+  it("reads a database the engine has open in place, read-only, and sees its unflushed writes", async () => {
     const engine = new Database(dbPath); // holds the write-ahead log open, as a running engine does
     try {
       new ContextGraph(engine).upsertWorkItem({ id: "OPS-104", source: "extracted", title: "Late addition" });
@@ -302,7 +349,7 @@ describe("relink dry run", () => {
       } finally {
         copy.close();
       }
-      const { summary } = runRelink({ dbPath, root });
+      const { summary } = await runRelink({ dbPath, root });
       expect(summary.before.items).toBe(9);
       expect(readdirSync(join(dir, "data")).sort()).toEqual(dataFiles);
     } finally {
@@ -310,8 +357,8 @@ describe("relink dry run", () => {
     }
   });
 
-  it("stores ids and keys, never message text", () => {
-    runRelink({ dbPath, root });
+  it("stores ids and keys, never message text", async () => {
+    await runRelink({ dbPath, root });
     for (const file of filesUnder(root)) {
       const content = readFileSync(file, "utf-8");
       expect(content).not.toContain(MARKER);
@@ -320,8 +367,8 @@ describe("relink dry run", () => {
     }
   });
 
-  it("collapses a ticket's items into one, keeps reports and lone notes out, and reports the metrics", () => {
-    const { summary } = runRelink({ dbPath, root });
+  it("collapses a ticket's items into one, keeps reports and lone notes out, and reports the metrics", async () => {
+    const { summary } = await runRelink({ dbPath, root });
     const items = JSON.parse(readFileSync(join(root, "eval-data", "relink", "items.json"), "utf-8")) as {
       proposed: Array<{ id: string; kind: string; title: string; keys: string[]; events: string[]; collapses: Array<{ id: string }> }>;
       formerItemsNotCarried: string[];
@@ -346,6 +393,7 @@ describe("relink dry run", () => {
       newlyDetected: 0,
       bySignal: { "digest-flag": 1 },
       bySignalStatus: { "digest-flag": { in_progress: 1 } },
+      asks: 0,
     });
     const decisions = readFileSync(join(root, "eval-data", "relink", "decisions.jsonl"), "utf-8").trim().split("\n").map((l) => JSON.parse(l));
     expect(decisions.every((d) => "report" in d && "status" in d)).toBe(true);
@@ -366,7 +414,7 @@ describe("relink dry run", () => {
 });
 
 describe("relink options", () => {
-  it("parses its flags, and refuses a missing value, a flag as a value, or an unknown flag", () => {
+  it("parses its flags, and refuses a missing value, a flag as a value, or an unknown flag", async () => {
     expect(parseRelinkArgs(["--db", "x.db", "--prefixes", "OPS-, ENG-"])).toEqual({ db: "x.db", prefixes: ["OPS-", "ENG-"] });
     expect(() => parseRelinkArgs(["--db"])).toThrow(/needs a value/);
     expect(() => parseRelinkArgs(["--db", "--rules", "r.yaml"])).toThrow(/needs a value/);
@@ -374,7 +422,7 @@ describe("relink options", () => {
     expect(() => parseRelinkArgs(["stray"])).toThrow(/Unexpected/);
   });
 
-  it("reports a rules file it can't parse without echoing its content", () => {
+  it("reports a rules file it can't parse without echoing its content", async () => {
     const dir = mkdtempSync(join(tmpdir(), "relink-rules-"));
     try {
       const path = join(dir, "rules.yaml");
@@ -395,7 +443,7 @@ describe("relink options", () => {
 });
 
 describe("subjectRuleCandidates", () => {
-  it("counts agents' lane tags only, not people's or unknown senders'", () => {
+  it("counts agents' lane tags only, not people's or unknown senders'", async () => {
     const event = (agentId: string, senderKind: "agent" | "human" | "unknown") => ({
       id: agentId, threadId: "t", messageId: "m", workItemId: null, agentId, channelId: "C0OPS", platform: "slack",
       status: "in_progress" as const, text: "[intake] Contoso Ltd: sent the forms", timestamp: "", digest: false, senderKind,
@@ -409,7 +457,7 @@ describe("subjectRuleCandidates", () => {
 });
 
 describe("sweepStaleCopies", () => {
-  it("removes copies whose run is gone, and leaves live runs' and other files alone", () => {
+  it("removes copies whose run is gone, and leaves live runs' and other files alone", async () => {
     const dir = mkdtempSync(join(tmpdir(), "relink-sweep-"));
     try {
       mkdirSync(join(dir, "workstream-relink-999999-abc")); // no such process

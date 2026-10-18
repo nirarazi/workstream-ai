@@ -59,6 +59,8 @@ export const RELINK_OUT_DIR = join("eval-data", "relink");
 /** A read-only connection to a private copy of a database; close() closes it and deletes the copy */
 export interface ReadOnlyCopy {
   db: BetterSqlite3.Database;
+  /** False when the source still changed while its last copy was taken (the copy passed its check regardless) */
+  stable: boolean;
   close(): void;
 }
 
@@ -122,7 +124,7 @@ const COPY_ATTEMPTS = 2;
  * copied into a fresh private temporary directory, and the copy is opened with SQLite's read-only flag. Nothing is
  * created or changed beside the original, whether or not the engine has it open. A handle that could write is refused.
  * The copy is checked (PRAGMA quick_check) and taken again once if it fails, or if the source changed while it was
- * copied. An interrupted run removes it on SIGINT or SIGTERM and at exit; copies older runs left are swept first.
+ * copied. It's removed at exit if still open; copies older runs left are swept first.
  */
 export function openReadOnly(dbPath: string, hooks: OpenReadOnlyHooks = {}): ReadOnlyCopy {
   if (!existsSync(dbPath)) throw new Error(`No database at ${dbPath}`);
@@ -130,22 +132,9 @@ export function openReadOnly(dbPath: string, hooks: OpenReadOnlyHooks = {}): Rea
   const dir = mkdtempSync(join(tmpdir(), `${TEMP_PREFIX}${process.pid}-`));
   chmodSync(dir, 0o700);
   const remove = () => rmSync(dir, { recursive: true, force: true });
-  const onSigint = () => {
-    remove();
-    process.exit(130);
-  };
-  const onSigterm = () => {
-    remove();
-    process.exit(143);
-  };
-  const detach = () => {
-    process.removeListener("SIGINT", onSigint);
-    process.removeListener("SIGTERM", onSigterm);
-    process.removeListener("exit", remove);
-  };
-  process.once("SIGINT", onSigint);
-  process.once("SIGTERM", onSigterm);
+  // The backstop if the process exits with the copy still open (the CLI handles SIGINT and SIGTERM for the whole run)
   process.on("exit", remove);
+  const detach = () => process.removeListener("exit", remove);
   const cleanUp = () => {
     try {
       remove();
@@ -189,6 +178,7 @@ export function openReadOnly(dbPath: string, hooks: OpenReadOnlyHooks = {}): Rea
       }
       return {
         db,
+        stable: !changed,
         close: () => {
           try {
             db.close();
@@ -374,6 +364,8 @@ export function replay(snapshot: Snapshot, options: ResolverOptions): ReplayResu
   const workInThread = new Map<string, number>();
   /** Threads a report started (its first event, not noise): no reply claims them */
   const reportThreads = new Set<string>();
+  /** In a report's thread, the key of the latest request made in it, which later replies continue */
+  const latestRequest = new Map<string, ItemKey>();
   const seenThreads = new Set<string>();
   const decisions: Decision[] = [];
   const decisionOf = new Map<string, Decision>();
@@ -481,6 +473,8 @@ export function replay(snapshot: Snapshot, options: ResolverOptions): ReplayResu
       }
       case "create": {
         const item = create(resolution.keys, resolution.rule);
+        const request = resolution.keys.find((k) => keyKind(k) === "message");
+        if (request) latestRequest.set(event.threadId, request);
         addEvent(item, event);
         decision.outcome = resolution.rule;
         decision.item = item.id;
@@ -526,6 +520,7 @@ export function replay(snapshot: Snapshot, options: ResolverOptions): ReplayResu
         mcpWorkItemId: event.platform === "mcp" ? event.workItemId : null,
         priorInThread: workInThread.get(event.threadId) ?? 0,
         inReportThread: reportThreads.has(event.threadId),
+        reportThreadItem: latestRequest.has(event.threadId) ? byKey.get(latestRequest.get(event.threadId)!) ?? null : null,
         digest: event.digest,
       },
       graph,
@@ -633,7 +628,7 @@ export interface RelinkSummary {
   needsModel: number;
   /** Undecided events naming several tickets or PRs with none as their subject (whether or not their link resolved) */
   ambiguous: number;
-  reports: { messages: number; alreadyFlaggedDigest: number; newlyDetected: number; bySignal: Record<string, number>; bySignalStatus: Record<string, Record<string, number>> };
+  reports: { messages: number; alreadyFlaggedDigest: number; newlyDetected: number; bySignal: Record<string, number>; bySignalStatus: Record<string, Record<string, number>>; asks: number };
   notifications: number;
   /** Events left as activity on no item (lone notes with nothing to attach to) */
   activityNotItem: number;
@@ -713,6 +708,8 @@ export function summarize(snapshot: Snapshot, result: ReplayResult): RelinkSumma
     reports: {
       bySignal: count(result.decisions.flatMap((d) => (d.kind === "report" && d.report ? [d.report] : []))),
       bySignalStatus: bySignalStatus(result.decisions),
+      // Reports classified as asks: they create no item here (the pipeline's capped escalation is still to carry over)
+      asks: result.decisions.filter((d) => d.kind === "report" && (d.status === "blocked_on_human" || d.status === "needs_decision")).length,
       messages: reportEvents.length,
       alreadyFlaggedDigest: reportEvents.filter((id) => digestFlagged.has(id)).length,
       newlyDetected: reportEvents.filter((id) => !digestFlagged.has(id)).length,
@@ -817,6 +814,23 @@ export interface RelinkOptions {
   /** Ticket prefixes (e.g. ["OPS-"]); by default the configured ones and those the tracker confirmed, else any KEY-123 */
   prefixes?: string[];
   subjectRules?: SubjectRule[];
+  /** Aborted (e.g. on SIGINT): the run stops at its next step, removes its copy and writes no reports */
+  signal?: AbortSignal;
+  /** For tests: passed to openReadOnly */
+  openHooks?: OpenReadOnlyHooks;
+}
+
+/** Thrown when a run was stopped before it wrote its reports */
+export class RelinkStopped extends Error {
+  constructor() {
+    super("Stopped before writing any reports");
+  }
+}
+
+/** Lets the event loop run (and a signal's handler with it), then stops if the run was aborted */
+async function checkpoint(signal: AbortSignal | undefined): Promise<void> {
+  await new Promise<void>((done) => setImmediate(done));
+  if (signal?.aborted) throw new RelinkStopped();
 }
 
 export interface RelinkRun {
@@ -862,11 +876,16 @@ function writeReport(outDir: string, name: string, content: string): string {
   return path;
 }
 
-export function runRelink(options: RelinkOptions): RelinkRun {
-  const source = openReadOnly(options.dbPath);
+export async function runRelink(options: RelinkOptions): Promise<RelinkRun> {
+  const { signal } = options;
+  if (signal?.aborted) throw new RelinkStopped();
+  const source = openReadOnly(options.dbPath, options.openHooks);
+  const copyStable = source.stable;
   let snapshot: Snapshot;
   try {
+    await checkpoint(signal);
     snapshot = loadSnapshot(source.db);
+    await checkpoint(signal);
   } finally {
     source.close();
   }
@@ -882,6 +901,7 @@ export function runRelink(options: RelinkOptions): RelinkRun {
     subjectRules: options.subjectRules,
   });
   const summary = summarize(snapshot, result);
+  await checkpoint(signal);
 
   const titles = new Map(snapshot.items.map((i) => [i.id, i.title]));
   const report = {
@@ -889,6 +909,8 @@ export function runRelink(options: RelinkOptions): RelinkRun {
     database: basename(options.dbPath),
     ticketPrefixes: prefixes,
     subjectRules: options.subjectRules?.length ?? 0,
+    // False when the database kept changing while it was copied: the copy is consistent, but may be mid-update
+    copyStable,
     summary,
   };
   /** For review: the title of the current item its main key names (its ticket's), else the one it takes most events from */
@@ -917,6 +939,8 @@ export function runRelink(options: RelinkOptions): RelinkRun {
   const carried = new Set(result.items.flatMap((i) => i.formerItems.map((f) => f.id)));
   const notCarried = snapshot.items.filter((i) => !i.mergedInto && !carried.has(i.id)).map((i) => i.id);
 
+  // The last chance to stop before anything is written
+  await checkpoint(signal);
   const outDir = prepareOutDir(options.root);
   const files = {
     "summary.json": JSON.stringify(report, null, 2) + "\n",

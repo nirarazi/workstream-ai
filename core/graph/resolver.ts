@@ -20,6 +20,10 @@
 // one of its replies either, so a digest's thread doesn't gather unrelated work. A ticket named after "blocked by",
 // "related to" and the like is a mention, never what the message is about. No model is called, nothing is written,
 // and nothing here knows which messaging platform a message came from: thread ids and message refs are opaque.
+//
+// Before the pipeline uses this (phase 4): a report never creates an item here, but the pipeline today lets a
+// report's own line that escalates to the operator (blocked or a decision) create an item for a ticket it only
+// mentions, capped at three per message. That capped escalation has to carry over, or an ask inside a report is lost.
 
 import type { StatusCategory } from "../types.js";
 import { DIGEST_MIN_ITEMS } from "./linker.js";
@@ -64,8 +68,10 @@ export interface ResolverMessage {
   refersTo?: string[];
   /** How many earlier messages of this thread were work (not reports, not noise) */
   priorInThread: number;
-  /** The thread was started by a report (or a report in it belongs to no item): no reply may claim the thread */
+  /** The thread was started by a report: no reply may claim the thread */
   inReportThread?: boolean;
+  /** In a report's thread, the item of the latest request made in it (a person's message or an ask), if any */
+  reportThreadItem?: string | null;
   /** Already flagged as a digest upstream (the pipeline's events.digest) */
   digest?: boolean;
 }
@@ -279,17 +285,23 @@ const WEAK_HEADER = new RegExp(
   "i",
 );
 
+/** Words that turn a line into news: a reason, a failure, a request */
+const NEWS_WORDS =
+  String.raw`\b(?:because|but|however|though|although|except|failed|fails|failing|error|errors|down|broke|broken|blocked|need|needs|please|should|could|can)\b`;
+
 /**
  * A no-change tick, as the whole of its first line: "Nothing has changed since the last check", "No updates.",
- * "Idle since 09:00". Not when the line goes on to a reason, a failure or a request.
+ * "Idle since 09:00". Not when the line goes on to a reason, a failure, a request or a question.
  */
 const NO_CHANGE = new RegExp(
   HEADER_LEAD +
     String.raw`(?:nothing (?:has )?changed|no (?:new )?changes|no updates?|(?:still )?idle)\b` +
-    String.raw`(?![^\n]*\b(?:because|but|however|though|although|except|failed|fails|failing|error|errors|down|broke|broken|blocked|need|needs|please|should|could|can)\b)` +
+    `(?![^\\n]*${NEWS_WORDS})` +
     String.raw`[^?\n]{0,80}$`,
   "i",
 );
+/** A line that carries news or asks something: a tick's second line mustn't */
+const NEWS_LINE = new RegExp(`\\?|${NEWS_WORDS}`, "i");
 
 /** A message whose status asks for someone, or reports work done, is never a tick or a header-only report */
 function newsStatus(status: StatusCategory | null | undefined): boolean {
@@ -332,7 +344,9 @@ export function isReport(message: ResolverMessage, lines: LineRefs[], ownKeys: r
   if (newsStatus(message.status)) return null;
   const nonEmpty = lines.filter((l) => l.line.trim());
   const first = nonEmpty[0]?.line.trim() ?? "";
-  if (nonEmpty.length <= 2 && named.size === 0 && NO_CHANGE.test(first)) return "no-change";
+  if (nonEmpty.length <= 2 && named.size === 0 && NO_CHANGE.test(first) && !NEWS_LINE.test(nonEmpty[1]?.line ?? "")) {
+    return "no-change";
+  }
   if (STRONG_HEADER.test(first) && named.size !== 1) return "header";
   if (WEAK_HEADER.test(first) && named.size >= 2) return "header";
   return null;
@@ -344,17 +358,25 @@ function asks(status: StatusCategory | null | undefined): boolean {
   return status === "blocked_on_human" || status === "needs_decision";
 }
 
-/** Rule 6: what a message nothing else placed becomes */
+/**
+ * Rule 6: what a message nothing else placed becomes. A report itself never becomes an item here; before the pipeline
+ * relies on this, its capped escalation of a report's asks has to carry over (see the note at the top).
+ */
 function newItem(message: ResolverMessage, kind: MessageKind, report: ReportSignal | null, mentions: ItemKey[]): Resolution {
   if (kind === "report") return { action: "none", reason: "report", kind, report, mentions };
   if (message.status === "noise") return { action: "none", reason: "noise", kind, report, mentions };
   if (kind === "notification") return { action: "none", reason: "notification", kind, report, mentions };
   if (message.inReportThread) {
     // A report's thread is never claimed: an ask, or a person's message, in it is an item of its own (never lose an
-    // ask); anything else is activity
-    return (asks(message.status) || message.senderKind === "human") && message.messageRef
-      ? { action: "create", keys: [itemKey("message", message.messageRef)], rule: "new", kind, report, mentions }
-      : { action: "none", reason: "activity", kind, report, mentions };
+    // ask). Other replies continue the latest such request (a conversation inside the report's thread), or, with none,
+    // are activity
+    if ((asks(message.status) || message.senderKind === "human") && message.messageRef) {
+      return { action: "create", keys: [itemKey("message", message.messageRef)], rule: "new", kind, report, mentions };
+    }
+    if (message.reportThreadItem) {
+      return { action: "join", itemId: message.reportThreadItem, addKeys: [], merge: [], rule: "thread", promoted: false, kind, report, mentions };
+    }
+    return { action: "none", reason: "activity", kind, report, mentions };
   }
   // An ask, a person's message, or a conversation (it has replies) is something to follow
   if (asks(message.status) || message.senderKind === "human" || message.priorInThread > 0) {

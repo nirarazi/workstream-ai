@@ -122,6 +122,11 @@ describe("resolve: rule 3, the one ticket, PR or subject the message is about", 
 });
 
 describe("resolve: a report's thread", () => {
+  it("continues the latest request made in it", () => {
+    const r = resolve(msg("Fixed and redeployed", { inReportThread: true, status: "completed", priorInThread: 2, reportThreadItem: "R" }), fakeGraph({ R: ["message:T1/m2"] }), options);
+    expect(r).toMatchObject({ fallback: { action: "join", itemId: "R", addKeys: [] } });
+  });
+
   it("is never claimed by a reply: a reply about a ticket joins it without the thread", () => {
     const r = resolve(msg("Done OPS-101", { inReportThread: true }), fakeGraph({ B: ["ticket:OPS-101"] }), options);
     expect(r).toMatchObject({ action: "join", itemId: "B", addKeys: [] });
@@ -247,6 +252,9 @@ describe("isReport", () => {
   it("a no-change tick is only a short message saying just that", () => {
     expect(check("Idle since 09:00")).toBe("no-change");
     expect(check("No updates.")).toBe("no-change");
+    expect(check("Still idle\nall queues empty")).toBe("no-change");
+    expect(check("Still idle\nDana, what should I pick up next?")).toBeNull();
+    expect(check("No changes since 09:00\nthe runner is down again")).toBeNull();
     const news: Array<[string, Partial<ResolverMessage>]> = [
       ["Nothing changed on our side, but the payments API now returns 500s. Need you to rotate the key.", { status: "blocked_on_human" }],
       ["Nothing changed on our side, but the payments API now returns 500s. Need you to rotate the key.", { status: "in_progress" }],
