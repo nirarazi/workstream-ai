@@ -38,8 +38,9 @@ export class WorkItemLinker {
    * Extract work item IDs from message text and link the thread to them: junction rows (first = primary, rest =
    * mentioned; all mentioned in a digest), and threads.work_item_id kept in sync for backwards compatibility.
    * Only the thread's own ticket is created when it's new: the first ID in a message that isn't a digest, in a thread
-   * that has no ticket of its own yet ("first" in extraction order: by extractor, then pattern, then position). Other IDs are linked only when they're work items already, so an ID mentioned
-   * in passing (in a digest, a plan, a reply about another ticket) doesn't become an item nobody works on here.
+   * that has no ticket of its own yet ("first" in extraction order: by extractor, then pattern, then position, not
+   * necessarily first in the text). Other IDs are linked only when they're work items already, so an ID mentioned in
+   * passing (in a digest, a plan, a reply about another ticket) doesn't become an item nobody works on here.
    * Returns the IDs linked; extractIds has all the message names.
    */
   linkMessage(text: string, threadId: string, canBeDigest = true): string[] {
