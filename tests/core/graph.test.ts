@@ -1,6 +1,6 @@
 // tests/core/graph.test.ts — Tests for graph schema and merged_into support
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { Database } from "../../core/graph/db.js";
 import { ContextGraph } from "../../core/graph/index.js";
 
@@ -257,6 +257,73 @@ describe("merging moves mentions, subjects, targets and digest checks", () => {
     expect(snapshot()).toEqual(before);
     expect(graph.getWorkItemById("OPS-101")!.mergedInto).toBeNull();
     expect(db.db.prepare("SELECT COUNT(*) AS n FROM work_item_merges").get()).toEqual({ n: 0 });
+  });
+
+  it("unmergeWorkItem gives back a message posted in a moved thread after the merge", () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(new Date("2026-10-15T10:00:00.000Z"));
+      graph.mergeWorkItems("OPS-101", "ENG-202");
+      // The source's thread now belongs to the target, so a new message in it takes the target
+      vi.setSystemTime(new Date("2026-10-15T11:00:00.000Z"));
+      const later = graph.insertEvent({ threadId: "T-SRC", messageId: "m3", workItemId: "ENG-202", agentId: "U-atlas", status: "in_progress", confidence: 0.9, timestamp: "2026-10-15T11:00:00.000Z" });
+      // A message in the target's own thread stays the target's
+      const other = graph.insertEvent({ threadId: "T-TGT", messageId: "m4", workItemId: "ENG-202", agentId: "U-atlas", status: "in_progress", confidence: 0.9, timestamp: "2026-10-15T11:00:00.000Z" });
+
+      graph.unmergeWorkItem("OPS-101");
+
+      const itemOf = (id: string) => (db.db.prepare("SELECT work_item_id FROM events WHERE id = ?").get(id) as { work_item_id: string }).work_item_id;
+      expect(itemOf(later.id)).toBe("OPS-101");
+      expect(itemOf(other.id)).toBe("ENG-202");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("unmergeWorkItem still gives a conversation item merged before merges were recorded its thread back", () => {
+    graph.upsertWorkItem({ id: "thread:T-CONV", source: "inferred", title: "Conversation" });
+    graph.upsertThread({ id: "T-CONV", channelId: "C1", platform: "slack", workItemId: "thread:T-CONV" });
+    const event = graph.insertEvent({ threadId: "T-CONV", messageId: "m5", workItemId: "thread:T-CONV", agentId: "U-atlas", status: "in_progress", confidence: 0.9, timestamp: at });
+    graph.mergeWorkItems("thread:T-CONV", "ENG-202");
+    // As an earlier build left it: merged, with no record of what moved
+    db.db.prepare("DELETE FROM work_item_merges").run();
+
+    graph.unmergeWorkItem("thread:T-CONV");
+
+    expect(graph.getThreadById("T-CONV")!.workItemId).toBe("thread:T-CONV");
+    expect((db.db.prepare("SELECT work_item_id FROM events WHERE id = ?").get(event.id) as { work_item_id: string }).work_item_id)
+      .toBe("thread:T-CONV");
+    expect(graph.getWorkItemById("thread:T-CONV")!.mergedInto).toBeNull();
+  });
+
+  it("refuses to merge an item twice, into a merged item, or back into the item merged into it", () => {
+    graph.upsertWorkItem({ id: "OPS-103", source: "jira", title: "Third" });
+    graph.mergeWorkItems("OPS-101", "ENG-202");
+    const record = db.db.prepare("SELECT * FROM work_item_merges").all();
+
+    // Again: would replace the first merge's undo record
+    expect(() => graph.mergeWorkItems("OPS-101", "OPS-103")).toThrow("OPS-101 is already merged into ENG-202");
+    // Into a merged item: a chain
+    expect(() => graph.mergeWorkItems("OPS-103", "OPS-101")).toThrow("merge into that instead");
+    // Back into its source: a cycle
+    expect(() => graph.mergeWorkItems("ENG-202", "OPS-101")).toThrow("merge into that instead");
+
+    expect(db.db.prepare("SELECT * FROM work_item_merges").all()).toEqual(record);
+    expect(graph.getWorkItemById("ENG-202")!.mergedInto).toBeNull();
+  });
+
+  it("refuses to unmerge an item whose target has been merged since, until that's unmerged", () => {
+    graph.upsertWorkItem({ id: "OPS-103", source: "jira", title: "Third" });
+    const before = snapshot();
+    graph.mergeWorkItems("OPS-101", "ENG-202");
+    graph.mergeWorkItems("ENG-202", "OPS-103");
+
+    expect(() => graph.unmergeWorkItem("OPS-101")).toThrow("unmerge it first");
+    expect(graph.getWorkItemById("OPS-101")!.mergedInto).toBe("ENG-202");
+
+    graph.unmergeWorkItem("ENG-202");
+    graph.unmergeWorkItem("OPS-101");
+    expect(snapshot()).toEqual(before);
   });
 });
 

@@ -1877,8 +1877,13 @@ export class ContextGraph {
   } {
     const source = this.getWorkItemById(sourceId);
     if (!source) throw new Error(`Source work item not found: ${sourceId}`);
-    if (!this.getWorkItemById(targetId)) throw new Error(`Target work item not found: ${targetId}`);
+    const target = this.getWorkItemById(targetId);
+    if (!target) throw new Error(`Target work item not found: ${targetId}`);
     if (sourceId === targetId) throw new Error(`Can't merge a work item into itself: ${sourceId}`);
+    // One merge per item, and never into a merged one: a second merge would replace the first's undo record, and a
+    // merged target makes a chain (or, merged back into its source, a cycle)
+    if (source.mergedInto) throw new Error(`Work item ${sourceId} is already merged into ${source.mergedInto}`);
+    if (target.mergedInto) throw new Error(`Work item ${targetId} is merged into ${target.mergedInto}: merge into that instead`);
 
     const db = this.db.db;
     const mergedAt = new Date().toISOString();
@@ -1894,14 +1899,12 @@ export class ContextGraph {
       db.prepare("UPDATE events SET work_item_id = ? WHERE work_item_id = ?").run(targetId, sourceId);
 
       // The junction: a thread linked to both keeps the target's row, primary if either was
+      const targetLink = db.prepare("SELECT relation FROM thread_work_items WHERE thread_id = ? AND work_item_id = ?");
+      const makePrimary = db.prepare("UPDATE thread_work_items SET relation = 'primary' WHERE thread_id = ? AND work_item_id = ?");
       const links = (db.prepare("SELECT * FROM thread_work_items WHERE work_item_id = ?").all(sourceId) as ThreadWorkItemRow[])
         .map((row) => {
-          const had = db.prepare("SELECT relation FROM thread_work_items WHERE thread_id = ? AND work_item_id = ?")
-            .get(row.thread_id, targetId) as { relation: string } | undefined;
-          if (had && row.relation === "primary" && had.relation !== "primary") {
-            db.prepare("UPDATE thread_work_items SET relation = 'primary' WHERE thread_id = ? AND work_item_id = ?")
-              .run(row.thread_id, targetId);
-          }
+          const had = targetLink.get(row.thread_id, targetId) as { relation: string } | undefined;
+          if (had && row.relation === "primary" && had.relation !== "primary") makePrimary.run(row.thread_id, targetId);
           return { row, targetRelation: had?.relation ?? null };
         });
       db.prepare("UPDATE OR IGNORE thread_work_items SET work_item_id = ? WHERE work_item_id = ?").run(targetId, sourceId);
@@ -1910,9 +1913,9 @@ export class ContextGraph {
       // Per-message rows: the target's own row for a message wins
       const rows: MergeRecord["rows"] = [];
       for (const table of PER_EVENT_TABLES) {
+        const targetHas = db.prepare(`SELECT 1 FROM ${table} WHERE event_id = ? AND work_item_id = ?`);
         for (const row of db.prepare(`SELECT * FROM ${table} WHERE work_item_id = ?`).all(sourceId) as Array<Record<string, unknown>>) {
-          const targetHad = db.prepare(`SELECT 1 FROM ${table} WHERE event_id = ? AND work_item_id = ?`).get(row.event_id, targetId);
-          rows.push({ table, row, moved: !targetHad });
+          rows.push({ table, row, moved: !targetHas.get(row.event_id, targetId) });
         }
         db.prepare(`UPDATE OR IGNORE ${table} SET work_item_id = ? WHERE work_item_id = ?`).run(targetId, sourceId);
         db.prepare(`DELETE FROM ${table} WHERE work_item_id = ?`).run(sourceId);
@@ -1940,6 +1943,9 @@ export class ContextGraph {
     if (!source.mergedInto) throw new Error(`Work item ${sourceId} is not merged`);
 
     const targetId = source.mergedInto;
+    // The target merged since: its rows (and those it took from the source) are the next item's now
+    const target = this.getWorkItemById(targetId);
+    if (target?.mergedInto) throw new Error(`Work item ${targetId} is merged into ${target.mergedInto}: unmerge it first`);
     const db = this.db.db;
 
     this.transaction(() => {
@@ -1948,41 +1954,55 @@ export class ContextGraph {
 
       if (saved && saved.target_id === targetId) {
         const record = JSON.parse(saved.moved) as MergeRecord;
+        const threadBack = db.prepare("UPDATE threads SET work_item_id = ? WHERE id = ? AND work_item_id = ?");
+        // Messages in the thread since the merge took its item then: they're the source's again
+        const laterEventsBack = db.prepare(
+          "UPDATE events SET work_item_id = ? WHERE thread_id = ? AND work_item_id = ? AND created_at > ?",
+        );
         for (const threadId of record.threads) {
-          db.prepare("UPDATE threads SET work_item_id = ? WHERE id = ? AND work_item_id = ?").run(sourceId, threadId, targetId);
-          // Messages in the thread since the merge took its item then: they're the source's again
-          db.prepare("UPDATE events SET work_item_id = ? WHERE thread_id = ? AND work_item_id = ? AND created_at > ?")
-            .run(sourceId, threadId, targetId, saved.merged_at);
+          threadBack.run(sourceId, threadId, targetId);
+          laterEventsBack.run(sourceId, threadId, targetId, saved.merged_at);
         }
-        for (const eventId of record.events) {
-          db.prepare("UPDATE events SET work_item_id = ? WHERE id = ? AND work_item_id = ?").run(sourceId, eventId, targetId);
-        }
+        const eventBack = db.prepare("UPDATE events SET work_item_id = ? WHERE id = ? AND work_item_id = ?");
+        for (const eventId of record.events) eventBack.run(sourceId, eventId, targetId);
 
+        const linkBack = db.prepare("UPDATE OR IGNORE thread_work_items SET work_item_id = ? WHERE thread_id = ? AND work_item_id = ?");
+        const dropLink = db.prepare("DELETE FROM thread_work_items WHERE thread_id = ? AND work_item_id = ?");
+        const setRelation = db.prepare("UPDATE thread_work_items SET relation = ? WHERE thread_id = ? AND work_item_id = ?");
+        // Only for a thread that still exists, so a row whose thread is gone can't make the unmerge fail
+        const restoreLink = db.prepare(`
+          INSERT OR IGNORE INTO thread_work_items (thread_id, work_item_id, relation, created_at)
+          SELECT ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM threads WHERE id = ?)
+        `);
         for (const { row, targetRelation } of record.links) {
           if (targetRelation === null) {
             // The merge made the target's row: it goes back (dropped if the source has one again since)
-            db.prepare("UPDATE OR IGNORE thread_work_items SET work_item_id = ? WHERE thread_id = ? AND work_item_id = ?")
-              .run(sourceId, row.thread_id, targetId);
-            db.prepare("DELETE FROM thread_work_items WHERE thread_id = ? AND work_item_id = ?").run(row.thread_id, targetId);
+            linkBack.run(sourceId, row.thread_id, targetId);
+            dropLink.run(row.thread_id, targetId);
           } else {
-            db.prepare("UPDATE thread_work_items SET relation = ? WHERE thread_id = ? AND work_item_id = ?")
-              .run(targetRelation, row.thread_id, targetId);
-            db.prepare("INSERT OR IGNORE INTO thread_work_items (thread_id, work_item_id, relation, created_at) VALUES (?, ?, ?, ?)")
-              .run(row.thread_id, sourceId, row.relation, row.created_at);
+            setRelation.run(targetRelation, row.thread_id, targetId);
+            restoreLink.run(row.thread_id, sourceId, row.relation, row.created_at, row.thread_id);
           }
         }
 
-        for (const { table, row, moved } of record.rows) {
-          if (!PER_EVENT_TABLES.includes(table)) continue;
-          if (moved) {
-            db.prepare(`UPDATE OR IGNORE ${table} SET work_item_id = ? WHERE event_id = ? AND work_item_id = ?`)
-              .run(sourceId, row.event_id, targetId);
-            db.prepare(`DELETE FROM ${table} WHERE event_id = ? AND work_item_id = ?`).run(row.event_id, targetId);
-          } else {
-            // Dropped in favour of the target's row: put the source's back as it was
-            const columns = Object.keys(row).filter((c) => /^[a-z_]+$/.test(c));
-            db.prepare(`INSERT OR IGNORE INTO ${table} (${columns.join(", ")}) VALUES (${columns.map(() => "?").join(", ")})`)
-              .run(...columns.map((c) => row[c]));
+        for (const table of PER_EVENT_TABLES) {
+          const entries = record.rows.filter((r) => r.table === table);
+          if (entries.length === 0) continue;
+          const rowBack = db.prepare(`UPDATE OR IGNORE ${table} SET work_item_id = ? WHERE event_id = ? AND work_item_id = ?`);
+          const dropRow = db.prepare(`DELETE FROM ${table} WHERE event_id = ? AND work_item_id = ?`);
+          const columns = Object.keys(entries[0].row).filter((c) => /^[a-z_]+$/.test(c));
+          // Dropped in favour of the target's row: the source's goes back as it was, if its message still exists
+          const restoreRow = db.prepare(`
+            INSERT OR IGNORE INTO ${table} (${columns.join(", ")})
+            SELECT ${columns.map(() => "?").join(", ")} WHERE EXISTS (SELECT 1 FROM events WHERE id = ?)
+          `);
+          for (const { row, moved } of entries) {
+            if (moved) {
+              rowBack.run(sourceId, row.event_id, targetId);
+              dropRow.run(row.event_id, targetId);
+            } else {
+              restoreRow.run(...columns.map((c) => row[c]), row.event_id);
+            }
           }
         }
       } else if (sourceId.startsWith("thread:")) {
