@@ -21,7 +21,7 @@ function breakdown(workItemId: string, status: Classification["status"], targete
 let db: Database;
 afterEach(() => db?.close());
 
-function setup(text: string, answer: Classification, threadId = "T-DIGEST", senderType: "agent" | "human" = "agent") {
+function setup(text: string, answer: Classification, threadId = "T-DIGEST", senderType: "agent" | "human" = "agent", config = CONFIG) {
   db = new Database(":memory:");
   const graph = new ContextGraph(db);
   const linker = new WorkItemLinker(graph, [extractor()]);
@@ -35,7 +35,7 @@ function setup(text: string, answer: Classification, threadId = "T-DIGEST", send
     getThreadMessages: vi.fn(async () => []),
   } as any;
   const classify = vi.fn(async () => answer);
-  const pipeline = new Pipeline(adapter, { classify } as any, graph, linker, undefined, CONFIG);
+  const pipeline = new Pipeline(adapter, { classify } as any, graph, linker, undefined, config);
   return { graph, pipeline, adapter, classify, message };
 }
 
@@ -446,6 +446,69 @@ describe("Pipeline: IDs only mentioned in passing", () => {
 
     expect(graph.getWorkItemById("ENG-202")).toBeNull();
     expect(graph.getEventByMessageId("m1", "T-OWN")!.workItemId).toBe("OPS-101");
+  });
+
+  it("knows the model's ID in another case for one the text mentions", async () => {
+    const { graph, pipeline } = setup("Unblocked by the fix in ENG-202", {
+      status: "in_progress", entryType: "progress", confidence: 0.9, reason: "unblocked", workItemIds: ["OPS-101", "eng-202"],
+      title: "Unblocked", targetedAtOperator: false, actionRequiredFrom: null, nextAction: null,
+    }, "T-OWN");
+    graph.upsertWorkItem({ id: "OPS-101", source: "jira", title: "Rollout" });
+    graph.upsertThread({ id: "T-OWN", channelId: "C1", channelName: "fleet-ops", platform: "slack", workItemId: "OPS-101" });
+
+    await pipeline.processOnce();
+
+    expect(graph.getWorkItemById("eng-202")).toBeNull();
+    expect(graph.getWorkItemById("ENG-202")).toBeNull();
+  });
+
+  it("knows a mention written in lower case, with a space or with another dash as the ID the model gives back", async () => {
+    const config = { ...CONFIG, taskAdapter: { ticketPrefixes: ["OPS-"] } };
+    const { graph, pipeline } = setup("Same root cause as ops-77, OPS 78 and OPS‑79", {
+      status: "in_progress", entryType: "progress", confidence: 0.9, reason: "same cause", workItemIds: ["OPS-101", "OPS-77", "OPS-78", "OPS-79"],
+      title: "Root cause", targetedAtOperator: false, actionRequiredFrom: null, nextAction: null,
+    }, "T-OWN", "agent", config);
+    graph.upsertWorkItem({ id: "OPS-101", source: "jira", title: "Rollout" });
+    graph.upsertThread({ id: "T-OWN", channelId: "C1", channelName: "fleet-ops", platform: "slack", workItemId: "OPS-101" });
+
+    await pipeline.processOnce();
+
+    for (const id of ["OPS-77", "OPS-78", "OPS-79"]) expect(graph.getWorkItemById(id)).toBeNull();
+    expect(graph.getEventByMessageId("m1", "T-OWN")!.workItemId).toBe("OPS-101");
+  });
+
+  it("creates an item a digest's line puts in front of the operator though the model leaves its ID out", async () => {
+    const answer: Classification = {
+      ...DIGEST_ANSWER, workItemIds: [],
+      breakdown: [breakdown("OPS-1", "blocked_on_human"), breakdown("OPS-2", "needs_decision", true), breakdown("OPS-3", "completed")],
+    };
+    const { graph, pipeline } = setup(DIGEST_TEXT, answer);
+
+    await pipeline.processOnce();
+
+    expect(graph.getWorkItemById("OPS-2")).not.toBeNull();
+    expect(graph.getWorkItemById("OPS-1")).toBeNull();
+    expect(db.db.prepare("SELECT work_item_id FROM event_targets").all()).toEqual([{ work_item_id: "OPS-2" }]);
+  });
+
+  it("creates at most three items from one message's lines for the operator, and logs the IDs of the rest", async () => {
+    const ids = ["OPS-1", "OPS-2", "OPS-3", "OPS-4", "OPS-5"];
+    const answer: Classification = {
+      ...DIGEST_ANSWER, workItemIds: ids, breakdown: ids.map((id) => breakdown(id, "needs_decision", true)),
+    };
+    const { graph, pipeline } = setup("Need your call on OPS-1, OPS-2, OPS-3, OPS-4 and OPS-5", answer);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    try {
+      await pipeline.processOnce();
+
+      expect(ids.filter((id) => graph.getWorkItemById(id))).toEqual(["OPS-1", "OPS-2", "OPS-3"]);
+      const logged = warn.mock.calls.map((args) => args.join(" ")).join("\n");
+      expect(logged).toContain("OPS-4, OPS-5");
+      expect(logged).not.toContain("Need your call");
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it("still takes up a model-suggested ID that isn't in the text", async () => {
