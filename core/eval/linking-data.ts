@@ -2,21 +2,23 @@
 //
 // The unit labeled and scored is a message, keyed by its platform identity (messageKey), not by events.id: an event
 // row is a random UUID per (message, thread), so it changes when messages are re-ingested or relinked, and one message
-// can have several rows (a thread's first message is stored under its channel's history and under the thread). Those
-// rows collapse into one message; where they disagree about the item, the first stored row's item counts.
+// can have several rows (stored once under each thread id it was seen in). Those rows collapse into one message, and
+// one of them represents it for everything: its thread, text and item (see representativeRows).
 //
-// The database is never opened in place: openSource takes the re-link dry run's private read-only copy. Groupings map
-// a message key to a work item id:
+// The database is never opened in place: callers use openReadOnly, the re-link dry run's private read-only copy.
+// Groupings map a message key to a work item id. They measure membership, not what the inbox shows, so a dismissed
+// item still counts as an item:
 //   current — each event's work item (else its thread's), following merged_into to the item it was merged into;
 //   relink  — the items the re-link dry run proposed (eval-data/relink/items.json; npm run relink writes it), whose
 //             event ids are mapped to message keys through the database.
 
 import type BetterSqlite3 from "better-sqlite3";
-import { existsSync, lstatSync, readFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { findProjectRoot } from "../config.js";
 import { ownLines } from "../graph/own-lines.js";
-import { openReadOnly, RELINK_OUT_DIR, type ReadOnlyCopy } from "../graph/relink.js";
+import { hasColumn, RELINK_OUT_DIR } from "../graph/relink.js";
+import { projectFile } from "./linking-labels.js";
 import type { Grouping } from "./linking-metrics.js";
 
 export const GROUPINGS = ["current", "relink"] as const;
@@ -36,7 +38,7 @@ export function messageKey(platform: string | null, channelId: string | null, me
 export interface Observation {
   /** messageKey(): what labels are keyed by */
   id: string;
-  /** events.id of the message's first stored row, for its thread context */
+  /** events.id of the row that represents the message */
   eventId: string;
   threadId: string;
   senderId: string | null;
@@ -51,25 +53,39 @@ export interface Observation {
 export interface MessageIndex {
   /** One per message with text of its own */
   observations: Observation[];
-  /** events.id → message key, for every event, in the order the rows were stored */
+  /** events.id → message key, for every event */
   keyOfEvent: Map<string, string>;
+  /** Message key → events.id of the row that represents it, for every message */
+  rowOfMessage: Map<string, string>;
 }
 
-/** The project the command runs in (its eval-data/, where npm run relink writes too), else this checkout's */
+/** The project the command runs in (its eval-data/, where npm run relink writes too), else this checkout's: as relink-cli */
 export function projectRoot(): string {
   return existsSync(resolve("config", "default.yaml")) ? process.cwd() : findProjectRoot();
 }
 
-/** A read-only connection to a private copy of the database (removed on close) */
-export function openSource(dbPath: string): ReadOnlyCopy {
-  return openReadOnly(dbPath);
+interface Row {
+  id: string; thread_id: string; message_id: string; agent_id: string | null; sender_name: string;
+  platform: string | null; channel_id: string | null; channel_name: string; timestamp: string; raw_text: string | null;
 }
 
-function hasColumn(db: BetterSqlite3.Database, table: string, column: string): boolean {
-  return (db.pragma(`table_info(${table})`) as Array<{ name: string }>).some((c) => c.name === column);
+/**
+ * The row that represents each message among its rows (in stored order): the one in the message's own thread. A
+ * thread is keyed by its first message's id (Slack's thread_ts), so a row whose thread id is another message's is a
+ * reply in that thread, and wins over a row filed under the message's own id (as a message of the channel's history
+ * when it was first seen on its own). Otherwise the first stored row.
+ */
+function representativeRows(rows: Row[]): Map<string, Row> {
+  const out = new Map<string, Row>();
+  for (const r of rows) {
+    const key = messageKey(r.platform, r.channel_id, r.message_id);
+    const held = out.get(key);
+    if (!held || (held.thread_id === held.message_id && r.thread_id !== r.message_id)) out.set(key, r);
+  }
+  return out;
 }
 
-/** Every event's message key, and one observation per message (its first stored row), skipping messages with no text */
+/** Every event's message key, each message's representative row, and an observation per message with text */
 export function loadMessageIndex(db: BetterSqlite3.Database): MessageIndex {
   const rows = db.prepare(`
     SELECT e.id, e.thread_id, e.message_id, e.agent_id, COALESCE(a.name, 'unknown') AS sender_name, t.platform,
@@ -78,17 +94,15 @@ export function loadMessageIndex(db: BetterSqlite3.Database): MessageIndex {
     LEFT JOIN agents a ON a.id = e.agent_id
     LEFT JOIN threads t ON t.id = e.thread_id
     ORDER BY e.rowid
-  `).all() as Array<{
-    id: string; thread_id: string; message_id: string; agent_id: string | null; sender_name: string;
-    platform: string | null; channel_id: string | null; channel_name: string; timestamp: string; raw_text: string | null;
-  }>;
-  const keyOfEvent = new Map<string, string>();
-  const first = new Map<string, Observation>();
-  for (const r of rows) {
-    const key = messageKey(r.platform, r.channel_id, r.message_id);
-    keyOfEvent.set(r.id, key);
-    if (first.has(key)) continue;
-    first.set(key, {
+  `).all() as Row[];
+  const keyOfEvent = new Map(rows.map((r) => [r.id, messageKey(r.platform, r.channel_id, r.message_id)]));
+  const rowOfMessage = new Map<string, string>();
+  const observations: Observation[] = [];
+  for (const [key, r] of representativeRows(rows)) {
+    rowOfMessage.set(key, r.id);
+    const text = ownLines(r.raw_text ?? "").trim();
+    if (!text) continue;
+    observations.push({
       id: key,
       eventId: r.id,
       threadId: r.thread_id,
@@ -97,27 +111,25 @@ export function loadMessageIndex(db: BetterSqlite3.Database): MessageIndex {
       channelId: r.channel_id,
       channelName: r.channel_name,
       timestamp: r.timestamp,
-      text: ownLines(r.raw_text ?? "").trim(),
+      text,
     });
   }
-  const observations = [...first.values()]
-    .filter((o) => o.text.length > 0)
-    .sort((a, b) => (a.timestamp < b.timestamp ? -1 : a.timestamp > b.timestamp ? 1 : 0));
-  return { observations, keyOfEvent };
+  observations.sort((a, b) => (a.timestamp < b.timestamp ? -1 : a.timestamp > b.timestamp ? 1 : 0));
+  return { observations, keyOfEvent, rowOfMessage };
 }
 
 /**
- * An event-level grouping (events.id → item) as a message-level one: each message takes the item of its first stored
- * row that has one. `unmatched` counts events the database doesn't hold (a proposal made from an older copy).
+ * An event-level grouping (events.id → item) as a message-level one: each message takes its representative row's
+ * item, or none. `unmatched` counts events the database doesn't hold (a proposal made from an older copy).
  */
-export function byMessage(byEvent: Grouping, keyOfEvent: Map<string, string>): { grouping: Grouping; unmatched: number } {
+export function byMessage(byEvent: Grouping, index: Pick<MessageIndex, "keyOfEvent" | "rowOfMessage">): { grouping: Grouping; unmatched: number } {
   const grouping = new Map<string, string>();
-  for (const [eventId, key] of keyOfEvent) {
-    const item = byEvent.get(eventId);
-    if (item !== undefined && !grouping.has(key)) grouping.set(key, item);
+  for (const [key, row] of index.rowOfMessage) {
+    const item = byEvent.get(row);
+    if (item !== undefined) grouping.set(key, item);
   }
   let unmatched = 0;
-  for (const eventId of byEvent.keys()) if (!keyOfEvent.has(eventId)) unmatched++;
+  for (const eventId of byEvent.keys()) if (!index.keyOfEvent.has(eventId)) unmatched++;
   return { grouping, unmatched };
 }
 
@@ -126,35 +138,56 @@ export function loadSenderNames(db: BetterSqlite3.Database): string[] {
   return (db.prepare("SELECT DISTINCT name FROM agents").all() as Array<{ name: string }>).map((r) => r.name);
 }
 
-/** Follows merged_into to the item that took a merged one in (stops at a cycle) */
-function resolveMerged(id: string, mergedInto: Map<string, string>): string {
-  const seen = new Set<string>([id]);
-  let current = id;
-  for (let next = mergedInto.get(current); next && !seen.has(next); next = mergedInto.get(current)) {
-    seen.add(next);
-    current = next;
-  }
-  return current;
+/**
+ * Where each item ends up after following merged_into: the end of its chain, or, for an item in a merge cycle (or
+ * leading into one), the cycle's smallest id, so every member of a cycle resolves to the same item.
+ */
+export function mergeTargets(mergedInto: ReadonlyMap<string, string>): (id: string) => string {
+  const memo = new Map<string, string>();
+  return (id) => {
+    const path: string[] = [];
+    const onPath = new Map<string, number>();
+    let current = id;
+    let target: string | undefined;
+    while (target === undefined) {
+      const known = memo.get(current);
+      if (known !== undefined) {
+        target = known;
+      } else if (onPath.has(current)) {
+        const cycle = path.slice(onPath.get(current)!);
+        target = cycle.reduce((a, b) => (b < a ? b : a));
+      } else {
+        onPath.set(current, path.length);
+        path.push(current);
+        const next = mergedInto.get(current);
+        if (next === undefined) target = current;
+        else current = next;
+      }
+    }
+    for (const p of path) memo.set(p, target);
+    return target;
+  };
 }
 
-/** The live grouping by event: each event's work item, else its thread's, with merges followed */
+/** The live grouping by event: each event's work item, else its thread's, with merges followed; dismissed items count */
 export function currentEventGrouping(db: BetterSqlite3.Database): Grouping {
   const mergedInto = new Map<string, string>();
   if (hasColumn(db, "work_items", "merged_into")) {
     const rows = db.prepare("SELECT id, merged_into FROM work_items WHERE merged_into IS NOT NULL").all() as Array<{ id: string; merged_into: string }>;
     for (const r of rows) mergedInto.set(r.id, r.merged_into);
   }
+  const target = mergeTargets(mergedInto);
   const rows = db.prepare(`
     SELECT e.id, COALESCE(e.work_item_id, t.work_item_id) AS item
     FROM events e LEFT JOIN threads t ON t.id = e.thread_id
   `).all() as Array<{ id: string; item: string | null }>;
   const out = new Map<string, string>();
-  for (const r of rows) if (r.item) out.set(r.id, resolveMerged(r.item, mergedInto));
+  for (const r of rows) if (r.item) out.set(r.id, target(r.item));
   return out;
 }
 
 export function relinkItemsPath(root: string): string {
-  return join(root, RELINK_OUT_DIR, "items.json");
+  return resolve(root, RELINK_OUT_DIR, "items.json");
 }
 
 /** Parses the re-link dry run's items.json into an event-level grouping: { proposed: [{ id, events: [events.id, …] }, …] } */
@@ -179,10 +212,8 @@ export function parseRelinkItems(content: string): Grouping {
 
 /** The re-link proposal's event-level grouping, or null when there's no dry run output yet */
 export function loadRelinkGrouping(root: string): Grouping | null {
-  const path = relinkItemsPath(root);
-  if (!existsSync(path)) return null;
-  if (lstatSync(path).isSymbolicLink()) throw new Error(`Refusing to read: ${path} is a symlink`);
-  return parseRelinkItems(readFileSync(path, "utf-8"));
+  const path = projectFile(root, RELINK_OUT_DIR, "items.json");
+  return path ? parseRelinkItems(readFileSync(path, "utf-8")) : null;
 }
 
 /** A full gold clustering of message keys: { "clusters": [[key, …], …] } or just the list. A message in two clusters is an error. */
@@ -225,7 +256,7 @@ export function loadGroupings(names: GroupingName[], root: string, db: BetterSql
       if (!g) throw new Error(`No re-link output at ${relinkItemsPath(root)}. Run: npm run relink`);
       byEvent = g;
     }
-    const { grouping, unmatched } = byMessage(byEvent, index.keyOfEvent);
+    const { grouping, unmatched } = byMessage(byEvent, index);
     out.groupings.set(name, grouping);
     out.unmatched.set(name, unmatched);
   }
@@ -257,4 +288,20 @@ export function parseFlags<T extends string>(argv: string[], allowed: readonly T
     i++;
   }
   return out;
+}
+
+/** Exit codes for a run stopped by a signal, by convention 128 + the signal's number */
+export const SIGNAL_EXIT: Record<string, number> = { SIGHUP: 129, SIGINT: 130, SIGTERM: 143 };
+
+/** Runs `stop` (save, restore the terminal, close the copy) on SIGHUP, SIGINT or SIGTERM, then exits 128 + signal */
+export function onStopSignals(stop: () => void): void {
+  for (const name of Object.keys(SIGNAL_EXIT)) {
+    process.on(name, () => {
+      try {
+        stop();
+      } finally {
+        process.exit(SIGNAL_EXIT[name]);
+      }
+    });
+  }
 }

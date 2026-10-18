@@ -7,13 +7,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Database } from "../../core/graph/db.js";
 import { ContextGraph } from "../../core/graph/index.js";
+import { openReadOnly } from "../../core/graph/relink.js";
 import {
   byMessage,
   currentEventGrouping,
   loadGroupings,
   loadMessageIndex,
+  mergeTargets,
   messageKey,
-  openSource,
   parseFlags,
   parseGoldClusters,
   parseGroupingNames,
@@ -57,9 +58,13 @@ function seed(dbPath: string): Ids {
   thread("t1", "ops", "OPS-101");
   event("t1", "m1", "U0ATLAS", "Started OPS-101: rotating the staging keys for Northwind", "OPS-101", at(0, 9));
   event("t1", "m2", "U0ATLAS", "Keys rotated on staging", null, at(0, 10));
-  // The same message stored again under another thread of the channel (a second row): one message, its first row's item
+  // The same message stored again under another thread of the channel (a second row): one message, its first row wins
   thread("t1r", "ops", "thread:t1r");
   event("t1r", "m1", "U0ATLAS", "Started OPS-101: rotating the staging keys for Northwind", "thread:t1r", at(0, 9));
+  // A reply first seen on its own (a thread keyed by its own id), then in its thread t1: the thread's row represents it
+  thread("m10", "ops", "thread:m10");
+  event("m10", "m10", "U0ATLAS", "Rotation verified on staging", "thread:m10", at(0, 11));
+  event("t1", "m10", "U0ATLAS", "Rotation verified on staging", null, at(0, 11));
 
   // Merged into OPS-101 the way older data was: the item points at OPS-101, its events weren't moved
   thread("t9", "deploy", "thread:t9");
@@ -101,7 +106,7 @@ describe("linking eval data and sampler", () => {
     dir = mkdtempSync(join(tmpdir(), "linking-sample-test-"));
     dbPath = join(dir, "workstream.db");
     ids = seed(dbPath);
-    const source = openSource(dbPath);
+    const source = openReadOnly(dbPath);
     try {
       index = loadMessageIndex(source.db);
       observations = index.observations;
@@ -118,7 +123,7 @@ describe("linking eval data and sampler", () => {
   it("opens a private copy read-only: writes are refused, and the source is untouched", () => {
     const hash = () => createHash("sha256").update(readFileSync(dbPath)).digest("hex");
     const before = hash();
-    const source = openSource(dbPath);
+    const source = openReadOnly(dbPath);
     try {
       expect(source.db.readonly).toBe(true);
       expect(source.db.name).not.toBe(dbPath);
@@ -132,7 +137,7 @@ describe("linking eval data and sampler", () => {
   });
 
   it("reads one observation per message with the sender's own lines", () => {
-    expect(observations).toHaveLength(9);
+    expect(observations).toHaveLength(10);
     const quoted = observations.find((o) => o.id === ids.m8)!;
     expect(quoted.text).toBe("ok");
     expect(observations.find((o) => o.id === ids.m1)).toMatchObject({ senderName: "Atlas", channelName: "ops", threadId: "t1" });
@@ -144,8 +149,19 @@ describe("linking eval data and sampler", () => {
     expect(current.get(ids.m4)).toBe("OPS-102");
   });
 
-  it("finds tickets, PRs and capitalised names, but not sentence openers or senders", () => {
+  it("reads newline runs and long messages in linear time", () => {
+    const text = "Atlas\n".repeat(40000);
+    const started = performance.now();
+    namesOf(text, new Set());
+    refsOf(text);
+    // Within the length cap too: a quadratic pattern takes over a second for these 25
+    for (let i = 0; i < 25; i++) namesOf("\n".repeat(40000) + " x", new Set());
+    expect(performance.now() - started).toBeLessThan(200);
+  });
+
+  it("finds tickets, PRs and capitalised names, but not technical terms, sentence openers or senders", () => {
     expect(refsOf("Done OPS-101, see https://github.com/acme/api/pull/7 and PR #12")).toEqual(["ticket:OPS-101", "pr:acme/api#7", "pr:#12"]);
+    expect(refsOf("UTF-8, SHA-256, ISO-8601 and GPT-4 are not tickets; OPS-102 is")).toEqual(["ticket:OPS-102"]);
     expect(namesOf("Started the Northwind export. Atlas is on it, Dana approved", new Set(["dana"]))).toEqual(["Northwind"]);
   });
 
@@ -155,7 +171,7 @@ describe("linking eval data and sampler", () => {
     const keys = (name: string) => new Set((strata.get(name) ?? []).map((c) => pairKey(c.a, c.b)));
 
     // Over-merge: the merged Northwind export sits in OPS-101 with Atlas's key rotation
-    expect(keys("together:current").has(pairKey(ids.m1, ids.m9)) || keys("together:current").has(pairKey(ids.m2, ids.m9))).toBe(true);
+    expect(strata.get("together:current")!.some((c) => c.a === ids.m9 || c.b === ids.m9)).toBe(true);
     for (const c of strata.get("together:current")!) expect(current.get(c.a)).toBe(current.get(c.b));
 
     // Splits: every pair is apart in the grouping
@@ -205,14 +221,15 @@ describe("linking eval data and sampler", () => {
   it("loads the relink grouping from eval-data/relink, with a hint when it's missing", () => {
     const root = join(dir, "project");
     mkdirSync(join(root, "eval-data", "relink"), { recursive: true });
-    const source = openSource(dbPath);
+    const source = openReadOnly(dbPath);
     try {
       expect(() => loadGroupings(["relink"], root, source.db, index)).toThrow(/npm run relink/);
       // The proposal names events; scores use their messages. An event the database lacks is counted, not scored.
       writeFileSync(join(root, "eval-data", "relink", "items.json"), JSON.stringify({
-        proposed: [{ id: "r1", events: [eventIds["t1r/m1"], eventIds["t1/m2"]] }, { id: "r2", events: ["gone-event"] }],
+        proposed: [{ id: "r1", events: [eventIds["t1/m1"], eventIds["t1/m2"]] }, { id: "r2", events: ["gone-event", eventIds["t1r/m1"]] }],
       }));
       const loaded = loadGroupings(["relink"], root, source.db, index);
+      // m1's representative row is t1's: the proposal's r2 for its t1r row doesn't count
       expect(loaded.groupings.get("relink")!.get(ids.m1)).toBe("r1");
       expect(loaded.groupings.get("relink")!.get(ids.m2)).toBe("r1");
       expect(loaded.unmatched.get("relink")).toBe(1);
@@ -227,10 +244,28 @@ describe("linking eval data and sampler", () => {
     const rows = [...index.keyOfEvent].filter(([, key]) => key === ids.m1);
     expect(rows.map(([id]) => id)).toEqual([eventIds["t1/m1"], eventIds["t1r/m1"]]);
     expect(observations.filter((o) => o.id === ids.m1)).toHaveLength(1);
-    // The first stored row's item wins when the rows disagree
+    // Neither row is filed under the message's own id: the first stored represents it, for its thread and its item
+    expect(index.rowOfMessage.get(ids.m1)).toBe(eventIds["t1/m1"]);
     expect(current.get(ids.m1)).toBe("OPS-101");
-    const later = byMessage(new Map([[eventIds["t1r/m1"], "thread:t1r"]]), index.keyOfEvent);
-    expect(later.grouping.get(ids.m1)).toBe("thread:t1r");
+    expect(byMessage(new Map([[eventIds["t1r/m1"], "thread:t1r"]]), index).grouping.has(ids.m1)).toBe(false);
+  });
+
+  it("represents a message by its row in its own thread, not the row filed under its own id", () => {
+    expect(index.rowOfMessage.get(ids.m10)).toBe(eventIds["t1/m10"]);
+    const o = observations.find((x) => x.id === ids.m10)!;
+    expect(o).toMatchObject({ threadId: "t1", eventId: eventIds["t1/m10"] });
+    // The item comes from the same row: t1's (OPS-101), not the stand-alone thread:m10
+    expect(current.get(ids.m10)).toBe("OPS-101");
+  });
+
+  it("follows merge chains, and resolves every member of a merge cycle to one item", () => {
+    const chain = mergeTargets(new Map([["a", "b"], ["b", "c"], ["c", "d"]]));
+    expect(["a", "b", "c", "d"].map(chain)).toEqual(["d", "d", "d", "d"]);
+    // x → y → z → y: y and z form the cycle, and x leads into it
+    const cycle = mergeTargets(new Map([["x", "y"], ["y", "z"], ["z", "y"], ["q", "q"]]));
+    expect(["z", "y", "x"].map(cycle)).toEqual(["y", "y", "y"]);
+    expect(cycle("q")).toBe("q");
+    expect(cycle("free")).toBe("free");
   });
 
   it("parses gold clusters, options and grouping names strictly", () => {

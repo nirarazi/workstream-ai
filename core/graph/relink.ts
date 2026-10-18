@@ -132,7 +132,9 @@ export function openReadOnly(dbPath: string, hooks: OpenReadOnlyHooks = {}): Rea
   const dir = mkdtempSync(join(tmpdir(), `${TEMP_PREFIX}${process.pid}-`));
   chmodSync(dir, 0o700);
   const remove = () => rmSync(dir, { recursive: true, force: true });
-  // The backstop if the process exits with the copy still open (the CLI handles SIGINT and SIGTERM for the whole run)
+  // The backstop if the process exits with the copy still open. A signal with no handler kills the process without
+  // an exit event, so each command that opens a copy handles its signals (SIGINT, SIGTERM; SIGHUP too where it keeps a
+  // terminal session) and exits through process.exit
   process.on("exit", remove);
   const detach = () => process.removeListener("exit", remove);
   const cleanUp = () => {
@@ -226,7 +228,7 @@ export interface Snapshot {
   trackerPrefixes: string[];
 }
 
-function hasColumn(db: BetterSqlite3.Database, table: string, column: string): boolean {
+export function hasColumn(db: BetterSqlite3.Database, table: string, column: string): boolean {
   return (db.pragma(`table_info(${table})`) as Array<{ name: string }>).some((c) => c.name === column);
 }
 

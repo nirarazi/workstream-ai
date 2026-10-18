@@ -11,10 +11,11 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { openReadOnly } from "../graph/relink.js";
 import {
   loadGroupings,
   loadMessageIndex,
-  openSource,
+  onStopSignals,
   parseFlags,
   parseGoldClusters,
   parseGroupingNames,
@@ -48,11 +49,16 @@ function main(): void {
     return;
   }
 
-  // Labels are keyed by message; the database maps each grouping's events to messages (the re-link proposal's too)
+  // Labels are keyed by message; the database maps each grouping's events to messages (the re-link proposal's too).
+  // As npm run relink: the database in the directory it runs in, unless --db says otherwise.
   let loaded: LoadedGroupings;
-  const source = openSource(resolve(flags.db ?? resolve(root, "workstream.db")));
+  let known: Set<string>;
+  const source = openReadOnly(resolve(flags.db ?? "workstream.db"));
+  onStopSignals(() => source.close());
   try {
-    loaded = loadGroupings(names, root, source.db, loadMessageIndex(source.db));
+    const index = loadMessageIndex(source.db);
+    known = new Set(index.rowOfMessage.keys());
+    loaded = loadGroupings(names, root, source.db, index);
   } finally {
     source.close();
   }
@@ -61,11 +67,14 @@ function main(): void {
     if (n) console.log(`${name}: ${n} events it places aren't in the database (made from an older copy?); they're left out`);
   }
 
-  const scores = new Map<GroupingName, GroupingScore>([...groupings].map(([name, g]) => [name, scoreGrouping(labels, g)]));
+  const scores = new Map<GroupingName, GroupingScore>([...groupings].map(([name, g]) => [name, scoreGrouping(labels, g, known)]));
   const same = labels.pairs.filter((p) => p.verdict === "same").length;
   console.log(`Labels: ${labels.pairs.length} pairs (${same} same work, ${labels.pairs.length - same} different), ${labels.notWork.length} messages marked not work`);
-  const left = [...scores.values()][0].pairsWithNotWork;
-  if (left) console.log(`${left} pairs with a not-work message are left out of the pairwise scores`);
+  const first = [...scores.values()][0];
+  if (first.unknownMessages) {
+    console.log(`${first.unknownMessages} labeled messages aren't in this database (another or older --db?): ${first.pairsWithUnknown} pairs with them are left out`);
+  }
+  if (first.pairsWithNotWork) console.log(`${first.pairsWithNotWork} pairs with a not-work message are left out of the pairwise scores`);
   console.log("");
 
   const cols = [...scores.values()];

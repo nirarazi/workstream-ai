@@ -46,11 +46,18 @@ describe("pairwiseScores", () => {
     expect(s.f1).toBeCloseTo(0.4);
   });
 
-  it("leaves precision undefined when the grouping puts no labeled pair together", () => {
+  it("leaves precision undefined when the grouping puts no labeled pair together, but F1 is still 0", () => {
     const s = pairwiseScores([{ a: "a1", b: "r2", verdict: "same" }], g);
     expect(s.precision.p).toBeNull();
-    expect(s.f1).toBeNull();
     expect(s.recall.p).toBe(0);
+    expect(s.f1).toBe(0);
+  });
+
+  it("computes F1 as 2tp / (2tp + fp + fn), undefined only with no tp, fp or fn", () => {
+    const merged = pairwiseScores([{ a: "a1", b: "r1", verdict: "different" }, { a: "a2", b: "r2", verdict: "different" }], g);
+    expect(merged.recall.p).toBeNull();
+    expect(merged.f1).toBe(0);
+    expect(pairwiseScores([{ a: "a2", b: "r2", verdict: "different" }], g).f1).toBeNull();
   });
 
   it("breaks agreement down by stratum", () => {
@@ -85,6 +92,24 @@ describe("notWorkRate and scoreGrouping", () => {
     expect(s.notWork.k).toBe(1);
     expect(s.notWork.n).toBe(4);
     expect(s.unplaced).toBe(1);
+  });
+
+  it("leaves out labeled messages the database doesn't hold, rather than scoring them as unplaced", () => {
+    const labels = {
+      pairs: [
+        { a: "a1", b: "a2", verdict: "same" as const },
+        { a: "a1", b: "old1", verdict: "same" as const },
+      ],
+      notWork: [{ message: "old2" }],
+    };
+    const s = scoreGrouping(labels, g, new Set(["a1", "a2", "h1", "h2"]));
+    expect(s.unknownMessages).toBe(2);
+    expect(s.pairsWithUnknown).toBe(1);
+    expect(s.pairwise.fn).toBe(0);
+    expect(s.unplaced).toBe(0);
+    expect(s.notWork.n).toBe(2);
+    // Without the database's keys, the same pair counts as a split
+    expect(scoreGrouping(labels, g).pairwise.fn).toBe(1);
   });
 });
 

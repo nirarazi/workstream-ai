@@ -9,8 +9,10 @@
 //   shared-ref           both name the same ticket or PR in their own lines
 //   shared-name          both use the same capitalised word, a cheap stand-in for a shared subject
 // A split stratum takes a pair only when some grouping puts the two in different items. Within a stratum, items and
-// signal buckets take turns, so one huge item or busy thread can't fill it.
+// signal buckets take turns, so one huge item or busy thread can't fill it. A message no grouping places isn't drawn
+// for a split stratum, deliberately: a split is two items for one piece of work, and an unplaced message is in none.
 
+import { looksLikeTicketKey } from "../graph/extractors/default.js";
 import { pairKey } from "./linking-labels.js";
 import type { Grouping } from "./linking-metrics.js";
 import type { Observation } from "./linking-data.js";
@@ -54,12 +56,20 @@ function roundRobin<T>(lists: T[][]): T[] {
   return out;
 }
 
-/** Ticket keys (OPS-101) and pull requests (a PR URL, or "PR #12") a message names */
+/** How much of a message the signals read: enough for any subject, and a bound on the work per message */
+const SIGNAL_TEXT_MAX = 8000;
+
+/**
+ * Ticket keys (OPS-101, not technical terms such as UTF-8 or ISO-8601) and pull requests a message names. A PR URL
+ * keys as "pr:<owner>/<repo>#7" and a bare "PR #7" as "pr:#7": they don't match each other, since a bare number
+ * doesn't say which repository.
+ */
 export function refsOf(text: string): string[] {
+  const head = text.slice(0, SIGNAL_TEXT_MAX);
   const refs = new Set<string>();
-  for (const m of text.matchAll(/\b([A-Z][A-Z0-9]{1,9}-\d+)\b/g)) refs.add(`ticket:${m[1]}`);
-  for (const m of text.matchAll(/\/([\w.-]+\/[\w.-]+)\/pull\/(\d+)/g)) refs.add(`pr:${m[1].toLowerCase()}#${m[2]}`);
-  for (const m of text.matchAll(/\bPR\s*#?(\d+)\b/gi)) refs.add(`pr:#${m[1]}`);
+  for (const m of head.matchAll(/\b([A-Z][A-Z0-9]{1,9}-\d+)\b/g)) if (looksLikeTicketKey(m[1])) refs.add(`ticket:${m[1]}`);
+  for (const m of head.matchAll(/\/([\w.-]+\/[\w.-]+)\/pull\/(\d+)/g)) refs.add(`pr:${m[1].toLowerCase()}#${m[2]}`);
+  for (const m of head.matchAll(/\bPR\s*#?(\d+)\b/gi)) refs.add(`pr:#${m[1]}`);
   return [...refs];
 }
 
@@ -75,7 +85,8 @@ const STOP_WORDS = new Set([
 /** Capitalised words (4+ letters) that don't open a sentence, aren't common and aren't a sender's name */
 export function namesOf(text: string, exclude: ReadonlySet<string>): string[] {
   const names = new Set<string>();
-  for (const m of text.matchAll(/(^|[.!?\n]\s*|\s)([A-Z][a-z]{3,})\b/g)) {
+  // The opener takes spaces and tabs only after the punctuation, so a run of newlines is read once, not once per line
+  for (const m of text.slice(0, SIGNAL_TEXT_MAX).matchAll(/(^|[.!?\n][ \t]*|\s)([A-Z][a-z]{3,})\b/g)) {
     const opensSentence = m.index === 0 || /[.!?\n]/.test(m[1]);
     const word = m[2];
     if (opensSentence || STOP_WORDS.has(word) || exclude.has(word.toLowerCase())) continue;

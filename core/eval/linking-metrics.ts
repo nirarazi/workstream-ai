@@ -57,7 +57,7 @@ export interface PairwiseScores {
   tn: number;
   precision: Rate;
   recall: Rate;
-  /** null when precision or recall is undefined */
+  /** 2tp / (2tp + fp + fn); null only when there's no tp, fp or fn at all */
   f1: number | null;
 }
 
@@ -65,15 +65,14 @@ export function pairwiseScores(pairs: LabeledPair[], grouping: Grouping): Pairwi
   let tp = 0, fp = 0, fn = 0, tn = 0;
   for (const pair of pairs) {
     const t = together(grouping, pair.a, pair.b);
-    if (pair.verdict === "same") t ? tp++ : fn++;
-    else t ? fp++ : tn++;
+    if (pair.verdict === "same") {
+      if (t) tp++;
+      else fn++;
+    } else if (t) fp++;
+    else tn++;
   }
-  const precision = wilson(tp, tp + fp);
-  const recall = wilson(tp, tp + fn);
-  const f1 = precision.p === null || recall.p === null ? null
-    : precision.p + recall.p === 0 ? 0
-    : (2 * precision.p * recall.p) / (precision.p + recall.p);
-  return { tp, fp, fn, tn, precision, recall, f1 };
+  const denom = 2 * tp + fp + fn;
+  return { tp, fp, fn, tn, precision: wilson(tp, tp + fp), recall: wilson(tp, tp + fn), f1: denom === 0 ? null : (2 * tp) / denom };
 }
 
 /**
@@ -121,22 +120,35 @@ export interface GroupingScore {
   unplaced: number;
   /** Labeled pairs left out of the pairwise scores because a message in them isn't work */
   pairsWithNotWork: number;
+  /** Labeled messages the database doesn't hold (a different or older database), and the pairs left out for them */
+  unknownMessages: number;
+  pairsWithUnknown: number;
 }
 
 /**
  * Scores a grouping against a label set. A pair with a message marked "not work" is left out of the pairwise scores:
- * that message shouldn't be in any item, which the not-work rate counts instead.
+ * that message shouldn't be in any item, which the not-work rate counts instead. With `known` (every message key the
+ * database holds), labeled messages it lacks are left out too, rather than scored as unplaced.
  */
-export function scoreGrouping(labels: { pairs: LabeledPair[]; notWork: Array<{ message: string }> }, grouping: Grouping): GroupingScore {
-  const notWork = new Set(labels.notWork.map((n) => n.message));
-  const work = labels.pairs.filter((p) => !notWork.has(p.a) && !notWork.has(p.b));
-  const seen = new Set([...labels.pairs.flatMap((p) => [p.a, p.b]), ...notWork]);
+export function scoreGrouping(
+  labels: { pairs: LabeledPair[]; notWork: Array<{ message: string }> },
+  grouping: Grouping,
+  known?: ReadonlySet<string>,
+): GroupingScore {
+  const isKnown = (id: string) => !known || known.has(id);
+  const notWork = new Set(labels.notWork.map((n) => n.message).filter(isKnown));
+  const all = new Set([...labels.pairs.flatMap((p) => [p.a, p.b]), ...labels.notWork.map((n) => n.message)]);
+  const knownPairs = labels.pairs.filter((p) => isKnown(p.a) && isKnown(p.b));
+  const work = knownPairs.filter((p) => !notWork.has(p.a) && !notWork.has(p.b));
+  const seen = [...all].filter(isKnown);
   return {
     pairwise: pairwiseScores(work, grouping),
     notWork: notWorkRate(seen, notWork, grouping),
     strata: byStratum(work, grouping),
-    unplaced: [...seen].filter((id) => !grouping.has(id)).length,
-    pairsWithNotWork: labels.pairs.length - work.length,
+    unplaced: seen.filter((id) => !grouping.has(id)).length,
+    pairsWithNotWork: knownPairs.length - work.length,
+    unknownMessages: all.size - seen.length,
+    pairsWithUnknown: labels.pairs.length - knownPairs.length,
   };
 }
 

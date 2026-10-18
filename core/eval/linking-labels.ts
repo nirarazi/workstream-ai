@@ -6,11 +6,25 @@
 // proposal and any later one. The file names its key format, so a change to it is a new format version. Two kinds
 // of label: a pair verdict (same work or different work) and a "not work" mark on a single message. The file holds
 // message keys and the operator's notes, so it lives in eval-data/ (gitignored), in a private directory, written as a
-// private file.
+// private file. Each save re-reads the file and replays this session's labels onto it, so two labeling sessions
+// don't overwrite each other's work.
 
-import { existsSync, lstatSync, readFileSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 import { prepareOutDir, writePrivateFile } from "../graph/relink.js";
+
+/**
+ * The path of <root>/<dir>/<name> for reading, or null when it doesn't exist. Refused if the file is a symlink or the
+ * directory resolves anywhere but where it should, so a read can't be redirected out of the project.
+ */
+export function projectFile(root: string, dir: string, name: string): string | null {
+  const expected = join(realpathSync(root), dir);
+  const path = join(expected, name);
+  if (!existsSync(path)) return null;
+  if (realpathSync(join(root, dir)) !== expected) throw new Error(`Refusing to read: ${join(root, dir)} resolves elsewhere`);
+  if (lstatSync(path).isSymbolicLink()) throw new Error(`Refusing to read: ${path} is a symlink`);
+  return path;
+}
 
 /** The file format's version. Bump it when the shape or key format changes, and teach loadLabels to read the older one. */
 export const LABELS_VERSION = 1;
@@ -93,12 +107,10 @@ export function parseLabels(content: string): LinkingLabels {
   return { version: LABELS_VERSION, keyFormat: KEY_FORMAT, pairs: data.pairs, notWork: data.notWork };
 }
 
-/** The labels under <root>/eval-data/linking/, or none yet. A symlinked file is refused. */
+/** The labels under <root>/eval-data/linking/, or none yet. A symlinked file, or a directory elsewhere, is refused. */
 export function loadLabels(root: string): LinkingLabels {
-  const path = labelsPath(root);
-  if (!existsSync(path)) return emptyLabels();
-  if (lstatSync(path).isSymbolicLink()) throw new Error(`Refusing to read: ${path} is a symlink`);
-  return parseLabels(readFileSync(path, "utf-8"));
+  const path = projectFile(root, LINKING_DIR, LABELS_FILE);
+  return path ? parseLabels(readFileSync(path, "utf-8")) : emptyLabels();
 }
 
 /** Saves the labels to <root>/eval-data/linking/labels.json (0700 directory, 0600 file, replaced atomically) */
@@ -115,10 +127,62 @@ export function setPairLabel(labels: LinkingLabels, label: PairLabel): void {
   labels.pairs.push({ ...label, a, b });
 }
 
-/** Marks a message "not work", or clears the mark. Returns whether it's marked now. */
-export function toggleNotWork(labels: LinkingLabels, message: string, labeledAt = new Date().toISOString()): boolean {
-  const had = labels.notWork.some((n) => n.message === message);
+/** Marks a message "not work" (replacing an earlier mark), or clears its mark */
+export function setNotWork(labels: LinkingLabels, message: string, marked: boolean, labeledAt = new Date().toISOString(), note?: string): void {
   labels.notWork = labels.notWork.filter((n) => n.message !== message);
-  if (!had) labels.notWork.push({ message, labeledAt });
-  return !had;
+  if (marked) labels.notWork.push(note ? { message, labeledAt, note } : { message, labeledAt });
+}
+
+/** Marks a message "not work", or clears the mark. Returns whether it's marked now. */
+export function toggleNotWork(labels: LinkingLabels, message: string, labeledAt = new Date().toISOString(), note?: string): boolean {
+  const marked = !labels.notWork.some((n) => n.message === message);
+  setNotWork(labels, message, marked, labeledAt, note);
+  return marked;
+}
+
+type LabelOp =
+  | { kind: "pair"; label: PairLabel }
+  | { kind: "notWork"; message: string; marked: boolean; labeledAt: string; note?: string };
+
+function applyOp(labels: LinkingLabels, op: LabelOp): void {
+  if (op.kind === "pair") setPairLabel(labels, op.label);
+  else setNotWork(labels, op.message, op.marked, op.labeledAt, op.note);
+}
+
+/**
+ * A labeling session's view of the labels. Each change is saved at once: the file is read again and every change
+ * made in this session replayed onto it, so labels another session saved meanwhile are kept.
+ */
+export class LabelSession {
+  labels: LinkingLabels;
+  private ops: LabelOp[] = [];
+
+  constructor(private readonly root: string) {
+    this.labels = loadLabels(root);
+  }
+
+  setPair(label: PairLabel): void {
+    this.record({ kind: "pair", label });
+  }
+
+  /** Toggles the not-work mark on a message; returns whether it's marked now */
+  toggleNotWork(message: string, note?: string): boolean {
+    const marked = !this.labels.notWork.some((n) => n.message === message);
+    this.record({ kind: "notWork", message, marked, labeledAt: new Date().toISOString(), note });
+    return marked;
+  }
+
+  /** Saves this session's changes over whatever the file holds now */
+  save(): void {
+    const merged = loadLabels(this.root);
+    for (const op of this.ops) applyOp(merged, op);
+    saveLabels(this.root, merged);
+    this.labels = merged;
+  }
+
+  private record(op: LabelOp): void {
+    this.ops.push(op);
+    applyOp(this.labels, op);
+    this.save();
+  }
 }

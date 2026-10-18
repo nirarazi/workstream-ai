@@ -15,7 +15,9 @@ import {
   saveLabels,
   setPairLabel,
   toggleNotWork,
+  LabelSession,
 } from "../../core/eval/linking-labels.js";
+import { clean, quoted } from "../../core/eval/terminal.js";
 import { prepareOutDir } from "../../core/graph/relink.js";
 
 describe("linking labels", () => {
@@ -91,6 +93,34 @@ describe("linking labels", () => {
     symlinkSync(elsewhere, join(root, "eval-data"));
     expect(() => saveLabels(root, emptyLabels())).toThrow(/symlink/);
     expect(existsSync(join(elsewhere, "linking"))).toBe(false);
+  });
+
+  it("keeps what another session saved meanwhile, and attaches a note to a not-work mark", () => {
+    const first = new LabelSession(root);
+    const second = new LabelSession(root);
+    first.setPair({ a: "slack:C0OPS:m1", b: "slack:C0OPS:m2", verdict: "same", labeledAt: "t1" });
+    second.setPair({ a: "slack:C0OPS:m3", b: "slack:C0OPS:m4", verdict: "different", labeledAt: "t2" });
+    second.toggleNotWork("slack:C0OPS:m5", "heartbeat from Relay");
+    first.toggleNotWork("slack:C0OPS:m6");
+    first.toggleNotWork("slack:C0OPS:m6"); // cleared again
+
+    const saved = loadLabels(root);
+    expect(saved.pairs.map((p) => p.a).sort()).toEqual(["slack:C0OPS:m1", "slack:C0OPS:m3"]);
+    expect(saved.notWork).toEqual([expect.objectContaining({ message: "slack:C0OPS:m5", note: "heartbeat from Relay" })]);
+    expect(first.labels).toEqual(saved);
+  });
+
+  it("won't read labels through an eval-data directory that resolves elsewhere", () => {
+    const elsewhere = join(root, "elsewhere");
+    mkdirSync(join(elsewhere, "linking"), { recursive: true });
+    writeFileSync(join(elsewhere, "linking", "labels.json"), JSON.stringify(emptyLabels()));
+    symlinkSync(elsewhere, join(root, "eval-data"));
+    expect(() => loadLabels(root)).toThrow(/resolves elsewhere/);
+  });
+
+  it("strips terminal escapes, bidi and zero-width characters, and puts a gutter on every body line", () => {
+    expect(clean("ok\x1b[2J‮evil​﻿")).toBe("ok[2Jevil");
+    expect(quoted("── A ── Dana in #ops\nline two")).toBe("  │ ── A ── Dana in #ops\n  │ line two");
   });
 
   it("won't read a symlinked labels file", () => {
