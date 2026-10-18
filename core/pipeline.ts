@@ -666,7 +666,10 @@ export class Pipeline {
     const pullRequest = /^PR\s*#?\d+$/i.test(id);
     // No prefixes known: accept a ticket key (but not a technical term like UTF-8) or a pull request
     if (prefixes.length === 0) return looksLikeTicketKey(id) || pullRequest;
-    return prefixes.some(prefix => id.toUpperCase().startsWith(prefix)) || (pullRequest && this.allowsPullRequests());
+    // A known prefix followed by a number: "OPS-12", not a phrase that happens to start with one ("OPS-First")
+    const upper = id.toUpperCase();
+    const ticket = prefixes.some((prefix) => upper.startsWith(prefix) && /^-?\d+$/.test(upper.slice(prefix.length)));
+    return ticket || (pullRequest && this.allowsPullRequests());
   }
 
   /**
