@@ -70,10 +70,10 @@ interface Row {
 }
 
 /**
- * The row that represents each message among its rows (in stored order): the one in the message's own thread. A
- * thread is keyed by its first message's id (Slack's thread_ts), so a row whose thread id is another message's is a
- * reply in that thread, and wins over a row filed under the message's own id (as a message of the channel's history
- * when it was first seen on its own). Otherwise the first stored row.
+ * The row that represents each message among its rows (in stored order): the row in the thread it belongs to (a
+ * reply's parent thread). A thread is keyed by its first message's id (Slack's thread_ts), so a row whose thread id is
+ * another message's is a reply in that thread, and wins over a row filed under the message's own id (as a message of
+ * the channel's history when it was first seen on its own). Otherwise the first stored row.
  */
 function representativeRows(rows: Row[]): Map<string, Row> {
   const out = new Map<string, Row>();

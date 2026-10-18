@@ -17,7 +17,7 @@
 import { existsSync } from "node:fs";
 import { emitKeypressEvents } from "node:readline";
 import { resolve } from "node:path";
-import { openReadOnly } from "../graph/relink.js";
+import { openReadOnly, type ReadOnlyCopy } from "../graph/relink.js";
 import { loadItemContext, type ContextMessage } from "./context.js";
 import {
   loadGroupings,
@@ -39,6 +39,41 @@ if (!process.stdin.isTTY) {
   process.exit(1);
 }
 
+/** Set as setup opens them, so a signal at any point saves and cleans up what exists */
+let openSession: LabelSession | undefined;
+let openSource: ReadOnlyCopy | undefined;
+
+/** Saves (merging with the file as it is now), restores the terminal and removes the database copy */
+function stop(): void {
+  try {
+    openSession?.save();
+  } finally {
+    try {
+      if (process.stdin.isTTY) process.stdin.setRawMode(false);
+    } finally {
+      const copy = openSource;
+      openSource = undefined;
+      copy?.close();
+    }
+  }
+}
+
+/** Ends the run on an error: restores the terminal, removes the copy, and says what went wrong */
+function fail(err: unknown): never {
+  try {
+    if (process.stdin.isTTY) process.stdin.setRawMode(false);
+  } finally {
+    const copy = openSource;
+    openSource = undefined;
+    copy?.close();
+  }
+  console.error(`eval:pairs: ${err instanceof Error ? err.message : String(err)}`);
+  process.exit(1);
+}
+
+// Before the copy is opened, so a signal during setup still removes it
+onStopSignals(stop);
+
 function setup() {
   const flags = parseFlags(process.argv.slice(2), ["grouping", "per-stratum", "seed", "db"] as const);
   const root = projectRoot();
@@ -48,37 +83,31 @@ function setup() {
   if (!Number.isInteger(perStratum) || perStratum < 1) throw new Error("--per-stratum must be a positive whole number");
   if (!Number.isInteger(seed)) throw new Error("--seed must be a whole number");
 
-  const session = new LabelSession(root);
+  const session = (openSession = new LabelSession(root));
   // As npm run relink: the database in the directory it runs in, unless --db says otherwise
-  const source = openReadOnly(resolve(flags.db ?? "workstream.db"));
-  try {
-    const index = loadMessageIndex(source.db);
-    const { observations } = index;
-    const { groupings } = loadGroupings(names, root, source.db, index);
-    const queue = buildQueue(observations, groupings, {
-      perStratum,
-      seed,
-      labeled: new Set(session.labels.pairs.map((p) => pairKey(p.a, p.b))),
-      senderNames: loadSenderNames(source.db),
-    });
-    return { session, source, queue, byId: new Map(observations.map((o) => [o.id, o])) };
-  } catch (err) {
-    source.close();
-    throw err;
-  }
+  const source = (openSource = openReadOnly(resolve(flags.db ?? "workstream.db")));
+  const index = loadMessageIndex(source.db);
+  const { observations } = index;
+  const { groupings } = loadGroupings(names, root, source.db, index);
+  const queue = buildQueue(observations, groupings, {
+    perStratum,
+    seed,
+    labeled: new Set(session.labels.pairs.map((p) => pairKey(p.a, p.b))),
+    senderNames: loadSenderNames(source.db),
+  });
+  return { session, source, queue, byId: new Map(observations.map((o) => [o.id, o])) };
 }
 
 let state: ReturnType<typeof setup>;
 try {
   state = setup();
 } catch (err) {
-  console.error(`eval:pairs: ${err instanceof Error ? err.message : String(err)}`);
-  process.exit(1);
+  fail(err);
 }
 const { session, source, queue, byId } = state;
 
 if (queue.length === 0) {
-  source.close();
+  stop();
   console.log(session.labels.pairs.length ? "No unlabeled pairs left to draw. Try another --seed, or run: npm run eval:linking" : "No pairs to draw: the groupings place no messages.");
   process.exit(0);
 }
@@ -149,16 +178,6 @@ function next(): void {
   render();
 }
 
-/** Saves (merging with the file as it is now), restores the terminal and removes the database copy */
-function stop(): void {
-  try {
-    session.save();
-  } finally {
-    if (process.stdin.isTTY) process.stdin.setRawMode(false);
-    source.close();
-  }
-}
-
 function quit(): never {
   stop();
   console.clear();
@@ -182,12 +201,20 @@ function noteKey(str: string | undefined, key: { name?: string; ctrl?: boolean }
   render();
 }
 
-onStopSignals(stop);
 emitKeypressEvents(process.stdin);
 process.stdin.setRawMode(true);
 render();
 
 process.stdin.on("keypress", (str: string | undefined, key: { name?: string; ctrl?: boolean }) => {
+  try {
+    onKey(str, key);
+  } catch (err) {
+    // A failed save: the label just given isn't in the file
+    fail(err);
+  }
+});
+
+function onKey(str: string | undefined, key: { name?: string; ctrl?: boolean }): void {
   if (key.ctrl && key.name === "c") quit();
   if (noteDraft !== null) return noteKey(str, key);
   const pair = queue[idx];
@@ -211,4 +238,4 @@ process.stdin.on("keypress", (str: string | undefined, key: { name?: string; ctr
     return next();
   }
   if (key.name === "n") { noteDraft = note ?? ""; return render(); }
-});
+}

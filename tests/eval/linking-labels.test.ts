@@ -110,6 +110,37 @@ describe("linking labels", () => {
     expect(first.labels).toEqual(saved);
   });
 
+  it("doesn't replay a saved label over a newer one another session saved since", () => {
+    const a = new LabelSession(root);
+    const b = new LabelSession(root);
+    a.setPair({ a: "slack:C0OPS:m1", b: "slack:C0OPS:m2", verdict: "same", labeledAt: "2026-01-05T09:00:00.000Z" });
+    b.setPair({ a: "slack:C0OPS:m1", b: "slack:C0OPS:m2", verdict: "different", labeledAt: "2026-01-05T09:01:00.000Z" });
+    a.setPair({ a: "slack:C0OPS:m3", b: "slack:C0OPS:m4", verdict: "same", labeledAt: "2026-01-05T09:02:00.000Z" });
+    const pair12 = loadLabels(root).pairs.find((p) => p.a === "slack:C0OPS:m1")!;
+    expect(pair12.verdict).toBe("different");
+    expect(loadLabels(root).pairs).toHaveLength(2);
+  });
+
+  it("never applies a change over a newer label for the same pair", () => {
+    const a = new LabelSession(root);
+    const b = new LabelSession(root);
+    b.setPair({ a: "slack:C0OPS:m5", b: "slack:C0OPS:m6", verdict: "different", labeledAt: "2026-01-05T09:05:00.000Z" });
+    a.setPair({ a: "slack:C0OPS:m5", b: "slack:C0OPS:m6", verdict: "same", labeledAt: "2026-01-05T09:04:00.000Z" });
+    expect(loadLabels(root).pairs).toEqual([expect.objectContaining({ verdict: "different" })]);
+  });
+
+  it("toggles a not-work mark from the file as it is now, not a stale view", () => {
+    const a = new LabelSession(root);
+    const b = new LabelSession(root);
+    expect(a.toggleNotWork("slack:C0OPS:m7")).toBe(true);
+    // b hasn't seen a's mark: its toggle clears it rather than marking again
+    expect(b.toggleNotWork("slack:C0OPS:m7")).toBe(false);
+    expect(loadLabels(root).notWork).toEqual([]);
+    // a's later save doesn't bring its mark back
+    a.setPair({ a: "slack:C0OPS:m8", b: "slack:C0OPS:m9", verdict: "same", labeledAt: new Date().toISOString() });
+    expect(loadLabels(root).notWork).toEqual([]);
+  });
+
   it("won't read labels through an eval-data directory that resolves elsewhere", () => {
     const elsewhere = join(root, "elsewhere");
     mkdirSync(join(elsewhere, "linking"), { recursive: true });
@@ -120,6 +151,7 @@ describe("linking labels", () => {
 
   it("strips terminal escapes, bidi and zero-width characters, and puts a gutter on every body line", () => {
     expect(clean("ok\x1b[2J‮evil​﻿")).toBe("ok[2Jevil");
+    expect(clean("a؜b⁠c⁤d")).toBe("abcd");
     expect(quoted("── A ── Dana in #ops\nline two")).toBe("  │ ── A ── Dana in #ops\n  │ line two");
   });
 

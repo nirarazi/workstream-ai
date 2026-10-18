@@ -149,13 +149,25 @@ function applyOp(labels: LinkingLabels, op: LabelOp): void {
   else setNotWork(labels, op.message, op.marked, op.labeledAt, op.note);
 }
 
+/** Whether the labels already hold a newer label for the op's pair or message (another session's, saved since) */
+function newerThan(labels: LinkingLabels, op: LabelOp): boolean {
+  if (op.kind === "pair") {
+    const key = pairKey(op.label.a, op.label.b);
+    return labels.pairs.some((p) => pairKey(p.a, p.b) === key && p.labeledAt > op.label.labeledAt);
+  }
+  return labels.notWork.some((n) => n.message === op.message && n.labeledAt > op.labeledAt);
+}
+
 /**
- * A labeling session's view of the labels. Each change is saved at once: the file is read again and every change
- * made in this session replayed onto it, so labels another session saved meanwhile are kept.
+ * A labeling session's view of the labels. Each change is saved at once: the file is read again and the session's
+ * unsaved changes applied onto it, so labels another session saved meanwhile are kept, and a change is never applied
+ * over a newer label for the same pair or message. Once saved, a change is the file's and isn't replayed again. There's
+ * no lock: two saves at the same instant can still race, which a single operator's tool accepts.
  */
 export class LabelSession {
   labels: LinkingLabels;
-  private ops: LabelOp[] = [];
+  /** Changes not saved yet (kept only when a save failed, to be replayed by the next) */
+  private pending: LabelOp[] = [];
 
   constructor(private readonly root: string) {
     this.labels = loadLabels(root);
@@ -165,24 +177,34 @@ export class LabelSession {
     this.record({ kind: "pair", label });
   }
 
-  /** Toggles the not-work mark on a message; returns whether it's marked now */
+  /** Toggles the not-work mark on a message, as the file holds it now; returns whether it's marked */
   toggleNotWork(message: string, note?: string): boolean {
+    this.labels = this.merged();
     const marked = !this.labels.notWork.some((n) => n.message === message);
     this.record({ kind: "notWork", message, marked, labeledAt: new Date().toISOString(), note });
     return marked;
   }
 
-  /** Saves this session's changes over whatever the file holds now */
+  /** Saves the unsaved changes over whatever the file holds now (nothing to write when there are none) */
   save(): void {
-    const merged = loadLabels(this.root);
-    for (const op of this.ops) applyOp(merged, op);
+    if (this.pending.length === 0) return;
+    const merged = this.merged();
     saveLabels(this.root, merged);
+    this.pending = [];
     this.labels = merged;
   }
 
+  /** The file as it is now, with the unsaved changes that aren't older than what it holds */
+  private merged(): LinkingLabels {
+    const fresh = loadLabels(this.root);
+    for (const op of this.pending) if (!newerThan(fresh, op)) applyOp(fresh, op);
+    return fresh;
+  }
+
   private record(op: LabelOp): void {
-    this.ops.push(op);
+    this.pending.push(op);
     applyOp(this.labels, op);
     this.save();
   }
 }
+

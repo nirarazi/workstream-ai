@@ -5,7 +5,7 @@
  * zero-width characters, so it can't reorder or hide what's shown.
  */
 export function clean(text: string | null | undefined): string {
-  return (text ?? "").replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f​-‏‪-‮⁦-⁩﻿]/g, "");
+  return (text ?? "").replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f؜​-‏‪-‮⁠-⁤⁦-⁩﻿]/g, "");
 }
 
 /** A message body with every line behind a gutter ("  │ "), so its lines can't pass for the labeler's own */

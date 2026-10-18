@@ -11,7 +11,8 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { openReadOnly } from "../graph/relink.js";
+import { openReadOnly, type ReadOnlyCopy } from "../graph/relink.js";
+import { clean } from "./terminal.js";
 import {
   loadGroupings,
   loadMessageIndex,
@@ -53,13 +54,13 @@ function main(): void {
   // As npm run relink: the database in the directory it runs in, unless --db says otherwise.
   let loaded: LoadedGroupings;
   let known: Set<string>;
-  const source = openReadOnly(resolve(flags.db ?? "workstream.db"));
-  onStopSignals(() => source.close());
+  const source = (openSource = openReadOnly(resolve(flags.db ?? "workstream.db")));
   try {
     const index = loadMessageIndex(source.db);
     known = new Set(index.rowOfMessage.keys());
     loaded = loadGroupings(names, root, source.db, index);
   } finally {
+    openSource = undefined;
     source.close();
   }
   const { groupings } = loaded;
@@ -92,7 +93,7 @@ function main(): void {
   console.log(row("stratum", ["pairs · same", ...names]));
   for (const stratum of strata) {
     const first = cols[0].strata[stratum];
-    console.log(row(stratum, [`${first.pairs} · ${first.same}`, ...cols.map((s) => `${s.strata[stratum].agree}/${s.strata[stratum].pairs}`)]));
+    console.log(row(clean(stratum), [`${first.pairs} · ${first.same}`, ...cols.map((s) => `${s.strata[stratum].agree}/${s.strata[stratum].pairs}`)]));
   }
 
   if (flags.gold) {
@@ -104,6 +105,15 @@ function main(): void {
     console.log(row("F1", b.map((x) => x.f1.toFixed(2))));
   }
 }
+
+/** The database copy while it's open, for the signal handler to remove */
+let openSource: ReadOnlyCopy | undefined;
+// Before the copy is opened, so a signal at any point removes it
+onStopSignals(() => {
+  const copy = openSource;
+  openSource = undefined;
+  copy?.close();
+});
 
 try {
   main();
