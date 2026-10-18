@@ -10,6 +10,7 @@ import type { Classifier } from "./classifier/index.js";
 import type { ContextGraph } from "./graph/index.js";
 import { DIGEST_MIN_ITEMS, namesDigest, type WorkItemLinker } from "./graph/linker.js";
 import { knownTicketPrefixes, looksLikeTicketKey } from "./graph/extractors/default.js";
+import { ownLines } from "./graph/own-lines.js";
 import type { DigestJudge } from "./digests/judge.js";
 
 export { DIGEST_MIN_ITEMS };
@@ -42,21 +43,6 @@ const RETRY_MAX_MS = 30 * 60 * 1000;
 
 /** Classified threads that started within this long stay in the history window, so late replies to them are read */
 const REPLY_WINDOW_MS = 24 * 60 * 60 * 1000;
-/**
- * The lines of a message its author wrote: without quoted lines ("> ...", which Slack sends as "&gt; ...") and without
- * a forwarded block and anything after it (its summary), which carry other people's words and the ticket IDs in them.
- */
-export function operatorsOwnLines(text: string): string {
-  const own: string[] = [];
-  for (const line of text.split("\n")) {
-    const trimmed = line.trimStart();
-    if (/^(>|&gt;)\s*Forwarded from/i.test(trimmed)) break; // the forwarded block, and a summary after it
-    if (trimmed.startsWith(">") || trimmed.startsWith("&gt;")) continue;
-    own.push(line);
-  }
-  return own.join("\n");
-}
-
 /**
  * Whether a message on a completed work item brings it back: a blocker or a decision does (it needs the operator
  * again), and so does another human saying work resumed. An agent reporting progress after completion doesn't, nor
@@ -1120,7 +1106,7 @@ export class Pipeline {
       // their account.
       const fromTheOperator = this.isOperator(message);
       const operatorsWordApplies = fromTheOperator && !message.postedByApp;
-      const namedHere = operatorsWordApplies ? new Set(this.linker.extractIds(operatorsOwnLines(message.text))) : new Set<string>();
+      const namedHere = operatorsWordApplies ? new Set(this.linker.extractIds(ownLines(message.text))) : new Set<string>();
       for (const workItemId of allWorkItemIds) {
         // Write junction row (primary for the first/inherited ID, mentioned for the rest)
         const relation = workItemId === primaryWorkItemId ? "primary" : "mentioned";

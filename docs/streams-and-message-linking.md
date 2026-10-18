@@ -242,6 +242,30 @@ Add a `stream_preference` to work items: own / watch / mute. The inbox query fil
 
 ---
 
+## Deterministic Resolver and the Re-link Dry Run
+
+`core/graph/resolver.ts` decides which work item a message belongs to by rules alone, with no model call. It's a pure function over a small read-only graph port, and it isn't wired into the pipeline yet. A work item is identified by keys (`ticket:OPS-101`, `pr:<host>/<repo>#7`, `thread:<thread id>`, `subject:<lane>:<subject>`, `mcp:<id>`), and the rules are tried in order:
+
+1. **MCP:** the id an agent pushed.
+2. **Thread membership:** the thread's item. A thread-only item that turns out to be about one ticket gains that key, or merges into the ticket's item ("promotion").
+3. **The one ticket, PR or subject** the sender's own lines are about (quoted and forwarded lines don't count). When several are named, the one the first line leads with wins ("Done OPS-101: also unblocks ENG-202"); "OPS-101 and ENG-202" is left undecided. Subject keys come from configured rules.
+4. **Reply, quote or forward metadata** from the adapter.
+5. *(The model chooses among candidates; not part of the resolver.)*
+6. **New item:** an ask, a person's message or a conversation with replies is keyed by its thread. A lone progress or completion note with no key is activity, not an item.
+
+Reports (digests naming three or more items, lists whose bullets carry different tickets, report headers, "nothing changed" ticks) and notifications never create an item and never link two items. The tickets they name are mentions.
+
+`npm run relink -- [--db ./workstream.db] [--prefixes OPS-,ENG-] [--rules rules.yaml]` replays every stored event through the resolver to show what this would change. It opens the database read-only: in place with SQLite's read-only flag when the engine has it open, and otherwise from an in-memory copy, so nothing appears beside the file. Where rule 5 would apply, it keeps the event's current link if that still resolves. It writes only to `eval-data/relink/` (gitignored):
+
+- `summary.json`: items before and after, one-message and zero-event items, items per ticket, reports excluded, activity that isn't an item, and how each event was placed;
+- `items.json`: the proposed items with their keys, member events and threads, and which current items each collapses;
+- `merges.json`, `decisions.jsonl`: each promotion merge and each event's outcome;
+- `subject-rule-candidates.json`: lane tags agents open messages with, as candidate subject rules.
+
+The reports hold ids, keys and current item titles, never message text.
+
+---
+
 ## Design Principles
 
 1. **Start permissive, learn to filter.** Show too much, let the operator train it down. Missing a critical block is worse than showing a noisy build alert.

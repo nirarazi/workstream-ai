@@ -83,7 +83,7 @@ core/                  Engine (TypeScript, Node)
   adapters/            Messaging and task adapters, registry, setup-field types
   classifier/          LLM classifier, prompt handling, providers, CLI
   decisions/           Decision-model interface, providers and gate
-  graph/               SQLite schema, queries, linker, extractors, anomalies
+  graph/               SQLite schema, queries, linker, extractors, anomalies, resolver and re-link dry run
   continuation/        Grouping of non-threaded messages
   mcp/                 MCP server (stdio) and CLI
   sidekick/            Question answering over the graph
@@ -119,6 +119,7 @@ npm run typecheck     # TypeScript check of the engine, UI and Vite config
 npm run start:web     # build the UI and serve it from the engine
 npm run mcp           # MCP server on stdio
 npm run classify      # classify a message given as arguments or on stdin (calls the configured model)
+npm run relink        # dry run of the deterministic work item resolver over workstream.db (read-only; reports to eval-data/relink/)
 ```
 
 The engine and the MCP server open `workstream.db` in the directory they're started from. Start them from the repo root, or point the MCP server at the engine's database with `WORKSTREAM_DB_PATH`.
