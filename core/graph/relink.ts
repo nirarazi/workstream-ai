@@ -21,10 +21,12 @@ import {
   mkdirSync,
   mkdtempSync,
   openSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   renameSync,
   rmSync,
+  statSync,
   writeSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -60,40 +62,144 @@ export interface ReadOnlyCopy {
   close(): void;
 }
 
+const TEMP_PREFIX = "workstream-relink-";
+
+function alive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+/**
+ * Removes copies earlier runs left behind (killed before they could clean up): this user's workstream-relink-<pid>-*
+ * directories in `dir` whose process is gone. Returns how many it removed.
+ */
+export function sweepStaleCopies(dir: string = tmpdir()): number {
+  let removed = 0;
+  const uid = process.getuid?.();
+  for (const name of readdirSync(dir)) {
+    const m = new RegExp(`^${TEMP_PREFIX}(\\d+)-`).exec(name);
+    if (!m) continue;
+    const path = join(dir, name);
+    try {
+      const st = lstatSync(path);
+      if (!st.isDirectory() || st.isSymbolicLink() || (uid !== undefined && st.uid !== uid)) continue;
+      if (alive(Number(m[1]))) continue;
+      rmSync(path, { recursive: true, force: true });
+      removed++;
+    } catch {
+      // Gone already, or not ours to remove
+    }
+  }
+  return removed;
+}
+
+interface SourceState {
+  db: string;
+  wal: string | null;
+}
+
+function sourceState(dbPath: string): SourceState {
+  const of = (p: string) => {
+    const st = statSync(p);
+    return `${st.size}:${st.mtimeMs}`;
+  };
+  return { db: of(dbPath), wal: existsSync(`${dbPath}-wal`) ? of(`${dbPath}-wal`) : null };
+}
+
+/** For tests: a hook between copying and opening, which may change the source */
+export interface OpenReadOnlyHooks {
+  afterCopy?(attempt: number): void;
+}
+
+const COPY_ATTEMPTS = 2;
+
 /**
  * Opens a database strictly read-only, and never in place: the file (and its write-ahead log, if there is one) is
  * copied into a fresh private temporary directory, and the copy is opened with SQLite's read-only flag. Nothing is
  * created or changed beside the original, whether or not the engine has it open. A handle that could write is refused.
+ * The copy is checked (PRAGMA quick_check) and taken again once if it fails, or if the source changed while it was
+ * copied. An interrupted run removes it on SIGINT or SIGTERM and at exit; copies older runs left are swept first.
  */
-export function openReadOnly(dbPath: string): ReadOnlyCopy {
+export function openReadOnly(dbPath: string, hooks: OpenReadOnlyHooks = {}): ReadOnlyCopy {
   if (!existsSync(dbPath)) throw new Error(`No database at ${dbPath}`);
-  const dir = mkdtempSync(join(tmpdir(), "workstream-relink-"));
+  sweepStaleCopies();
+  const dir = mkdtempSync(join(tmpdir(), `${TEMP_PREFIX}${process.pid}-`));
   chmodSync(dir, 0o700);
   const remove = () => rmSync(dir, { recursive: true, force: true });
-  try {
-    const copy = join(dir, "workstream.db");
-    // The log first: if the engine checkpoints between the two copies, the file already holds what the log says
-    if (existsSync(`${dbPath}-wal`)) copyFileSync(`${dbPath}-wal`, `${copy}-wal`);
-    copyFileSync(dbPath, copy);
-    const db = new BetterSqlite3(copy, { readonly: true, fileMustExist: true });
-    if (!db.readonly) {
-      db.close();
-      throw new Error("Refusing to run: the database didn't open read-only");
-    }
-    // Belt and braces: SQLite itself refuses any write on this connection
-    db.pragma("query_only = ON");
-    return {
-      db,
-      close: () => {
-        try {
-          db.close();
-        } finally {
-          remove();
-        }
-      },
-    };
-  } catch (err) {
+  const onSigint = () => {
     remove();
+    process.exit(130);
+  };
+  const onSigterm = () => {
+    remove();
+    process.exit(143);
+  };
+  const detach = () => {
+    process.removeListener("SIGINT", onSigint);
+    process.removeListener("SIGTERM", onSigterm);
+    process.removeListener("exit", remove);
+  };
+  process.once("SIGINT", onSigint);
+  process.once("SIGTERM", onSigterm);
+  process.on("exit", remove);
+  const cleanUp = () => {
+    try {
+      remove();
+    } finally {
+      detach();
+    }
+  };
+
+  const copy = join(dir, "workstream.db");
+  try {
+    for (let attempt = 1; ; attempt++) {
+      for (const suffix of ["", "-wal", "-shm"]) rmSync(`${copy}${suffix}`, { force: true });
+      const before = sourceState(dbPath);
+      // The log first: if the engine checkpoints between the two copies, the file already holds what the log says
+      if (before.wal !== null) copyFileSync(`${dbPath}-wal`, `${copy}-wal`);
+      copyFileSync(dbPath, copy);
+      hooks.afterCopy?.(attempt);
+      const after = sourceState(dbPath);
+      const changed = before.db !== after.db || before.wal !== after.wal;
+
+      const db = new BetterSqlite3(copy, { readonly: true, fileMustExist: true });
+      if (!db.readonly) {
+        db.close();
+        throw new Error("Refusing to run: the database didn't open read-only");
+      }
+      // Belt and braces: SQLite itself refuses any write on this connection
+      db.pragma("query_only = ON");
+      let healthy: boolean;
+      try {
+        healthy = db.pragma("quick_check", { simple: true }) === "ok";
+      } catch {
+        healthy = false;
+      }
+      if ((changed || !healthy) && attempt < COPY_ATTEMPTS) {
+        db.close();
+        continue;
+      }
+      if (!healthy) {
+        db.close();
+        throw new Error("Refusing to run: the copy of the database failed its integrity check");
+      }
+      return {
+        db,
+        close: () => {
+          try {
+            db.close();
+          } finally {
+            cleanUp();
+          }
+        },
+      };
+    }
+  } catch (err) {
+    cleanUp();
     throw err;
   }
 }
@@ -225,7 +331,9 @@ export interface Decision {
   needsModel: boolean;
   /** It names several tickets or PRs, none as its subject */
   ambiguous: boolean;
-  /** Which report heuristic fired, for a report */
+  /** The status the event was classified with */
+  status: StatusCategory;
+  /** Which report heuristic fired, for a report (null otherwise) */
   report: ReportSignal | null;
   mentions: number;
 }
@@ -264,8 +372,9 @@ export function replay(snapshot: Snapshot, options: ResolverOptions): ReplayResu
   const pending = new Map<string, SnapshotEvent[]>();
   /** Earlier work events per thread (not reports, not noise) */
   const workInThread = new Map<string, number>();
-  /** Threads a report started, or where a report belongs to no item: no reply claims them */
+  /** Threads a report started (its first event, not noise): no reply claims them */
   const reportThreads = new Set<string>();
+  const seenThreads = new Set<string>();
   const decisions: Decision[] = [];
   const decisionOf = new Map<string, Decision>();
   const merges: Merge[] = [];
@@ -356,6 +465,7 @@ export function replay(snapshot: Snapshot, options: ResolverOptions): ReplayResu
       item: null,
       needsModel,
       ambiguous,
+      status: event.status,
       report: resolution.report,
       mentions: resolution.mentions.length,
     };
@@ -378,7 +488,6 @@ export function replay(snapshot: Snapshot, options: ResolverOptions): ReplayResu
       }
       case "none": {
         decision.outcome = resolution.reason;
-        if (resolution.reason === "report") reportThreads.add(event.threadId);
         if (!byKey.has(threadKey)) {
           const list = pending.get(event.threadId);
           if (list) list.push(event);
@@ -423,6 +532,9 @@ export function replay(snapshot: Snapshot, options: ResolverOptions): ReplayResu
       options,
     );
     const decision = apply(event, resolution, false, false);
+    const opensThread = !seenThreads.has(event.threadId);
+    seenThreads.add(event.threadId);
+    if (opensThread && resolution.kind === "report" && event.status !== "noise") reportThreads.add(event.threadId);
     if (resolution.kind !== "report" && event.status !== "noise") {
       workInThread.set(event.threadId, (workInThread.get(event.threadId) ?? 0) + 1);
     }
@@ -490,6 +602,17 @@ function spread(sizes: number[]): { tickets: number; mean: number; max: number; 
   };
 }
 
+/** Each report heuristic's reports, by the status they were classified with */
+function bySignalStatus(decisions: Decision[]): Record<string, Record<string, number>> {
+  const out: Record<string, Record<string, number>> = {};
+  for (const d of decisions) {
+    if (d.kind !== "report" || !d.report) continue;
+    const row = (out[d.report] ??= {});
+    row[d.status] = (row[d.status] ?? 0) + 1;
+  }
+  return out;
+}
+
 export interface RelinkSummary {
   events: number;
   before: {
@@ -510,7 +633,7 @@ export interface RelinkSummary {
   needsModel: number;
   /** Undecided events naming several tickets or PRs with none as their subject (whether or not their link resolved) */
   ambiguous: number;
-  reports: { messages: number; alreadyFlaggedDigest: number; newlyDetected: number; bySignal: Record<string, number> };
+  reports: { messages: number; alreadyFlaggedDigest: number; newlyDetected: number; bySignal: Record<string, number>; bySignalStatus: Record<string, Record<string, number>> };
   notifications: number;
   /** Events left as activity on no item (lone notes with nothing to attach to) */
   activityNotItem: number;
@@ -589,6 +712,7 @@ export function summarize(snapshot: Snapshot, result: ReplayResult): RelinkSumma
     ambiguous: result.decisions.filter((d) => d.ambiguous).length,
     reports: {
       bySignal: count(result.decisions.flatMap((d) => (d.kind === "report" && d.report ? [d.report] : []))),
+      bySignalStatus: bySignalStatus(result.decisions),
       messages: reportEvents.length,
       alreadyFlaggedDigest: reportEvents.filter((id) => digestFlagged.has(id)).length,
       newlyDetected: reportEvents.filter((id) => !digestFlagged.has(id)).length,
@@ -690,7 +814,7 @@ export interface RelinkOptions {
   dbPath: string;
   /** The project root; reports go to <root>/eval-data/relink/ and nowhere else */
   root: string;
-  /** Ticket prefixes (e.g. ["OPS-"]); by default the configured ones, else those the tracker confirmed, else any KEY-123 */
+  /** Ticket prefixes (e.g. ["OPS-"]); by default the configured ones and those the tracker confirmed, else any KEY-123 */
   prefixes?: string[];
   subjectRules?: SubjectRule[];
 }
@@ -724,11 +848,17 @@ function writeReport(outDir: string, name: string, content: string): string {
   const temp = join(outDir, `.${name}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`);
   const fd = openSync(temp, fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL | fsConstants.O_NOFOLLOW, 0o600);
   try {
-    writeSync(fd, content);
-  } finally {
-    closeSync(fd);
+    try {
+      writeSync(fd, content);
+    } finally {
+      closeSync(fd);
+    }
+    renameSync(temp, path);
+  } catch (err) {
+    // A failed write leaves no partial temp file behind
+    rmSync(temp, { force: true });
+    throw err;
   }
-  renameSync(temp, path);
   return path;
 }
 
@@ -742,8 +872,10 @@ export function runRelink(options: RelinkOptions): RelinkRun {
   }
 
   const configured = extraction(options.root);
-  const prefixes = (options.prefixes?.length ? options.prefixes : configured.prefixes.length ? configured.prefixes : snapshot.trackerPrefixes)
-    .map((p) => p.toUpperCase());
+  // As the engine does: the configured prefixes and those the tracker taught it; --prefixes replaces both
+  const prefixes = options.prefixes?.length
+    ? knownTicketPrefixes(options.prefixes)
+    : knownTicketPrefixes(configured.prefixes, { getValidIdPrefixes: () => snapshot.trackerPrefixes });
   const extractor = new DefaultExtractor({ ticketPatterns: configured.patterns, prPatterns: [], ticketPrefixes: prefixes });
   const result = replay(snapshot, {
     extractTickets: (text) => extractor.extractWorkItemIds(text),

@@ -7,7 +7,15 @@ import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { Database } from "../../core/graph/db.js";
 import { ContextGraph } from "../../core/graph/index.js";
-import { loadSubjectRules, openReadOnly, parseRelinkArgs, runRelink, subjectRuleCandidates, type Snapshot } from "../../core/graph/relink.js";
+import {
+  loadSubjectRules,
+  openReadOnly,
+  parseRelinkArgs,
+  runRelink,
+  subjectRuleCandidates,
+  sweepStaleCopies,
+  type Snapshot,
+} from "../../core/graph/relink.js";
 
 /** Text that must never reach a report */
 const MARKER = "ZEBRA-QUOKKA-7";
@@ -161,6 +169,48 @@ describe("relink dry run", () => {
     expect(hash(join(other, "workstream.db"))).toBe(before);
   });
 
+  it("copies again when the source changes during the copy, and refuses a copy that fails its check", () => {
+    const attempts: number[] = [];
+    const copy = openReadOnly(dbPath, {
+      afterCopy: (attempt) => {
+        attempts.push(attempt);
+        if (attempt === 1) {
+          const engine = new Database(dbPath);
+          new ContextGraph(engine).upsertWorkItem({ id: "OPS-108", source: "extracted", title: "Written mid-copy" });
+          engine.close();
+        }
+      },
+    });
+    try {
+      expect(attempts).toEqual([1, 2]);
+      expect(copy.db.prepare("SELECT id FROM work_items WHERE id = 'OPS-108'").get()).toEqual({ id: "OPS-108" });
+    } finally {
+      copy.close();
+    }
+
+    const temps = relinkTemps();
+    const broken = join(dir, "data", "broken.db");
+    writeFileSync(broken, Buffer.concat([Buffer.from("SQLite format 3\0"), Buffer.alloc(4096, 7)]));
+    expect(() => openReadOnly(broken)).toThrow();
+    expect(relinkTemps()).toEqual(temps);
+  });
+
+  it("cleans up on SIGINT, SIGTERM and exit while open, and stops listening once closed", () => {
+    const counts = () => ["SIGINT", "SIGTERM", "exit"].map((e) => process.listenerCount(e));
+    const before = counts();
+    const copy = openReadOnly(dbPath);
+    expect(counts()).toEqual(before.map((n) => n + 1));
+    copy.close();
+    expect(counts()).toEqual(before);
+  });
+
+  it("leaves no temp file behind when a report can't be written", () => {
+    mkdirSync(join(root, "eval-data", "relink", "summary.json"), { recursive: true });
+    writeFileSync(join(root, "eval-data", "relink", "summary.json", "keep"), "");
+    expect(() => runRelink({ dbPath, root })).toThrow();
+    expect(readdirSync(join(root, "eval-data", "relink")).filter((f) => f.endsWith(".tmp"))).toEqual([]);
+  });
+
   it("refuses to write through a symlinked eval-data or eval-data/relink", () => {
     const elsewhere = join(dir, "elsewhere");
     mkdirSync(elsewhere);
@@ -181,11 +231,40 @@ describe("relink dry run", () => {
     writeFileSync(join(root, "config", "local.yaml"), "taskAdapter:\n  ticketPrefixes: [\"eng-\"]\n");
     runRelink({ dbPath, root });
     const report = JSON.parse(readFileSync(join(root, "eval-data", "relink", "summary.json"), "utf-8"));
-    expect(report.ticketPrefixes).toEqual(["ENG-"]);
+    // The configured prefixes and the ones the tracker taught it, as the engine combines them
+    expect(report.ticketPrefixes).toEqual(["ENG-", "OPS-"]);
+    runRelink({ dbPath, root, prefixes: ["mkt-"] });
+    expect(JSON.parse(readFileSync(join(root, "eval-data", "relink", "summary.json"), "utf-8")).ticketPrefixes).toEqual(["MKT-"]);
 
     rmSync(join(root, "config", "local.yaml"));
     runRelink({ dbPath, root });
     expect(JSON.parse(readFileSync(join(root, "eval-data", "relink", "summary.json"), "utf-8")).ticketPrefixes).toEqual(["OPS-"]);
+  });
+
+  it("only a thread's first, non-noise report keeps its replies from claiming it", () => {
+    const db = new Database(dbPath);
+    const graph = new ContextGraph(db);
+    let minute = 0;
+    const add = (threadId: string, messageId: string, agentId: string, text: string, status: "completed" | "in_progress" | "noise") => {
+      graph.upsertThread({ id: threadId, channelId: "C0OPS", channelName: "ops", platform: "slack" });
+      graph.insertEvent({ threadId, messageId, agentId, rawText: text, workItemId: null, status, confidence: 0.9, timestamp: new Date(Date.UTC(2026, 0, 7, 9, minute++)).toISOString() });
+    };
+    // A tick in the middle of a conversation
+    add("t6", "m11", "U0RELAY", "Finished the nightly import", "completed");
+    add("t6", "m12", "U0RELAY", "Nothing has changed since the last check", "in_progress");
+    add("t6", "m13", "U0OPERATOR1", "Can you rerun it for yesterday?", "in_progress");
+    // A tick classified as noise opening a thread
+    add("t7", "m14", "U0RELAY", "Heartbeat", "noise");
+    add("t7", "m15", "U0ATLAS", "Started OPS-107: the import retry", "in_progress");
+    db.close();
+
+    runRelink({ dbPath, root });
+    const items = JSON.parse(readFileSync(join(root, "eval-data", "relink", "items.json"), "utf-8")) as {
+      proposed: Array<{ keys: string[]; events: string[] }>;
+    };
+    const conversation = items.proposed.find((i) => i.keys.includes("thread:t6"));
+    expect(conversation?.events).toHaveLength(3);
+    expect(items.proposed.find((i) => i.keys.includes("ticket:OPS-107"))?.keys).toContain("thread:t7");
   });
 
   it("doesn't let a digest's thread be claimed by its replies", () => {
@@ -261,7 +340,15 @@ describe("relink dry run", () => {
 
     expect(summary.before).toMatchObject({ items: 8, zeroEventItems: 2, singleMessageItems: 4 });
     expect(summary.after).toMatchObject({ items: 3, singleMessageItems: 1 });
-    expect(summary.reports).toEqual({ messages: 1, alreadyFlaggedDigest: 1, newlyDetected: 0, bySignal: { "digest-flag": 1 } });
+    expect(summary.reports).toEqual({
+      messages: 1,
+      alreadyFlaggedDigest: 1,
+      newlyDetected: 0,
+      bySignal: { "digest-flag": 1 },
+      bySignalStatus: { "digest-flag": { in_progress: 1 } },
+    });
+    const decisions = readFileSync(join(root, "eval-data", "relink", "decisions.jsonl"), "utf-8").trim().split("\n").map((l) => JSON.parse(l));
+    expect(decisions.every((d) => "report" in d && "status" in d)).toBe(true);
     // The ask with no key, the lone note and the operator's question: the model would be asked about each
     expect(summary.needsModel).toBe(3);
     expect(summary.ambiguous).toBe(0);
@@ -318,5 +405,21 @@ describe("subjectRuleCandidates", () => {
       items: [], threads: [], junction: [], trackerPrefixes: [],
     };
     expect(subjectRuleCandidates(snapshot).map((c) => c.sender)).toEqual(["U0RELAY"]);
+  });
+});
+
+describe("sweepStaleCopies", () => {
+  it("removes copies whose run is gone, and leaves live runs' and other files alone", () => {
+    const dir = mkdtempSync(join(tmpdir(), "relink-sweep-"));
+    try {
+      mkdirSync(join(dir, "workstream-relink-999999-abc")); // no such process
+      writeFileSync(join(dir, "workstream-relink-999999-abc", "workstream.db"), "copy");
+      mkdirSync(join(dir, `workstream-relink-${process.pid}-def`));
+      mkdirSync(join(dir, "unrelated"));
+      expect(sweepStaleCopies(dir)).toBe(1);
+      expect(readdirSync(dir).sort()).toEqual([`workstream-relink-${process.pid}-def`, "unrelated"].sort());
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

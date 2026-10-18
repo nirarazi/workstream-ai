@@ -131,10 +131,13 @@ describe("resolve: a report's thread", () => {
     });
   });
 
-  it("an ask in it is an item of its own; other replies are activity", () => {
+  it("an ask or a person's message in it is an item of its own; an agent's other replies are activity", () => {
     const ask = resolve(msg("Which of these is first?", { inReportThread: true, status: "needs_decision", messageRef: "T1/m2" }), fakeGraph(), options);
     expect(ask).toMatchObject({ fallback: { action: "create", keys: ["message:T1/m2"] } });
-    const note = resolve(msg("Thanks, noted", { inReportThread: true, senderKind: "human", priorInThread: 1 }), fakeGraph(), options);
+    // Never lose an ask: a person's reply may be one the classifier didn't flag
+    const person = resolve(msg("Can we drop the second one?", { inReportThread: true, senderKind: "human", priorInThread: 1, messageRef: "T1/m3" }), fakeGraph(), options);
+    expect(person).toMatchObject({ fallback: { action: "create", keys: ["message:T1/m3"] } });
+    const note = resolve(msg("Thanks, noted", { inReportThread: true, priorInThread: 1, messageRef: "T1/m4" }), fakeGraph(), options);
     expect(note).toMatchObject({ fallback: { action: "none", reason: "activity" } });
   });
 });
@@ -239,6 +242,41 @@ describe("isReport", () => {
     expect(check(prs)).toBeNull();
     const list = "Done OPS-101:\n- merged <https://forge.example/acme/api/pull/7|PR 7>\n- deployed OPS-101 to staging";
     expect(check(list)).toBeNull();
+  });
+
+  it("a no-change tick is only a short message saying just that", () => {
+    expect(check("Idle since 09:00")).toBe("no-change");
+    expect(check("No updates.")).toBe("no-change");
+    const news: Array<[string, Partial<ResolverMessage>]> = [
+      ["Nothing changed on our side, but the payments API now returns 500s. Need you to rotate the key.", { status: "blocked_on_human" }],
+      ["Nothing changed on our side, but the payments API now returns 500s. Need you to rotate the key.", { status: "in_progress" }],
+      ["OPS-101: no changes since the last review, still waiting on Dana's approval", { status: "needs_decision" }],
+      ["Still idle: no tasks assigned. What should I pick up next?", { status: "in_progress" }],
+      ["Idle since 09:00 because the CI runner is down", { status: "in_progress" }],
+      ["Deploy failed even though nothing changed in the config", { status: "in_progress" }],
+      ["No update since the vendor replied on Monday, should I escalate?", { status: "in_progress" }],
+      ["Fixed OPS-101. Verified nothing changed in the public API.", { status: "completed" }],
+      ["Nothing has changed since the last check\nbut the queue is growing\nand the runner is slow", { status: "in_progress" }],
+    ];
+    for (const [text, extra] of news) expect(check(text, extra), text).toBeNull();
+  });
+
+  it("a no-change line on a ticket still joins that ticket", () => {
+    const r = resolve(
+      msg("OPS-101: no changes since the last review, still waiting on Dana's approval", { status: "needs_decision" }),
+      fakeGraph({ B: ["ticket:OPS-101"] }),
+      options,
+    );
+    expect(r).toMatchObject({ action: "join", itemId: "B", kind: "work" });
+  });
+
+  it("a weak header needs its qualifier, has to end there, and never covers a blocker", () => {
+    expect(check("Plan: finish OPS-101, then OPS-102")).toBeNull();
+    expect(check("Update on OPS-101 and ENG-202: both merged")).toBeNull();
+    expect(check("Bug report: OPS-101 and OPS-102 crash on start", { status: "blocked_on_human" })).toBeNull();
+    expect(check("Bug report: OPS-101 and OPS-102 crash on start")).toBeNull();
+    expect(check("Sprint plan: OPS-101 then OPS-102")).toBe("header");
+    expect(check("Weekly sync: OPS-101 and ENG-202 moved to review", { status: "blocked_on_human" })).toBeNull();
   });
 
   it("never flags a person's message", () => {

@@ -267,22 +267,43 @@ const STRONG_HEADER = new RegExp(
   HEADER_LEAD + String.raw`(?:(?:${QUALIFIER}\s+)?(?:digest|roundup|round-up|heartbeat|status report)|${QUALIFIER}\s+(?:summary|recap|stand-?up))\b`,
   "i",
 );
-/** A header that is a report only over several items: "Summary", "Update", "Weekly sync", "Morning update" */
+/**
+ * A header that is a report only over several items: "Summary:", "Weekly sync", "Sprint plan", "Shift update". An
+ * update or plan needs its qualifier ("Plan: finish OPS-101, then OPS-102" is one agent's work), and the header has to
+ * end there ("Update on OPS-101 and ENG-202" is news about those two).
+ */
 const WEAK_HEADER = new RegExp(
-  HEADER_LEAD + String.raw`(?:\w+\s+)?(?:summary|recap|stand-?up|update|sync|status|audit|plan|report)\b`,
+  HEADER_LEAD +
+    String.raw`(?:(?:${QUALIFIER}\s+)?(?:summary|recap|stand-?up|sync|status|audit|report)|${QUALIFIER}\s+(?:update|plan))` +
+    String.raw`[\s*_~` + "`" + String.raw`]*(?:[:—–-]|$)`,
   "i",
 );
 
-/** "Nothing changed since …", "No changes since …", "Idle since …": a tick, not news */
-const NO_CHANGE = /\b(?:nothing (?:has )?changed|no (?:new )?changes since|no updates? since|idle since|still idle)\b/i;
+/**
+ * A no-change tick, as the whole of its first line: "Nothing has changed since the last check", "No updates.",
+ * "Idle since 09:00". Not when the line goes on to a reason, a failure or a request.
+ */
+const NO_CHANGE = new RegExp(
+  HEADER_LEAD +
+    String.raw`(?:nothing (?:has )?changed|no (?:new )?changes|no updates?|(?:still )?idle)\b` +
+    String.raw`(?![^\n]*\b(?:because|but|however|though|although|except|failed|fails|failing|error|errors|down|broke|broken|blocked|need|needs|please|should|could|can)\b)` +
+    String.raw`[^?\n]{0,80}$`,
+  "i",
+);
+
+/** A message whose status asks for someone, or reports work done, is never a tick or a header-only report */
+function newsStatus(status: StatusCategory | null | undefined): boolean {
+  return status === "blocked_on_human" || status === "needs_decision" || status === "completed";
+}
 
 /**
  * Whether a message is a report, and which heuristic says so:
  * - digest-flag: the pipeline already flagged it a digest;
  * - many-refs: it names DIGEST_MIN_ITEMS or more items (a PR counts only on a line naming no ticket);
  * - list: two or more list lines carrying two or more tickets other than the one it leads with;
- * - no-change: "nothing changed since …";
+ * - no-change: a short (one or two lines) "nothing changed since …" naming nothing besides the thread's own item;
  * - header: a report header (a weak one needs two or more items named).
+ * The last two never apply to a blocker, a decision or a completion: those are news, whatever their first words.
  * Humans' messages never are (the pipeline treats them the same way). `ownKeys` are the keys of the thread's own
  * item: a reply in a ticket's thread naming it isn't a digest.
  */
@@ -308,8 +329,10 @@ export function isReport(message: ResolverMessage, lines: LineRefs[], ownKeys: r
   }
   if (listLines >= 2 && listed.size >= 2) return "list";
 
-  const first = lines.find((l) => l.line.trim())?.line ?? "";
-  if (NO_CHANGE.test(first)) return "no-change";
+  if (newsStatus(message.status)) return null;
+  const nonEmpty = lines.filter((l) => l.line.trim());
+  const first = nonEmpty[0]?.line.trim() ?? "";
+  if (nonEmpty.length <= 2 && named.size === 0 && NO_CHANGE.test(first)) return "no-change";
   if (STRONG_HEADER.test(first) && named.size !== 1) return "header";
   if (WEAK_HEADER.test(first) && named.size >= 2) return "header";
   return null;
@@ -327,8 +350,9 @@ function newItem(message: ResolverMessage, kind: MessageKind, report: ReportSign
   if (message.status === "noise") return { action: "none", reason: "noise", kind, report, mentions };
   if (kind === "notification") return { action: "none", reason: "notification", kind, report, mentions };
   if (message.inReportThread) {
-    // A report's thread is never claimed: an ask in it is an item of its own, anything else is activity
-    return asks(message.status) && message.messageRef
+    // A report's thread is never claimed: an ask, or a person's message, in it is an item of its own (never lose an
+    // ask); anything else is activity
+    return (asks(message.status) || message.senderKind === "human") && message.messageRef
       ? { action: "create", keys: [itemKey("message", message.messageRef)], rule: "new", kind, report, mentions }
       : { action: "none", reason: "activity", kind, report, mentions };
   }
