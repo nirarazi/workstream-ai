@@ -18,6 +18,8 @@
     "eval:sample": "tsx core/eval/sample.ts",
     "eval:label": "tsx core/eval/label.ts",
     "eval:run": "tsx core/eval/run.ts",
+    "eval:pairs": "tsx core/eval/pairs.ts",
+    "eval:linking": "tsx core/eval/linking.ts",
     "engine": "WORKSTREAM_DEV_UI=true tsx watch core/server.ts",
     "dev:web": "concurrently \"WORKSTREAM_DEV_UI=true tsx watch core/server.ts\" \"vite\"",
     "start:web": "vite build && WORKSTREAM_SERVE_STATIC=true tsx core/server.ts"
