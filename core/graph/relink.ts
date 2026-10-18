@@ -1,19 +1,38 @@
 // core/graph/relink.ts — Re-link dry run: replays every stored event through the resolver, read-only
 //
-// It opens the database read-only (and refuses to run otherwise), copies what it needs into memory, replays the events
-// in time order through the resolver with no model, and writes its reports under eval-data/relink/ (gitignored). The
-// reports hold ids and keys, and the titles of current work items for review, but never message text.
+// It copies the database to a private temporary directory and opens the copy read-only (refusing to run otherwise),
+// loads what it needs into memory, replays the events in time order through the resolver with no model, and writes its
+// reports under eval-data/relink/ (gitignored). The reports hold ids and keys, the titles of current work items and
+// agents' lane tags for review, but no raw message text.
 //
 // Where the resolver would ask the model (rule 5), the replay keeps the item the event was linked to when that item
 // still resolves to a proposed one, and otherwise applies the resolver's fallback and counts the event as needing the
 // model.
 
 import BetterSqlite3 from "better-sqlite3";
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { basename, dirname, join, resolve as resolvePath } from "node:path";
+import { randomBytes } from "node:crypto";
+import {
+  chmodSync,
+  closeSync,
+  constants as fsConstants,
+  copyFileSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  openSync,
+  readFileSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+  writeSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { basename, dirname, join } from "node:path";
 import { parse as parseYaml } from "yaml";
+import { loadConfig } from "../config.js";
 import type { StatusCategory } from "../types.js";
-import { DefaultExtractor, looksLikeTicketKey } from "./extractors/default.js";
+import { DefaultExtractor, knownTicketPrefixes, looksLikeTicketKey } from "./extractors/default.js";
 import {
   itemKey,
   keyKind,
@@ -24,6 +43,7 @@ import {
   type Resolution,
   type ResolverGraph,
   type ResolverOptions,
+  type ReportSignal,
   type SenderKind,
   type SubjectRule,
 } from "./resolver.js";
@@ -34,30 +54,48 @@ export const RELINK_OUT_DIR = join("eval-data", "relink");
 
 // --- Reading the database -----------------------------------------------------------------------------------------
 
+/** A read-only connection to a private copy of a database; close() closes it and deletes the copy */
+export interface ReadOnlyCopy {
+  db: BetterSqlite3.Database;
+  close(): void;
+}
+
 /**
- * Opens a database strictly read-only: the file must exist, and a handle that could write is refused.
- * - In use (its write-ahead log is there, e.g. the engine has it open): opened in place with SQLite's read-only flag.
- *   Its sidecar files exist already, so nothing new appears beside it.
- * - Otherwise: opened from a copy of its bytes in memory, so SQLite doesn't even create its -wal and -shm files.
+ * Opens a database strictly read-only, and never in place: the file (and its write-ahead log, if there is one) is
+ * copied into a fresh private temporary directory, and the copy is opened with SQLite's read-only flag. Nothing is
+ * created or changed beside the original, whether or not the engine has it open. A handle that could write is refused.
  */
-export function openReadOnly(dbPath: string): BetterSqlite3.Database {
+export function openReadOnly(dbPath: string): ReadOnlyCopy {
   if (!existsSync(dbPath)) throw new Error(`No database at ${dbPath}`);
-  let db: BetterSqlite3.Database;
-  if (existsSync(`${dbPath}-wal`)) {
-    db = new BetterSqlite3(dbPath, { readonly: true, fileMustExist: true });
-  } else {
-    const bytes = readFileSync(dbPath);
-    // A WAL-mode header (file format 2) can't be opened from memory; the copy says rollback journal (1) instead
-    if (bytes.length >= 100 && bytes[18] === 2 && bytes[19] === 2) bytes[18] = bytes[19] = 1;
-    db = new BetterSqlite3(bytes, { readonly: true });
+  const dir = mkdtempSync(join(tmpdir(), "workstream-relink-"));
+  chmodSync(dir, 0o700);
+  const remove = () => rmSync(dir, { recursive: true, force: true });
+  try {
+    const copy = join(dir, "workstream.db");
+    // The log first: if the engine checkpoints between the two copies, the file already holds what the log says
+    if (existsSync(`${dbPath}-wal`)) copyFileSync(`${dbPath}-wal`, `${copy}-wal`);
+    copyFileSync(dbPath, copy);
+    const db = new BetterSqlite3(copy, { readonly: true, fileMustExist: true });
+    if (!db.readonly) {
+      db.close();
+      throw new Error("Refusing to run: the database didn't open read-only");
+    }
+    // Belt and braces: SQLite itself refuses any write on this connection
+    db.pragma("query_only = ON");
+    return {
+      db,
+      close: () => {
+        try {
+          db.close();
+        } finally {
+          remove();
+        }
+      },
+    };
+  } catch (err) {
+    remove();
+    throw err;
   }
-  if (!db.readonly) {
-    db.close();
-    throw new Error("Refusing to run: the database didn't open read-only");
-  }
-  // Belt and braces: SQLite itself refuses any write on this connection
-  db.pragma("query_only = ON");
-  return db;
 }
 
 export interface SnapshotEvent {
@@ -183,8 +221,12 @@ export interface Decision {
   /** Where it was placed, or why it wasn't */
   outcome: Placement | Unplaced;
   item: string | null;
-  /** Rule 5 had to stand in: the model would have been asked */
+  /** Rules 1–4 didn't decide and its current link didn't resolve either: the model would have been asked */
   needsModel: boolean;
+  /** It names several tickets or PRs, none as its subject */
+  ambiguous: boolean;
+  /** Which report heuristic fired, for a report */
+  report: ReportSignal | null;
   mentions: number;
 }
 
@@ -220,7 +262,10 @@ export function replay(snapshot: Snapshot, options: ResolverOptions): ReplayResu
   const eventItem = new Map<string, string>();
   /** Events of threads no item holds yet, which join the item that later takes the thread */
   const pending = new Map<string, SnapshotEvent[]>();
-  const seenInThread = new Map<string, number>();
+  /** Earlier work events per thread (not reports, not noise) */
+  const workInThread = new Map<string, number>();
+  /** Threads a report started, or where a report belongs to no item: no reply claims them */
+  const reportThreads = new Set<string>();
   const decisions: Decision[] = [];
   const decisionOf = new Map<string, Decision>();
   const merges: Merge[] = [];
@@ -301,7 +346,7 @@ export function replay(snapshot: Snapshot, options: ResolverOptions): ReplayResu
     return null;
   }
 
-  function apply(event: SnapshotEvent, resolution: Resolution, needsModel: boolean): Decision {
+  function apply(event: SnapshotEvent, resolution: Resolution, needsModel: boolean, ambiguous: boolean): Decision {
     const threadKey = itemKey("thread", event.threadId);
     const decision: Decision = {
       event: event.id,
@@ -310,6 +355,8 @@ export function replay(snapshot: Snapshot, options: ResolverOptions): ReplayResu
       outcome: "new",
       item: null,
       needsModel,
+      ambiguous,
+      report: resolution.report,
       mentions: resolution.mentions.length,
     };
     switch (resolution.action) {
@@ -331,7 +378,12 @@ export function replay(snapshot: Snapshot, options: ResolverOptions): ReplayResu
       }
       case "none": {
         decision.outcome = resolution.reason;
-        if (!byKey.has(threadKey)) pending.set(event.threadId, [...(pending.get(event.threadId) ?? []), event]);
+        if (resolution.reason === "report") reportThreads.add(event.threadId);
+        if (!byKey.has(threadKey)) {
+          const list = pending.get(event.threadId);
+          if (list) list.push(event);
+          else pending.set(event.threadId, [event]);
+        }
         break;
       }
       case "undecided": {
@@ -339,37 +391,41 @@ export function replay(snapshot: Snapshot, options: ResolverOptions): ReplayResu
         const kept = storedItem(event);
         if (kept) {
           const item = items.get(kept)!;
-          if (!byKey.has(threadKey)) addKey(item, threadKey);
+          if (!byKey.has(threadKey) && !reportThreads.has(event.threadId)) addKey(item, threadKey);
           addEvent(item, event);
           decision.outcome = "stored";
+          decision.ambiguous = resolution.ambiguous;
           decision.item = item.id;
           break;
         }
-        return apply(event, resolution.fallback, resolution.ambiguous);
+        return apply(event, resolution.fallback, true, resolution.ambiguous);
       }
     }
     return decision;
   }
 
   for (const event of snapshot.events) {
-    const prior = seenInThread.get(event.threadId) ?? 0;
-    seenInThread.set(event.threadId, prior + 1);
     const resolution = resolve(
       {
         threadId: event.threadId,
+        messageRef: `${event.threadId}/${event.messageId}`,
         senderId: event.agentId,
         channelId: event.channelId,
         senderKind: event.senderKind,
         text: event.text,
         status: event.status,
         mcpWorkItemId: event.platform === "mcp" ? event.workItemId : null,
-        priorInThread: prior,
+        priorInThread: workInThread.get(event.threadId) ?? 0,
+        inReportThread: reportThreads.has(event.threadId),
         digest: event.digest,
       },
       graph,
       options,
     );
-    const decision = apply(event, resolution, false);
+    const decision = apply(event, resolution, false, false);
+    if (resolution.kind !== "report" && event.status !== "noise") {
+      workInThread.set(event.threadId, (workInThread.get(event.threadId) ?? 0) + 1);
+    }
     decisions.push(decision);
     decisionOf.set(event.id, decision);
     if (resolution.kind !== "report") mentionsOf.set(event.id, resolution.mentions);
@@ -452,7 +508,9 @@ export interface RelinkSummary {
   outcomes: Record<string, number>;
   /** Events where rules 1–4 didn't decide and the current link didn't resolve either (the model would be asked) */
   needsModel: number;
-  reports: { messages: number; alreadyFlaggedDigest: number; newlyDetected: number };
+  /** Undecided events naming several tickets or PRs with none as their subject (whether or not their link resolved) */
+  ambiguous: number;
+  reports: { messages: number; alreadyFlaggedDigest: number; newlyDetected: number; bySignal: Record<string, number> };
   notifications: number;
   /** Events left as activity on no item (lone notes with nothing to attach to) */
   activityNotItem: number;
@@ -466,7 +524,14 @@ export interface RelinkSummary {
     holdersAfter: ReturnType<typeof spread>;
   };
   formerItems: { carried: number; notCarried: number };
+  notes: string[];
 }
+
+/** What the replay can't show, said alongside its numbers */
+export const RELINK_NOTES = [
+  "Rule 4 (reply, quote or forward metadata) never fires in the replay: the database stores no such metadata.",
+  "Rule 5 (the model) isn't run: an event keeps its current link where that still resolves, and otherwise counts in needsModel.",
+];
 
 export function summarize(snapshot: Snapshot, result: ReplayResult): RelinkSummary {
   const live = snapshot.items.filter((i) => !i.mergedInto);
@@ -521,7 +586,9 @@ export function summarize(snapshot: Snapshot, result: ReplayResult): RelinkSumma
     },
     outcomes,
     needsModel: result.decisions.filter((d) => d.needsModel).length,
+    ambiguous: result.decisions.filter((d) => d.ambiguous).length,
     reports: {
+      bySignal: count(result.decisions.flatMap((d) => (d.kind === "report" && d.report ? [d.report] : []))),
       messages: reportEvents.length,
       alreadyFlaggedDigest: reportEvents.filter((id) => digestFlagged.has(id)).length,
       newlyDetected: reportEvents.filter((id) => !digestFlagged.has(id)).length,
@@ -536,15 +603,17 @@ export function summarize(snapshot: Snapshot, result: ReplayResult): RelinkSumma
       holdersAfter: spread([...holderCounts.values()]),
     },
     formerItems: { carried: [...liveIds].filter((id) => carried.has(id)).length, notCarried: [...liveIds].filter((id) => !carried.has(id)).length },
+    notes: RELINK_NOTES,
   };
 }
 
-/** Lane tags agents open top-level messages with ("[intake] …"), as candidate subject rules, most used first */
+/** Lane tags agents open messages with ("[intake] …"), as candidate subject rules, most used first */
 export function subjectRuleCandidates(snapshot: Snapshot, limit = 20): Array<{ sender: string; lane: string; messages: number; pattern: string }> {
   const counts = new Map<string, { sender: string; lane: string; messages: number }>();
   for (const e of snapshot.events) {
-    if (e.senderKind === "human" || !e.agentId) continue;
-    const m = /^\s*\[([\w-]{2,32})\]\s+\S/.exec(e.text);
+    // Agents only: not people, and not senders of unknown kind
+    if (e.senderKind !== "agent" || !e.agentId) continue;
+    const m = /^\s*\[([\w-]{2,32})\]\s+\S/.exec(e.text.slice(0, 200));
     if (!m) continue;
     const id = `${e.agentId}\u0000${m[1].toLowerCase()}`;
     const c = counts.get(id) ?? { sender: e.agentId, lane: m[1].toLowerCase(), messages: 0 };
@@ -559,32 +628,69 @@ export function subjectRuleCandidates(snapshot: Snapshot, limit = 20): Array<{ s
 
 // --- Running it ---------------------------------------------------------------------------------------------------
 
+const RELINK_FLAGS = ["db", "prefixes", "rules"] as const;
+
+/** The CLI's options. An unknown option, or one given without a value (or with another option as its value), is an error. */
+export function parseRelinkArgs(argv: string[]): { db?: string; prefixes?: string[]; rules?: string } {
+  const out: { db?: string; prefixes?: string[]; rules?: string } = {};
+  for (let i = 0; i < argv.length; i++) {
+    const flag = argv[i];
+    const name = flag.startsWith("--") ? flag.slice(2) : null;
+    if (!name || !(RELINK_FLAGS as readonly string[]).includes(name)) {
+      throw new Error(`Unexpected argument ${JSON.stringify(flag)} (options: --${RELINK_FLAGS.join(", --")})`);
+    }
+    const value = argv[i + 1];
+    if (value === undefined || value.startsWith("--") || !value.trim()) throw new Error(`--${name} needs a value`);
+    i++;
+    if (name === "prefixes") out.prefixes = value.split(",").map((p) => p.trim()).filter(Boolean);
+    else out[name as "db" | "rules"] = value;
+  }
+  return out;
+}
+
 /** Subject rules from a YAML file: a list of { pattern, sender?, channel? }, or { subjectRules: [...] } */
 export function loadSubjectRules(path: string): SubjectRule[] {
-  const parsed = parseYaml(readFileSync(path, "utf-8")) as unknown;
+  let parsed: unknown;
+  try {
+    parsed = parseYaml(readFileSync(path, "utf-8"));
+  } catch {
+    // Not the parser's message: its code frame would echo the file's lines
+    throw new Error("Subject rules: couldn't read the file as YAML");
+  }
   const list = Array.isArray(parsed) ? parsed : (parsed as { subjectRules?: unknown })?.subjectRules;
   if (!Array.isArray(list)) throw new Error("Subject rules: expected a list of { pattern, sender?, channel? }");
   return list.map((r, i) => {
     const rule = r as SubjectRule;
     if (typeof rule?.pattern !== "string") throw new Error(`Subject rule ${i + 1}: pattern is required`);
-    const re = new RegExp(rule.pattern);
+    let re: RegExp;
+    try {
+      re = new RegExp(rule.pattern);
+    } catch {
+      throw new Error(`Subject rule ${i + 1}: the pattern isn't a valid regular expression`);
+    }
     if (!re.source.includes("(?<subject>")) throw new Error(`Subject rule ${i + 1}: the pattern needs a (?<subject>…) group`);
     return { pattern: rule.pattern, sender: rule.sender, channel: rule.channel };
   });
 }
 
-function ticketPatterns(root: string): string[] {
-  const path = join(root, "config", "default.yaml");
-  if (!existsSync(path)) return [DEFAULT_TICKET_PATTERN];
-  const config = parseYaml(readFileSync(path, "utf-8")) as { extractors?: { ticketPatterns?: string[] } } | null;
-  return config?.extractors?.ticketPatterns?.length ? config.extractors.ticketPatterns : [DEFAULT_TICKET_PATTERN];
+/**
+ * Ticket patterns and prefixes as the engine reads them: config/default.yaml with config/local.yaml over it, and the
+ * configured prefixes. Without a config (a bare directory) the default pattern, and no prefixes.
+ */
+function extraction(root: string): { patterns: string[]; prefixes: string[] } {
+  if (!existsSync(join(root, "config", "default.yaml"))) return { patterns: [DEFAULT_TICKET_PATTERN], prefixes: [] };
+  const config = loadConfig(root);
+  return {
+    patterns: config.extractors.ticketPatterns.length ? config.extractors.ticketPatterns : [DEFAULT_TICKET_PATTERN],
+    prefixes: knownTicketPrefixes(config.taskAdapter.ticketPrefixes),
+  };
 }
 
 export interface RelinkOptions {
   dbPath: string;
   /** The project root; reports go to <root>/eval-data/relink/ and nowhere else */
   root: string;
-  /** Ticket prefixes (e.g. ["OPS-"]); by default the ones the tracker confirmed, else any KEY-123 key */
+  /** Ticket prefixes (e.g. ["OPS-"]); by default the configured ones, else those the tracker confirmed, else any KEY-123 */
   prefixes?: string[];
   subjectRules?: SubjectRule[];
 }
@@ -595,17 +701,50 @@ export interface RelinkRun {
   summary: RelinkSummary;
 }
 
+/**
+ * The reports' directory, <root>/eval-data/relink, made private (0700). Refused if either directory is a symlink or
+ * resolves anywhere else, so the reports can't be redirected out of the project's gitignored eval-data/.
+ */
+export function prepareOutDir(root: string): string {
+  const realRoot = realpathSync(root);
+  const outDir = join(realRoot, RELINK_OUT_DIR);
+  for (const dir of [join(realRoot, "eval-data"), outDir]) {
+    if (existsSync(dir) && lstatSync(dir).isSymbolicLink()) throw new Error(`Refusing to write: ${dir} is a symlink`);
+    mkdirSync(dir, { mode: 0o700 , recursive: true });
+    if (lstatSync(dir).isSymbolicLink() || realpathSync(dir) !== dir) throw new Error(`Refusing to write: ${dir} resolves elsewhere`);
+  }
+  chmodSync(outDir, 0o700);
+  return outDir;
+}
+
+/** Writes one report: to a fresh private file (never through a link, never over one), then renamed into place */
+function writeReport(outDir: string, name: string, content: string): string {
+  const path = join(outDir, name);
+  if (dirname(path) !== outDir) throw new Error(`Refusing to write outside ${RELINK_OUT_DIR}: ${name}`);
+  const temp = join(outDir, `.${name}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`);
+  const fd = openSync(temp, fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL | fsConstants.O_NOFOLLOW, 0o600);
+  try {
+    writeSync(fd, content);
+  } finally {
+    closeSync(fd);
+  }
+  renameSync(temp, path);
+  return path;
+}
+
 export function runRelink(options: RelinkOptions): RelinkRun {
-  const db = openReadOnly(options.dbPath);
+  const source = openReadOnly(options.dbPath);
   let snapshot: Snapshot;
   try {
-    snapshot = loadSnapshot(db);
+    snapshot = loadSnapshot(source.db);
   } finally {
-    db.close();
+    source.close();
   }
 
-  const prefixes = (options.prefixes?.length ? options.prefixes : snapshot.trackerPrefixes).map((p) => p.toUpperCase());
-  const extractor = new DefaultExtractor({ ticketPatterns: ticketPatterns(options.root), prPatterns: [], ticketPrefixes: prefixes });
+  const configured = extraction(options.root);
+  const prefixes = (options.prefixes?.length ? options.prefixes : configured.prefixes.length ? configured.prefixes : snapshot.trackerPrefixes)
+    .map((p) => p.toUpperCase());
+  const extractor = new DefaultExtractor({ ticketPatterns: configured.patterns, prPatterns: [], ticketPrefixes: prefixes });
   const result = replay(snapshot, {
     extractTickets: (text) => extractor.extractWorkItemIds(text),
     subjectRules: options.subjectRules,
@@ -646,7 +785,7 @@ export function runRelink(options: RelinkOptions): RelinkRun {
   const carried = new Set(result.items.flatMap((i) => i.formerItems.map((f) => f.id)));
   const notCarried = snapshot.items.filter((i) => !i.mergedInto && !carried.has(i.id)).map((i) => i.id);
 
-  const outDir = resolvePath(options.root, RELINK_OUT_DIR);
+  const outDir = prepareOutDir(options.root);
   const files = {
     "summary.json": JSON.stringify(report, null, 2) + "\n",
     "items.json": JSON.stringify({ proposed: items, formerItemsNotCarried: notCarried }, null, 2) + "\n",
@@ -654,14 +793,6 @@ export function runRelink(options: RelinkOptions): RelinkRun {
     "decisions.jsonl": result.decisions.map((d) => JSON.stringify(d)).join("\n") + "\n",
     "subject-rule-candidates.json": JSON.stringify(subjectRuleCandidates(snapshot), null, 2) + "\n",
   };
-  mkdirSync(outDir, { recursive: true, mode: 0o700 });
-  const written: string[] = [];
-  for (const [name, content] of Object.entries(files)) {
-    const path = resolvePath(outDir, name);
-    if (dirname(path) !== outDir) throw new Error(`Refusing to write outside ${RELINK_OUT_DIR}: ${name}`);
-    writeFileSync(path, content, { mode: 0o600 });
-    chmodSync(path, 0o600);
-    written.push(path);
-  }
+  const written = Object.entries(files).map(([name, content]) => writeReport(outDir, name, content));
   return { outDir, files: written, summary };
 }

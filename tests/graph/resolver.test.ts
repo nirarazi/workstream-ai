@@ -3,8 +3,10 @@
 import { describe, it, expect } from "vitest";
 import { DefaultExtractor } from "../../core/graph/extractors/default.js";
 import {
+  aboutRef,
   extractPullRequests,
   isReport,
+  refsByLine,
   resolve,
   type ItemKey,
   type ResolverGraph,
@@ -61,6 +63,13 @@ describe("resolve: rule 2, thread membership", () => {
     expect(r).toMatchObject({ action: "join", itemId: "A", addKeys: [], promoted: false, mentions: ["ticket:ENG-202"] });
   });
 
+  it("a passing mention never promotes or merges a thread item", () => {
+    const graph = fakeGraph({ A: ["thread:T1"], B: ["ticket:ENG-202"], C: ["ticket:OPS-99"] });
+    for (const text of ["Blocked by ENG-202", "Unrelated to OPS-99, the export job is fixed", "Rolled the new keys out everywhere, which closes ENG-202"]) {
+      expect(resolve(msg(text), graph, options)).toMatchObject({ action: "join", itemId: "A", promoted: false, merge: [], addKeys: [] });
+    }
+  });
+
   it("reads only the sender's own lines: a quoted ticket doesn't promote", () => {
     const r = resolve(msg("> Dana: is OPS-101 done?\nYes, shipped this morning"), fakeGraph({ A: ["thread:T1"] }), options);
     expect(r).toMatchObject({ action: "join", itemId: "A", promoted: false, addKeys: [] });
@@ -109,6 +118,24 @@ describe("resolve: rule 3, the one ticket, PR or subject the message is about", 
     });
     // Scoped to its sender
     expect(resolve(msg(text, { senderId: "U0ATLAS" }), fakeGraph(), rules)).toMatchObject({ action: "undecided" });
+  });
+});
+
+describe("resolve: a report's thread", () => {
+  it("is never claimed by a reply: a reply about a ticket joins it without the thread", () => {
+    const r = resolve(msg("Done OPS-101", { inReportThread: true }), fakeGraph({ B: ["ticket:OPS-101"] }), options);
+    expect(r).toMatchObject({ action: "join", itemId: "B", addKeys: [] });
+    expect(resolve(msg("Started OPS-101", { inReportThread: true }), fakeGraph(), options)).toMatchObject({
+      action: "create",
+      keys: ["ticket:OPS-101"],
+    });
+  });
+
+  it("an ask in it is an item of its own; other replies are activity", () => {
+    const ask = resolve(msg("Which of these is first?", { inReportThread: true, status: "needs_decision", messageRef: "T1/m2" }), fakeGraph(), options);
+    expect(ask).toMatchObject({ fallback: { action: "create", keys: ["message:T1/m2"] } });
+    const note = resolve(msg("Thanks, noted", { inReportThread: true, senderKind: "human", priorInThread: 1 }), fakeGraph(), options);
+    expect(note).toMatchObject({ fallback: { action: "none", reason: "activity" } });
   });
 });
 
@@ -167,43 +194,104 @@ describe("resolve: reports and notifications", () => {
 });
 
 describe("isReport", () => {
-  const lines = (text: string) =>
-    text.split("\n").map((line) => ({ line, refs: extractor.extractWorkItemIds(line).map((t) => `ticket:${t}`) }));
-  const check = (text: string, extra: Partial<ResolverMessage> = {}, own: ItemKey[] = []) => isReport(msg(text, extra), lines(text), own);
+  const check = (text: string, extra: Partial<ResolverMessage> = {}, own: ItemKey[] = []) => {
+    const lines = refsByLine(text, options);
+    const about = aboutRef(lines);
+    return isReport(msg(text, extra), lines, own, about.leads ? about.subject : null);
+  };
 
   it("flags digests naming three or more items", () => {
-    expect(check("Shipped OPS-101, OPS-102 and ENG-202 overnight")).toBe(true);
+    expect(check("Shipped OPS-101, OPS-102 and ENG-202 overnight")).toBe("many-refs");
   });
 
   it("doesn't count the thread's own item", () => {
-    expect(check("OPS-101 waits on OPS-102 and ENG-202", {}, ["ticket:OPS-101"])).toBe(false);
+    expect(check("OPS-101 waits on OPS-102 and ENG-202", {}, ["ticket:OPS-101"])).toBeNull();
   });
 
   it("flags lists whose items carry different tickets", () => {
-    expect(check("Where things are:\n- OPS-101 in review\n- ENG-202 blocked")).toBe(true);
+    expect(check("Where things are:\n- OPS-101 in review\n- ENG-202 blocked")).toBe("list");
   });
 
   it("flags report headers and no-change ticks", () => {
-    expect(check("*Night summary*\nAll quiet, three runs finished")).toBe(true);
-    expect(check(":memo: Daily digest")).toBe(true);
-    expect(check("Heartbeat: idle")).toBe(true);
-    expect(check("Nothing has changed since the last check")).toBe(true);
-    expect(check("Weekly sync notes")).toBe(true);
+    expect(check("*Night summary*\nAll quiet, three runs finished")).toBe("header");
+    expect(check(":memo: Daily digest")).toBe("header");
+    expect(check("Heartbeat: idle")).toBe("header");
+    expect(check("Nothing has changed since the last check")).toBe("no-change");
+    expect(check("Weekly sync: OPS-101 and ENG-202 moved to review")).toBe("header");
   });
 
   it("keeps one piece of work's news as work", () => {
-    expect(check("Status: OPS-101 deployed to staging")).toBe(false);
-    expect(check("Daily digest: OPS-101 is done")).toBe(false);
-    expect(check("Update: the export job is fixed")).toBe(false);
-    expect(check("Done OPS-101: also unblocks ENG-202")).toBe(false);
+    expect(check("Status: OPS-101 deployed to staging")).toBeNull();
+    expect(check("Daily digest: OPS-101 is done")).toBeNull();
+    expect(check("Update: the export job is fixed")).toBeNull();
+    expect(check("Done OPS-101: also unblocks ENG-202")).toBeNull();
+  });
+
+  it("needs a qualifier or several items for summary, recap, standup and update headers", () => {
+    expect(check("## Summary\nFixed the flaky export test and reran the suite")).toBeNull();
+    expect(check("**Summary** the cache fix is deployed")).toBeNull();
+    expect(check("Morning update: the export job is fixed")).toBeNull();
+    expect(check("Weekly sync notes")).toBeNull();
+  });
+
+  it("doesn't count a ticket's PRs, or the ticket a list is about, as other items", () => {
+    const prs = "OPS-101 done: <https://forge.example/acme/api/pull/7|api#7> and <https://forge.example/acme/web/pull/9|web#9>";
+    expect(check(prs)).toBeNull();
+    const list = "Done OPS-101:\n- merged <https://forge.example/acme/api/pull/7|PR 7>\n- deployed OPS-101 to staging";
+    expect(check(list)).toBeNull();
   });
 
   it("never flags a person's message", () => {
-    expect(check("Daily digest\n- OPS-101\n- ENG-202\n- OPS-103", { senderKind: "human" })).toBe(false);
+    expect(check("Daily digest\n- OPS-101\n- ENG-202\n- OPS-103", { senderKind: "human" })).toBeNull();
   });
 
   it("trusts an upstream digest flag", () => {
-    expect(check("All good", { digest: true })).toBe(true);
+    expect(check("All good", { digest: true })).toBe("digest-flag");
+  });
+});
+
+describe("aboutRef", () => {
+  const about = (text: string) => aboutRef(refsByLine(text, options));
+
+  it("finds keys as whole keys: OPS-10 isn't inside OPS-101", () => {
+    // OPS-101 leads; OPS-10 comes later. A substring search found OPS-10 at OPS-101's position and called it the lead.
+    expect(about("Done OPS-101: then OPS-10 is next")).toMatchObject({ subject: "ticket:OPS-101", leads: true });
+    expect(about("Shipping OPS-101 with OPS-10")).toMatchObject({ subject: "ticket:OPS-101", leads: true });
+  });
+
+  it("leads from the first own line with refs, skipping headers and lines of asides only", () => {
+    expect(about("## Done\nOPS-101: rotated the keys, ENG-202 next")).toMatchObject({ subject: "ticket:OPS-101", leads: true });
+    expect(about("Blocked by ENG-202 earlier.\nOPS-101: now rotated, see ENG-202")).toMatchObject({ subject: "ticket:OPS-101", leads: true });
+  });
+
+  it("never takes a dependency or an aside as the subject", () => {
+    expect(about("Blocked by ENG-202")).toMatchObject({ subject: null, ambiguous: false });
+    expect(about("Unrelated to OPS-99, the export job is fixed")).toMatchObject({ subject: null });
+    expect(about("Still waiting on OPS-101 and duplicate of ENG-202")).toMatchObject({ subject: null });
+  });
+
+  it("a single ticket that doesn't lead is still the subject, but can't promote", () => {
+    expect(about("Rolled the new keys out everywhere, which closes OPS-101")).toMatchObject({ subject: "ticket:OPS-101", leads: false });
+  });
+
+  it("pairs a ticket and a PR only on the same line", () => {
+    expect(about("OPS-101: <https://forge.example/acme/api/pull/7|PR 7>")).toMatchObject({ subject: "ticket:OPS-101", extra: ["pr:forge.example/acme/api#7"] });
+    expect(about("OPS-101 is done\n<https://forge.example/acme/api/pull/7|PR 7> merged")).toMatchObject({ subject: "ticket:OPS-101", extra: [] });
+  });
+});
+
+describe("bounded work on long lines", () => {
+  it("resolves a 40k-character line quickly", () => {
+    const long = [
+      ":a:".repeat(13_000) + "x",
+      "https://forge.example/" + "a/".repeat(20_000),
+      "*".repeat(40_000),
+      "OPS-1 and ".repeat(4_000),
+      ("Blocked by " + " ".repeat(30)).repeat(1_000) + "OPS-101",
+    ];
+    const started = performance.now();
+    for (const text of long) resolve(msg(text), fakeGraph(), options);
+    expect(performance.now() - started).toBeLessThan(250);
   });
 });
 

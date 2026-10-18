@@ -247,22 +247,22 @@ Add a `stream_preference` to work items: own / watch / mute. The inbox query fil
 `core/graph/resolver.ts` decides which work item a message belongs to by rules alone, with no model call. It's a pure function over a small read-only graph port, and it isn't wired into the pipeline yet. A work item is identified by keys (`ticket:OPS-101`, `pr:<host>/<repo>#7`, `thread:<thread id>`, `subject:<lane>:<subject>`, `mcp:<id>`), and the rules are tried in order:
 
 1. **MCP:** the id an agent pushed.
-2. **Thread membership:** the thread's item. A thread-only item that turns out to be about one ticket gains that key, or merges into the ticket's item ("promotion").
-3. **The one ticket, PR or subject** the sender's own lines are about (quoted and forwarded lines don't count). When several are named, the one the first line leads with wins ("Done OPS-101: also unblocks ENG-202"); "OPS-101 and ENG-202" is left undecided. Subject keys come from configured rules.
+2. **Thread membership:** the thread's item. A thread-only item gains a ticket's key, or merges into the ticket's item ("promotion"), only when the message leads with that ticket ("Done OPS-101: …"). A ticket mentioned in passing never promotes.
+3. **The one ticket, PR or subject** the sender's own lines are about (quoted and forwarded lines don't count). A ticket after "blocked by", "waiting on", "depends on", "unrelated to", "duplicate of", "see also" or "related to" is a mention, never the subject. When several are named, the one that leads the first own line with refs wins ("Done OPS-101: also unblocks ENG-202"); "OPS-101 and ENG-202" is left undecided. A PR goes with a ticket named on the same line. Subject keys come from configured rules.
 4. **Reply, quote or forward metadata** from the adapter.
 5. *(The model chooses among candidates; not part of the resolver.)*
 6. **New item:** an ask, a person's message or a conversation with replies is keyed by its thread. A lone progress or completion note with no key is activity, not an item.
 
-Reports (digests naming three or more items, lists whose bullets carry different tickets, report headers, "nothing changed" ticks) and notifications never create an item and never link two items. The tickets they name are mentions.
+Reports and notifications never create an item and never link two items. The tickets they name are mentions. A message is a report when the pipeline already flagged it a digest, when it names three or more items (a PR on a ticket's line doesn't count separately), when two or more list lines carry two or more tickets besides the one it leads with, when it says nothing changed, or when it opens with a report header. "Daily digest", "Heartbeat" or "Night summary" count on their own; a bare "Summary" or "Morning update" counts only over two or more items. A report's thread is never claimed by a reply: replies about a ticket join that ticket's item, an ask in it is an item of its own, and anything else is activity.
 
-`npm run relink -- [--db ./workstream.db] [--prefixes OPS-,ENG-] [--rules rules.yaml]` replays every stored event through the resolver to show what this would change. It opens the database read-only: in place with SQLite's read-only flag when the engine has it open, and otherwise from an in-memory copy, so nothing appears beside the file. Where rule 5 would apply, it keeps the event's current link if that still resolves. It writes only to `eval-data/relink/` (gitignored):
+`npm run relink -- [--db ./workstream.db] [--prefixes OPS-,ENG-] [--rules rules.yaml]` replays every stored event through the resolver to show what this would change. It never opens the database in place: it copies the file (and its write-ahead log, if any) to a private temporary directory, opens the copy read-only, and deletes it afterwards. Ticket patterns and prefixes come from the project's config, as the engine reads them; without configured prefixes it uses those of tickets the tracker has enriched. Where rule 5 would apply, it keeps the event's current link if that still resolves, and otherwise counts the event as needing the model. Rule 4 never fires in the replay, because no reply or quote metadata is stored. It writes only to `eval-data/relink/` (gitignored, private files, refused if either directory is a symlink):
 
-- `summary.json`: items before and after, one-message and zero-event items, items per ticket, reports excluded, activity that isn't an item, and how each event was placed;
+- `summary.json`: items before and after, one-message and zero-event items, items per ticket, reports excluded (with which heuristic fired), activity that isn't an item, events that would need the model, and how each event was placed;
 - `items.json`: the proposed items with their keys, member events and threads, and which current items each collapses;
 - `merges.json`, `decisions.jsonl`: each promotion merge and each event's outcome;
 - `subject-rule-candidates.json`: lane tags agents open messages with, as candidate subject rules.
 
-The reports hold ids, keys and current item titles, never message text.
+The reports hold ids, keys, current item titles and agents' lane tags, but no raw message text.
 
 ---
 
