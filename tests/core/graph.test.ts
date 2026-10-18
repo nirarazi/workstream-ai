@@ -173,6 +173,91 @@ describe("mergeWorkItems and unmergeWorkItem", () => {
       "Work item OPS-40 is not merged"
     );
   });
+
+  it("mergeWorkItems refuses to merge an item into itself", () => {
+    graph.upsertWorkItem({ id: "OPS-41", source: "jira", title: "Alone" });
+
+    expect(() => graph.mergeWorkItems("OPS-41", "OPS-41")).toThrow("into itself");
+  });
+});
+
+describe("merging moves mentions, subjects, targets and digest checks", () => {
+  let db: Database;
+  let graph: ContextGraph;
+  const at = "2026-10-15T09:00:00.000Z";
+
+  // Every row that can point at a work item, in a stable order
+  function snapshot() {
+    const all = (sql: string) => db.db.prepare(sql).all();
+    return {
+      threads: all("SELECT id, work_item_id FROM threads ORDER BY id"),
+      events: all("SELECT id, work_item_id FROM events ORDER BY id"),
+      links: all("SELECT * FROM thread_work_items ORDER BY thread_id, work_item_id"),
+      subjects: all("SELECT * FROM event_subjects ORDER BY event_id, work_item_id"),
+      targets: all("SELECT * FROM event_targets ORDER BY event_id, work_item_id"),
+      checks: all("SELECT * FROM digest_checks ORDER BY event_id, work_item_id"),
+    };
+  }
+  const rowsFor = (table: string, id: string) =>
+    db.db.prepare(`SELECT * FROM ${table} WHERE work_item_id = ?`).all(id) as Array<Record<string, unknown>>;
+
+  beforeEach(() => {
+    db = new Database(":memory:");
+    graph = new ContextGraph(db);
+    graph.upsertAgent({ id: "U-atlas", name: "Atlas", platform: "slack", platformUserId: "U-atlas", avatarUrl: null, isBot: true });
+    graph.upsertWorkItem({ id: "OPS-101", source: "jira", title: "Source", currentAtcStatus: "in_progress" });
+    graph.upsertWorkItem({ id: "ENG-202", source: "jira", title: "Target", currentAtcStatus: "in_progress" });
+    // T-SRC is the source's own thread; T-TGT is the target's and mentions the source; T-BOTH mentions both
+    graph.upsertThread({ id: "T-SRC", channelId: "C1", platform: "slack", workItemId: "OPS-101" });
+    graph.upsertThread({ id: "T-TGT", channelId: "C1", platform: "slack", workItemId: "ENG-202" });
+    graph.upsertThread({ id: "T-BOTH", channelId: "C1", platform: "slack" });
+    graph.linkThreadWorkItem("T-SRC", "OPS-101", "primary");
+    graph.linkThreadWorkItem("T-TGT", "ENG-202", "primary");
+    graph.linkThreadWorkItem("T-TGT", "OPS-101", "mentioned");
+    graph.linkThreadWorkItem("T-BOTH", "OPS-101", "primary");
+    graph.linkThreadWorkItem("T-BOTH", "ENG-202", "mentioned");
+
+    const own = graph.insertEvent({ threadId: "T-SRC", messageId: "m1", workItemId: "OPS-101", agentId: "U-atlas", status: "blocked_on_human", confidence: 0.9, timestamp: at });
+    const digest = graph.insertEvent({ threadId: "T-TGT", messageId: "m2", workItemId: "ENG-202", agentId: "U-atlas", status: "in_progress", confidence: 0.9, timestamp: at, digest: true });
+    graph.addEventTarget(own.id, "OPS-101");
+    graph.addEventSubject(digest.id, "OPS-101", { status: "blocked_on_human", actionRequiredFrom: ["U0OPERATOR1"], confidence: 0.8 });
+    graph.addEventSubject(digest.id, "ENG-202", { status: "in_progress", actionRequiredFrom: null, confidence: 0.7 });
+    graph.recordDigestCheck({ eventId: digest.id, workItemId: "OPS-101", digestStatus: "completed", digestTargeted: false, itemStatus: "in_progress", at });
+  });
+
+  afterEach(() => {
+    db.close();
+  });
+
+  it("leaves nothing pointing at the source, keeping the target's own row where both had one", () => {
+    graph.mergeWorkItems("OPS-101", "ENG-202");
+
+    for (const table of ["thread_work_items", "event_subjects", "event_targets", "digest_checks"]) {
+      expect(rowsFor(table, "OPS-101")).toEqual([]);
+    }
+    const links = db.db.prepare("SELECT thread_id, relation FROM thread_work_items WHERE work_item_id = 'ENG-202' ORDER BY thread_id").all();
+    // T-BOTH's own item was the source: the target becomes its own
+    expect(links).toEqual([
+      { thread_id: "T-BOTH", relation: "primary" },
+      { thread_id: "T-SRC", relation: "primary" },
+      { thread_id: "T-TGT", relation: "primary" },
+    ]);
+    // The message's own line for the target wins over its line for the source
+    expect(rowsFor("event_subjects", "ENG-202")).toEqual([expect.objectContaining({ status: "in_progress", confidence: 0.7 })]);
+    expect(rowsFor("event_targets", "ENG-202")).toHaveLength(1);
+    expect(rowsFor("digest_checks", "ENG-202")).toEqual([expect.objectContaining({ digest_status: "completed" })]);
+  });
+
+  it("unmergeWorkItem puts back exactly what the merge moved", () => {
+    const before = snapshot();
+
+    graph.mergeWorkItems("OPS-101", "ENG-202");
+    graph.unmergeWorkItem("OPS-101");
+
+    expect(snapshot()).toEqual(before);
+    expect(graph.getWorkItemById("OPS-101")!.mergedInto).toBeNull();
+    expect(db.db.prepare("SELECT COUNT(*) AS n FROM work_item_merges").get()).toEqual({ n: 0 });
+  });
 });
 
 describe("merged items excluded from queries", () => {
