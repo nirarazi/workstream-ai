@@ -54,7 +54,8 @@ const ConfigSchema = z.object({
   }),
   extractors: z.object({
     ticketPatterns: z.array(z.string()),
-    prPatterns: z.array(z.string()),
+    /** @deprecated Ignored: pull requests aren't extracted by pattern. Still accepted, so an older local.yaml loads. */
+    prPatterns: z.array(z.string()).optional(),
   }),
   rateLimits: z.record(z.string(), RateLimitSchema).optional(),
   lookback: z.object({

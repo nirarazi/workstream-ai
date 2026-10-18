@@ -1852,7 +1852,6 @@ async function main(): Promise<void> {
   let engine: EngineState | null = null;
   const extractor = new DefaultExtractor({
     ticketPatterns: config.extractors.ticketPatterns,
-    prPatterns: config.extractors.prPatterns,
     ticketPrefixes: () => engine
       ? knownTicketPrefixes(engine.config.taskAdapter.ticketPrefixes, engine.taskAdapter)
       : config.taskAdapter.ticketPrefixes,
