@@ -28,22 +28,66 @@ describe("WorkItemLinker", () => {
     db.close();
   });
 
-  it("creates work items for extracted IDs", () => {
+  it("creates the work item for a new thread's own ticket", () => {
     // Create a thread first
     graph.upsertThread({ id: "t1", channelId: "C1", platform: "slack" });
 
-    const ids = linker.linkMessage("Working on OPS-382 and ENG-100", "t1");
+    const ids = linker.linkMessage("Working on OPS-382", "t1");
 
-    expect(ids).toContain("OPS-382");
-    expect(ids).toContain("ENG-100");
-
-    // Work items should exist in the graph
+    expect(ids).toEqual(["OPS-382"]);
     const wi1 = graph.getWorkItemById("OPS-382");
     expect(wi1).not.toBeNull();
     expect(wi1!.source).toBe("extracted");
+  });
 
-    const wi2 = graph.getWorkItemById("ENG-100");
-    expect(wi2).not.toBeNull();
+  it("links an ID mentioned alongside the thread's own ticket only when it's a work item already", () => {
+    graph.upsertThread({ id: "t1", channelId: "C1", platform: "slack" });
+
+    const ids = linker.linkMessage("Working on OPS-382, same fix as ENG-100", "t1");
+
+    expect(ids).toEqual(["OPS-382"]);
+    expect(graph.getWorkItemById("OPS-382")).not.toBeNull();
+    expect(graph.getWorkItemById("ENG-100")).toBeNull();
+    expect(graph.getWorkItemsForThread("t1").map((j) => j.workItemId)).toEqual(["OPS-382"]);
+
+    graph.upsertWorkItem({ id: "ENG-202", source: "jira" });
+    graph.upsertThread({ id: "t2", channelId: "C1", platform: "slack" });
+    expect(linker.linkMessage("Working on OPS-383, same fix as ENG-202", "t2")).toEqual(["OPS-383", "ENG-202"]);
+    expect(graph.getWorkItemsForThread("t2").find((j) => j.workItemId === "ENG-202")!.relation).toBe("mentioned");
+  });
+
+  it("doesn't create an item for an ID mentioned in a thread that has a ticket of its own", () => {
+    graph.upsertWorkItem({ id: "OPS-101", source: "jira" });
+    graph.upsertThread({ id: "t1", channelId: "C1", platform: "slack", workItemId: "OPS-101" });
+
+    const ids = linker.linkMessage("Unblocked by the fix in ENG-202", "t1");
+
+    expect(ids).toEqual([]);
+    expect(graph.getWorkItemById("ENG-202")).toBeNull();
+    expect(graph.getThreadById("t1")!.workItemId).toBe("OPS-101");
+  });
+
+  it("creates the ticket a conversation without one turns out to be about", () => {
+    graph.upsertWorkItem({ id: "thread:t1", source: "inferred" });
+    graph.upsertThread({ id: "t1", channelId: "C1", platform: "slack", workItemId: "thread:t1" });
+
+    const ids = linker.linkMessage("Filed this as OPS-101", "t1");
+
+    expect(ids).toEqual(["OPS-101"]);
+    expect(graph.getWorkItemById("OPS-101")).not.toBeNull();
+  });
+
+  it("doesn't create items for the IDs a digest names, and links those that exist", () => {
+    graph.upsertWorkItem({ id: "OPS-102", source: "jira" });
+    graph.upsertThread({ id: "t1", channelId: "C1", platform: "slack" });
+
+    const ids = linker.linkMessage("Daily summary: OPS-101 merged, OPS-102 in review, ENG-202 blocked", "t1");
+
+    expect(ids).toEqual(["OPS-102"]);
+    expect(graph.getWorkItemById("OPS-101")).toBeNull();
+    expect(graph.getWorkItemById("ENG-202")).toBeNull();
+    expect(graph.getWorkItemsForThread("t1")).toEqual([expect.objectContaining({ workItemId: "OPS-102", relation: "mentioned" })]);
+    expect(graph.getThreadById("t1")!.workItemId).toBeNull();
   });
 
   it("links thread to the first work item", () => {
@@ -121,6 +165,7 @@ describe("WorkItemLinker", () => {
 
     const multiLinker = new WorkItemLinker(graph, [extractor1, extractor2]);
     graph.upsertThread({ id: "t1", channelId: "C1", platform: "slack" });
+    graph.upsertWorkItem({ id: "ENG-2", source: "jira" });
 
     const ids = multiLinker.linkMessage("OPS-1 and ENG-2", "t1");
     expect(ids).toContain("OPS-1");
@@ -146,7 +191,8 @@ describe("junction row creation", () => {
 
   afterEach(() => { db.close(); });
 
-  it("creates junction rows for all extracted IDs", () => {
+  it("creates junction rows for all extracted IDs that are work items", () => {
+    graph.upsertWorkItem({ id: "OPS-200", source: "jira" });
     linker.linkMessage("Working on OPS-100 and OPS-200 now", "T1");
     const junctions = graph.getWorkItemsForThread("T1");
     expect(junctions).toHaveLength(2);

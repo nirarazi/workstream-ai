@@ -37,7 +37,8 @@ export function knownTicketPrefixes(
 
 export interface DefaultExtractorConfig {
   ticketPatterns: string[];
-  prPatterns: string[];
+  /** @deprecated Ignored: pull requests aren't extracted by pattern (the classifier names them) */
+  prPatterns?: string[];
   /** Known ticket prefixes (e.g. ["OPS-", "ENG-", "MKT-"]), or a function returning the current ones */
   ticketPrefixes?: string[] | (() => string[]);
   /** IDs that are work items already, which are kept whatever their prefix */

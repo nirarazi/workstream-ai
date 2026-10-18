@@ -90,6 +90,25 @@ const DEFAULT_MAX_THREADS_PER_POLL = 50;
 const DEFAULT_MAX_ACTIVE_THREAD_REPOLLS = 20;
 /** Earlier thread messages shown to the classifier with each new message. */
 const THREAD_CONTEXT_MESSAGES = 4;
+/** Work items one message can create for IDs it only mentions, through its lines that need the operator */
+const MAX_ESCALATED_MENTIONS = 3;
+
+/** Dashes a ticket key may be written with besides "-" (e.g. a non-breaking hyphen pasted from a document) */
+const KEY_DASHES = "\\u2010-\\u2015\\u2212\\uFE58\\uFE63\\uFF0D";
+
+/**
+ * The text with ticket keys written the usual way, to compare the model's IDs with: upper-cased, a dash other than "-"
+ * between letters and digits made "-", and whitespace between a known prefix and digits ("OPS 78") too.
+ */
+export function normaliseIdsInText(text: string, prefixes: string[]): string {
+  let out = text.toUpperCase().replace(new RegExp(`\\b([A-Z][A-Z0-9]*)[${KEY_DASHES}](\\d)`, "g"), "$1-$2");
+  for (const prefix of prefixes) {
+    const stem = prefix.toUpperCase().replace(/[-\s]+$/, "");
+    if (!/^[A-Z][A-Z0-9]*$/.test(stem)) continue;
+    out = out.replace(new RegExp(`\\b(${stem})\\s+(\\d)`, "g"), "$1-$2");
+  }
+  return out;
+}
 
 export interface ProcessResult {
   processed: number;
@@ -666,7 +685,10 @@ export class Pipeline {
     const pullRequest = /^PR\s*#?\d+$/i.test(id);
     // No prefixes known: accept a ticket key (but not a technical term like UTF-8) or a pull request
     if (prefixes.length === 0) return looksLikeTicketKey(id) || pullRequest;
-    return prefixes.some(prefix => id.toUpperCase().startsWith(prefix)) || (pullRequest && this.allowsPullRequests());
+    // A known prefix followed by a number: "OPS-12", not a phrase that happens to start with one ("OPS-First")
+    const upper = id.toUpperCase();
+    const ticket = prefixes.some((prefix) => upper.startsWith(prefix) && /^-?\d+$/.test(upper.slice(prefix.length)));
+    return ticket || (pullRequest && this.allowsPullRequests());
   }
 
   /**
@@ -890,6 +912,7 @@ export class Pipeline {
     }
 
     // Step 1: Link work items from message text (regex — only known prefixes)
+    // (the items linked: an ID only mentioned in passing isn't made a work item, so it's linked only if it is one)
     const extractedIds = this.linker.linkMessage(message.text, thread.id, this.canBeDigest(message));
 
     // Step 2: Classify the message with operator identities and sender context
@@ -953,9 +976,46 @@ export class Pipeline {
       for (const id of extractedIds) {
         allWorkItemIds.add(id);
       }
+      // A digest makes none of the items it names the thread's own: they're all mentioned. Decided as the linker does,
+      // from all the IDs in the text, linked or not, so the two agree (IDs the model adds don't make a message a digest).
+      const digest = this.canBeDigest(message) && namesDigest(this.linker.extractIds(message.text), ownItemId);
 
-      for (const llmId of classification.workItemIds) {
-        if (!extractedSet.has(llmId)) {
+      // The IDs in the text as the model may write them back ("ops-77", "OPS 77" and "OPS‑77" all name OPS-77), and
+      // the model's IDs and lines in that form: the linked ID where it is one, else upper-cased when the text names it
+      const namedIds = new Set(this.linker.extractIds(normaliseIdsInText(message.text, this.getValidPrefixes())));
+      const linkedByUpper = new Map(extractedIds.map((id) => [id.toUpperCase(), id]));
+      const canonical = (id: string) => linkedByUpper.get(id.toUpperCase()) ?? (namedIds.has(id.toUpperCase()) ? id.toUpperCase() : id);
+      const lines = (classification.breakdown ?? []).map((b) => ({ ...b, workItemId: canonical(b.workItemId) }));
+
+      // In the text, but the linker left it out: only mentioned in passing, and not a work item. The model listing it
+      // doesn't make it one, unless the message's own line for it puts it in front of the operator (an ask mustn't be
+      // lost because its ticket wasn't known yet), and then only a few per message.
+      const mentionedOnly = (id: string) => namedIds.has(id) && !extractedSet.has(id);
+      const escalatingLine = (id: string) => this.isOperator(message) ? undefined : lines.find((b) => b.workItemId === id
+        && b.targetedAtOperator && (b.status === "blocked_on_human" || b.status === "needs_decision"));
+      const escalated: string[] = [];
+      const passedOver: string[] = [];
+      const takeUpEscalated = (id: string): boolean => {
+        const line = escalatingLine(id);
+        if (!line) return false;
+        if (!escalated.includes(id)) {
+          if (escalated.length >= MAX_ESCALATED_MENTIONS) {
+            if (!passedOver.includes(id)) passedOver.push(id);
+            return false;
+          }
+          escalated.push(id);
+          this.graph.upsertWorkItem({ id, source: "inferred", title: line.title || id });
+        }
+        return true;
+      };
+
+      for (const llmId of classification.workItemIds.map(canonical)) {
+        if (mentionedOnly(llmId)) {
+          if (!takeUpEscalated(llmId)) {
+            log.debug("Not creating a work item for an ID only mentioned:", llmId);
+            continue;
+          }
+        } else if (!extractedSet.has(llmId)) {
           // LLM suggested an ID that the regex didn't find — validate before creating
           if (!this.isValidWorkItemId(llmId)) {
             log.debug("Discarding LLM-suggested ID that doesn't match known prefixes:", llmId);
@@ -969,10 +1029,20 @@ export class Pipeline {
         }
         allWorkItemIds.add(llmId);
       }
+      // A line that puts an item in front of the operator counts though the model left its ID out of the list
+      for (const line of lines) {
+        if (mentionedOnly(line.workItemId) && !allWorkItemIds.has(line.workItemId) && takeUpEscalated(line.workItemId)) {
+          allWorkItemIds.add(line.workItemId);
+        }
+      }
+      if (passedOver.length > 0) {
+        log.warn(`Not creating more than ${MAX_ESCALATED_MENTIONS} work items from one message's lines; passed over:`, passedOver.join(", "));
+      }
 
       // Step 2b: If no work item IDs found and this isn't noise, create a synthetic work item
-      // keyed by thread ID so the conversation stays grouped under one item
-      if (allWorkItemIds.size === 0 && classification.status !== "noise") {
+      // keyed by thread ID so the conversation stays grouped under one item. Not for a digest naming only IDs that
+      // aren't work items: it's about those, not a conversation of its own.
+      if (allWorkItemIds.size === 0 && classification.status !== "noise" && !digest) {
         const syntheticId = `thread:${thread.id}`;
         // A message classified late (held for a retry) mustn't overwrite the state a newer message already set
         if (!this.isOlderThanStatus(this.graph.getWorkItemById(syntheticId), message)) {
@@ -998,10 +1068,6 @@ export class Pipeline {
         avatarUrl: message.userAvatarUrl ?? null,
         isBot: message.senderType === "agent" ? true : message.senderType === "human" ? false : null,
       });
-
-      // A digest makes none of the items it names the thread's own: they're all mentioned. Decided as the linker does,
-      // from the IDs in the text, so the two agree (IDs the model adds don't make a message a digest).
-      const digest = this.canBeDigest(message) && namesDigest(extractedIds, ownItemId);
 
       // Step 4: Upsert thread in graph — preserve manually linked work items
       const isManuallyLinked = existingThread?.manuallyLinked === true;
@@ -1044,7 +1110,7 @@ export class Pipeline {
 
       // Step 6: Update work item status and write junction rows
       const validatedBreakdownMap = new Map(
-        (classification.breakdown ?? [])
+        lines
           .filter((b) => allWorkItemIds.has(b.workItemId))
           .map((b) => [b.workItemId, b]),
       );

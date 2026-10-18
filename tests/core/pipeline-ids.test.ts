@@ -88,6 +88,20 @@ describe("Pipeline: ticket prefixes learned from the task tracker", () => {
     db.close();
   });
 
+  it("drops a model-suggested ID that starts with a known prefix but has no number after it", async () => {
+    const { db, graph, classifier, pipeline } = setup(["OPS-"]);
+    classifier.classify.mockImplementation(async () => ({
+      status: "in_progress", entryType: "progress", confidence: 0.9, reason: "planning", workItemIds: ["OPS-Rollout", "OPS-31"],
+      title: "Rollout plan", targetedAtOperator: false, actionRequiredFrom: null, nextAction: null,
+    }));
+
+    await pipeline.processOnce();
+
+    expect(graph.getWorkItemById("OPS-Rollout")).toBeNull();
+    expect(graph.getWorkItemById("OPS-31")).not.toBeNull();
+    db.close();
+  });
+
   it("leaves a long project list out of the prompt, and still filters with it", async () => {
     const many = Array.from({ length: 31 }, (_, i) => `P${String.fromCharCode(65 + (i % 26))}${i}-`);
     const { db, graph, classifier, pipeline } = setup([...many, "OPS-"]);

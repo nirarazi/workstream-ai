@@ -151,6 +151,14 @@ messaging:
     expect(cfg1.messaging).toBeDefined();
   });
 
+  it("ships no pull request patterns, and still loads a config that sets them", () => {
+    const projectRoot = resolve(import.meta.dirname, "../..");
+    expect(loadConfig(projectRoot).extractors).not.toHaveProperty("prPatterns");
+    // MINIMAL_YAML still sets prPatterns, as an operator's older local.yaml may
+    writeDefaultYaml(tempRoot, MINIMAL_YAML);
+    expect(() => loadConfig(tempRoot)).not.toThrow();
+  });
+
   it("works with the actual project default.yaml", () => {
     const projectRoot = resolve(import.meta.dirname, "../..");
     const cfg = loadConfig(projectRoot);

@@ -148,6 +148,15 @@ CREATE TABLE IF NOT EXISTS digest_checks (
   PRIMARY KEY (event_id, work_item_id)
 );
 
+-- What merging a work item moved to the item it was merged into, so unmerging puts back exactly that (JSON).
+-- No foreign keys: the record holds IDs as JSON anyway, and unmerging skips what no longer exists.
+CREATE TABLE IF NOT EXISTS work_item_merges (
+  source_id  TEXT PRIMARY KEY,
+  target_id  TEXT NOT NULL,
+  merged_at  TEXT NOT NULL,
+  moved      TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_events_thread_id ON events(thread_id);
 CREATE INDEX IF NOT EXISTS idx_events_work_item_id ON events(work_item_id);
 CREATE INDEX IF NOT EXISTS idx_threads_work_item_id ON threads(work_item_id);

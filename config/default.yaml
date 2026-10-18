@@ -36,9 +36,7 @@ extractors:
   # Regex patterns for work item ID extraction
   ticketPatterns:
     - "\\b([A-Z]{2,6}-\\d+)\\b"
-  prPatterns:
-    - "PR\\s*#?(\\d+)"
-    - "#(\\d+)"
+  # Pull requests aren't extracted by pattern ("#3" in plain prose isn't one): the classifier names them
 
 rateLimits:
   llm:
