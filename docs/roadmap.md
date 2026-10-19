@@ -223,16 +223,19 @@ routines and runs, and a done policy before streams. Applying the re-link as fir
 merges and must not ship.
 
 **Grouping results, October 2026** (pairwise F1 on labelled message pairs: the operator's labels, plus model labels
-the operator's labels overrule, with the model's unsure pairs left out; 337 dev pairs, 100 held-out test pairs):
+the operator's labels overrule, with the model's unsure pairs left out, plus pairs drawn where v2's decisions act
+(`npm run eval:targets`); 366 dev pairs, 105 held-out test pairs):
 
 | Grouping | dev F1 | test F1 | over-merged (dev) | split (dev) |
 |---|---|---|---|---|
-| Current linker | 0.73 | 0.83 | 17 | 30 |
-| Re-link dry run (phase 2 resolver) | 0.72 | 0.80 | 16 | 32 |
-| v2 grouping (`core/grouping/`) | 0.86 | 0.80 | 9 | 17 |
+| Current linker | 0.73 | 0.83 | 17 | 31 |
+| Re-link dry run (phase 2 resolver) | 0.72 | 0.80 | 16 | 33 |
+| v2 grouping (`core/grouping/`) | 0.85 | 0.79 | 9 | 18 |
 
 - v2 merges much less unrelated work on dev and splits less. On the held-out pairs it isn't better yet; the test
   half is small (about 60 scored pairs) and its intervals are wide.
+- Each decision v2 makes is measured where it acts (`npm run eval:targets`): the over-merge detector's cuts were
+  judged right in 12 of 12 pairs, and starting a new case after a subject's week of quiet in 7 of 10.
 - Fitting v2's weights to dev (`npm run eval:tune`) raised dev to 0.87 and lowered test to 0.76, so the
   hand-set weights stay. More labels come first: the operator's corrections in the app now become labels
   (`npm run eval:constraint-labels`).
