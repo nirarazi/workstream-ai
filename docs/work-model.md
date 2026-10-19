@@ -75,7 +75,7 @@ the platform, and it ties identity to one language.
 
 ## 2. The core kinds
 
-The model has a closed set of eight kinds. Everything else is an attribute of one of them, or a specialisation that
+The model has a closed set of nine kinds. Everything else is an attribute of one of them, or a specialisation that
 a plugin adds as data.
 
 | Kind | What it is | Notes |
@@ -88,18 +88,73 @@ a plugin adds as data.
 | **Stream** | A long-lived grouping, keyed by a subject, lane or project. | Never done; has health (quiet, stuck, overdue, noisy). The Northwind stream holds every Northwind case. |
 | **Observation** | Evidence. | A message, a tracker event, a forge event, an agent's MCP report (any MCP tool call: status report, approval request or completion). Append-only. |
 | **Ref** | A pointer to an external thing. | Ticket, PR, document, URL, commit, build. Open ref kinds, registered by packs. |
+| **Rule** | A standing instruction: how work is to be done from now on. | "Never state a date that isn't in the change calendar." Has a scope (an actor, a subject, a routine or the whole fleet), an author, a source observation, and the rule that supersedes it. Never done; superseded or retired. |
 
 Decisions, incidents and milestones are not kinds. A decision is an ask whose request is a choice between options;
 an incident is a work item with a severity and a timeline; a milestone is a work item whose done condition is a set
 of other items. Conversations, claims, assignments, constraints and lineage (sections 3 and 5) aren't kinds either:
 they're the resolver's machinery for deciding membership, not things the operator works with.
 
-**The rule:** if a real need fits none of the eight, the core is wrong and is revisited deliberately, in a design
+A rule is the one kind added after the first draft. A rule isn't an ask: an ask ends when it's done, a rule stays in
+force until it's replaced. Telling an agent about a rule ("please add this to your instructions") is an ordinary ask
+inside a case, done once the rule is applied; the rule itself goes on. Rules matter because they explain what agents
+do, they can conflict, and the operator needs to see what each agent has been told: context is the product.
+
+**The rule:** if a real need fits none of the nine, the core is wrong and is revisited deliberately, in a design
 change like this one. It is never grown silently by adding a table for the case at hand.
 
 **Kinds are data, behaviour lives in plugins.** Subject kinds, ref kinds and routine kinds are rows in registries
 that packs fill, not classes in a hierarchy. Core code handles "a subject" and "a ref"; what makes a claim number
 look like a claim number is a pack's business.
+
+### What a case is
+
+A work item is one case: one piece of work with one intended outcome, which someone owns and which can end. Three
+tests:
+
+1. **One outcome.** "Done when ___" can be finished with one thing: PR #12 merged, Northwind's referral agreement
+   signed, a decision made on one order.
+2. **It can end.** It's done or abandoned, and then it stops needing anyone. A partner, a routine or a rule never
+   ends, so none of them is a case.
+3. **One owner at a time.** An agent, a person or the operator holds it now; the holder can change.
+
+Where one case ends and the next begins is decided by the outcome, not by the thread, channel, agent or time:
+
+- **Same case:** steps toward the same outcome, such as reminders, a call, its preparation and status updates, even
+  weeks apart and across channels.
+- **New case:** a different outcome, even with the same partner. "Get Northwind signed" and "fix Northwind's broken
+  link" are two cases in the Northwind stream.
+- **Split off:** something found along the way that could be finished on its own by someone else (a bug found
+  during an onboarding) is its own case, with the first as its origin.
+
+A case is not a ticket. A ticket is one way a case gets a key; most cases in a fleet never get one, because they're
+too small or too short to be worth filing. Those are the ones the operator most needs tracked. How a case starts is
+in section 5 ("Starting an item").
+
+### Message acts
+
+What a message *does* is a separate question from what it belongs to. Speech-act theory gives a small fixed set
+that holds in any line of work, plus one bucket for machine output:
+
+| Act | Examples | What it becomes |
+|---|---|---|
+| **Directive** | A request, a question, "please tell Atlas…" | An ask (request) |
+| **Commissive** | "On it", "I'll have it by Friday" | A promise on an ask |
+| **Assertive** | A status update, a report, a fact, an FYI | Activity on a case or stream; a fact about a subject is an attribute claim |
+| **Declarative** | A decision, an approval, "from now on…" | A decision closes an ask; a rule starts or replaces a rule |
+| **Expressive** | Thanks, greetings, apologies | Not work |
+| **Telemetry** | Heartbeats, tick logs, health pings | Not work; evidence for a routine's runs |
+
+Acts belong to parts of a message, not to the whole: one message can react, set a rule and give facts at once.
+Example: after Atlas emails twelve Contoso users the wrong maintenance window, Dana writes "Never state a date that
+isn't in the change calendar. The window is Saturday 02:00–04:00 UTC." That's a rule (declarative) and a fact
+(assertive). She follows with "Please write to each of them with the right time" (directive), Atlas answers "On it"
+(commissive) and later "Done: all twelve sent" (assertive, reporting done). The case is "correct the window for the
+twelve users", and all four messages belong to it. The rule is a separate, standing thing whose source is Dana's
+first message. A message is not work only when none of its parts moves a case.
+
+A report is not an act: it's a message whose assertive parts are about several cases or subjects, found by
+counting them (step 5). A notification is a sender kind, not an act.
 
 ### Routines, runs and origin
 
@@ -135,8 +190,11 @@ Claims at L2, each with its source and confidence:
 
 - **keys** (ticket, PR, MCP id) the observation names, each with a relation: `about` (what it's about), `dependency`
   ("blocked by"), `mention` (in passing), `closes` ("fixes OPS-101");
-- **message kind:** `work`, `report`, `notification` or `ack`;
-- **asks:** a move in a conversation for action, with who asks whom;
+- **acts:** the message acts of its parts (section 2), each over a span of `parts.own`;
+- **asks:** a move in a conversation for action, with who asks whom; an ask claim is a directive, commissive or
+  declarative act made specific;
+- **rules:** a span of `parts.own` that states a standing instruction, with its scope and the rule it replaces, if
+  any;
 - **subject mentions:** "Northwind" as a partner, at some confidence, with the same relations. A subject `about`
   places the observation in that subject's stream;
 - **routine-run membership:** this observation is part of Monday's partner review.
@@ -193,7 +251,10 @@ interface Handle { platform: string; id: string }
 
 type ClaimBody =
   | { type: "key"; key: string; relation: "about" | "dependency" | "mention" | "closes" }
-  | { type: "messageKind"; kind: "work" | "report" | "notification" | "ack" }
+  | { type: "act"; act: "directive" | "commissive" | "assertive" | "declarative" | "expressive" | "telemetry";
+      span?: { start: number; end: number } }                 // offsets into parts.own; absent = all of it
+  | { type: "rule"; scope: { kind: "actor" | "subject" | "routine" | "fleet"; id?: string };
+      span: { start: number; end: number }; replaces?: string }
   | { type: "ask"; move: "request" | "promise" | "report_done" | "accept" | "decline" | "withdraw";
       from: Handle; to?: Handle; askRef?: string }
   | { type: "subjectMention"; subjectKind: string; name: string; relation: "about" | "dependency" | "mention" }
@@ -343,7 +404,7 @@ from the model. No single observation can merge or split established items on it
 context, which excludes observations about sensitive subjects. Identity questions for the uncertain band go on a
 separate, small call that sees only the observation's `parts.own`, delimited as untrusted, and the candidate items'
 titles and keys; never quoted, forwarded or signature text, and never other observations. The model may emit
-message-kind and ask claims and a bounded score adjustment; key and subject claims it emits are candidates only,
+act and ask claims and a bounded score adjustment; key, subject and rule claims it emits are candidates only,
 capped below the hard band. Candidate items whose keys or stream subjects are sensitive are excluded or masked in
 any list sent to a remote model, in both calls; where masking can't be guaranteed, a local model or no model is
 used. Cost is bounded: only uncertain-band units, a per-conversation and per-author budget,
@@ -439,12 +500,17 @@ operator and where their replies go, so they get the same care as the action end
   labels in `eval-data/` follow the same rule. Signatures are never stored or sent. Summaries, model-written titles
   and eval labels derived from a deleted or purged observation are recomputed or tombstoned with it.
 - **No fetching refs.** Core never fetches a ref's URL. Only a task adapter calls its own configured base URL.
+- **Rules are records, not instructions.** A rule claim proposes a rule; only the operator confirms one, retires one,
+  or picks between two that conflict. A rule's author is a verified human; an agent or MCP report restating a rule
+  ("added it to my instructions") is evidence that it was received, never its author. The app never sends a rule to
+  an agent by itself: that's the operator's reply. Rule text is message content: it's shown and stored as data, and
+  when a model sees it, it's delimited as untrusted, never placed among the model's instructions.
 
 ---
 
 ## 8. Coverage check: five fleets
 
-To test whether eight kinds are enough, a typical week of five dissimilar fictional fleets was walked through the
+To test whether the first eight kinds were enough (Rule was added later), a typical week of five dissimilar fictional fleets was walked through the
 kinds: a support desk, an SDR and sales fleet, a software team, healthcare billing, and field-service dispatch
 (appendix). Each gap is either a missing attribute (fine: add it) or a missing kind (an open question).
 
@@ -482,7 +548,7 @@ at the end of this plan.
    continues the open request.
 5. **Claims, recognizers, subjects.** L2 claims, the `Recognizer` and `Pack` interfaces, a default pack holding the
    English and `&gt;` parsing that leaves core, `Extractor` and `ContinuationStrategy` wrapped as recognizers, and
-   ask claims. `subjects`, `subject_aliases` and `stream_keys`: subjects from lane-tagged lines (the dry run's
+   ask, act and rule claims. `subjects`, `subject_aliases` and `stream_keys`: subjects from lane-tagged lines (the dry run's
    `subject-rule-candidates.json` is the starting list) give stream membership and a candidate signal, never an
    item key. Report detection counts subjects, not only tickets.
 6. **Resolver in shadow mode.** Run the resolver in the pipeline beside the current linker, writing `assignments`
@@ -490,8 +556,10 @@ at the end of this plan.
    and `item_lineage`.
 7. **Cutover.** Switch the pipeline to the resolver once its pair-label precision and recall beat the current
    linker's by an agreed margin; re-run the backfill of constraints first.
-8. **Routines and runs.** Declared by fleet packs where the runtime exposes a schedule, otherwise proposed from
-   recurring report patterns and confirmed by the operator. Missed and stuck runs surface.
+8. **Routines, runs and rules.** Routines are declared by fleet packs where the runtime exposes a schedule,
+   otherwise proposed from recurring report patterns and confirmed by the operator. Missed and stuck runs surface.
+   Add `rules`: rules proposed from rule claims (step 5 adds act and rule claims) are confirmed by the operator and
+   shown on the actor, subject or routine they apply to. They never surface in Needs me on their own.
 9. **Done policy, the stream view, then re-linking.** A configurable done policy (which source leads, tracker or
    classifier; quiet time alone never closes an item); the stream view and stream health, over the `stream_keys`
    that exist from step 5; and re-linking as continuous, constraint-respecting re-clustering with a reviewable diff
@@ -505,9 +573,10 @@ at the end of this plan.
    started by a structural key, a request that gets a response, or a routine run. Open: with no key, which open
    case does a follow-up belong to when the stream has several, and how long does a done case stay a candidate?
 2. **Bookable resources.** Is capacity (technicians, vans, rooms) ever the inbox's concern, and if so, is it a
-   ninth kind or an attribute of actors and subjects?
-3. **Standing agreements.** SLAs, contract terms and filing limits set deadlines for many asks. Are they attributes
-   of a subject or actor, a domain pack's rules, or a kind with its own lifecycle (renewal, breach)?
+   tenth kind or an attribute of actors and subjects?
+3. **Standing agreements.** SLAs, contract terms and filing limits set deadlines for many asks. Are they rules
+   scoped to a subject, with terms a domain pack can read, or do renewal and breach need more than a rule's
+   lifecycle?
 4. **Score weights.** How many pair labels before fitted weights beat hand-set ones, and are weights per fleet or
    shared defaults with per-fleet adjustment?
 5. **Re-clustering in the UI.** When is a change big enough to ask before applying rather than show after?
@@ -516,6 +585,9 @@ at the end of this plan.
    is a skipped run told from a routine that was retired?
 8. **Redacting sensitive subjects.** Section 7 sets the defaults. Open: whether sensitive titles shown in the UI
    need masking too, and how a sensitive subject is marked before its first message arrives.
+9. **Rules.** How is a likely conflict between two rules in one scope found (the model may suggest one; only the
+   operator decides)? Should a fleet pack declare the rules an agent already has, from instruction files the
+   operator points it at, under the same limits as routines?
 
 ---
 
