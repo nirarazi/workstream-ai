@@ -824,6 +824,15 @@ Calls made while the maintainer was away, each easy to change. Newest last.
    so it stays in Needs me.
 6. **Operator actions act on the item they name.** Approve, close, snooze and Noise on an item that was merged since
    the UI showed it are refused (409), so the UI refreshes, rather than acting on the item it went into.
+7. **A subject names its stream's latest case only for a week.** A partner is a stream key, never a case key
+   (section 2). In the v2 grouping a message about a subject joins that subject's latest case while it's active (a
+   message about it within seven days); after that a new case starts in the same stream. The labelled pairs don't
+   tell the window apart (none spans weeks); the lab shows what it does to a long-running partner.
+8. **Long threads stay together.** Letting a subject named in passing split a thread that already has another
+   subject cost dev F1 (0.86 to 0.85), so a thread is still one case unless a ticket, a PR or a routine's tagged
+   line says otherwise. Threads that walk several subjects are for the over-merge detector (plan step 6).
+9. **Hand-set weights stay.** Fitting them to the dev pairs overfit (test F1 0.80 to 0.76); refit when the label
+   set has grown.
 
 ## 10. Open questions
 
