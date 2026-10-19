@@ -372,9 +372,10 @@ permalink metadata Slack already gives it; an email adapter would use MIME parts
   the scope. `status` is `proposed`, `confirmed`, `source_changed` or `retired`. `text` is the exact span as
   confirmed, never a paraphrase. `replaces` points back to the rule this one replaced, which the operator retires when
   confirming it. An *in force until* is a date or a condition in words, never both, and the operator confirms it with
-  the rule. A date retires the rule when it passes. A condition is never evaluated by the app: when there's evidence
-  it may be met (the case it names is done, say), the rule is shown as possibly ended, and only the operator retires
-  it. Proposals come only from rule claims; everything else is the operator's.
+  the rule. A date retires the rule when it passes. A condition is never evaluated by the app: when a deterministic
+  source suggests it may be met (the case it names is done, say; never a model claim or message text alone), the rule
+  is shown as possibly ended, and only the operator retires it. Proposals come only from rule claims; everything else
+  is the operator's.
 
 ### Operator actions and backfill
 
@@ -525,8 +526,9 @@ operator and where their replies go, so they get the same care as the action end
 - **Actions name what the operator saw.** A reply goes to the conversation the operator viewed, whatever the
   grouping is now. Actions that depend on membership (create a ticket from an item, say) are refused if that
   membership changed since the view loaded.
-- **In identity decisions, the model only adjusts scores**, within the limits in section 5. It can't reach the hard
-  band alone, create keys, names or constraints, or override `cannot_link`.
+- **In identity decisions, the model only adjusts scores**, within the limits in section 5 (its other limits: acts and
+  asks in section 2, rules below). It can't reach the hard band alone, create keys, names or constraints, or override
+  `cannot_link`.
 - **Identity comes from the platform.** A handle links to a person only through an adapter-verified identity (a
   platform user id) or the operator's confirmation, never a display name or message content. DMARC-aligned DKIM or SPF
   verifies an email's domain only; tying a specific mailbox to a person needs the operator's confirmation. Quoted and
@@ -545,11 +547,12 @@ operator and where their replies go, so they get the same care as the action end
   sending or showing it. `routines()` output is schema-validated, and a sweep is a declarative selector, never SQL or
   code. Recognizers are given no adapter, network or credential handles. Pack patterns run on a linear-time regex
   engine, or under an input cap and a timeout.
-- **Sensitive subjects.** A subject kind can be marked sensitive (a patient account, say). Sensitivity is decided
-  by local deterministic recognizers before any remote call. Observations about a sensitive subject never go to a
-  remote model: a local model or no model. Their evidence holds pattern names and offsets, never copied text. Pair
-  labels in `eval-data/` follow the same rule. Signatures are never stored or sent. Summaries, model-written titles
-  rule text and eval labels derived from a deleted or purged observation are recomputed or tombstoned with it.
+- **Sensitive subjects.** A subject kind can be marked sensitive (a patient account, say). Sensitivity is decided by
+  local deterministic recognizers before any remote call. Observations about a sensitive subject never go to a remote
+  model: a local model or no model. Their evidence holds pattern names and offsets, never copied text. Pair labels in
+  `eval-data/` follow the same rule. Signatures are never stored or sent. Summaries, model-written titles,
+  rule text (end conditions included) and eval labels derived from a deleted or purged observation are recomputed or tombstoned
+  with it.
 - **No fetching refs.** Core never fetches a ref's URL. Only a task adapter calls its own configured base URL.
 - **Rules are records, not instructions.**
   - *Who can author one.* A rule claim is a proposal, and only on an observation by a verified handle of the
@@ -558,13 +561,14 @@ operator and where their replies go, so they get the same care as the action end
     display name or MCP report can't. Rule-like text from anyone else (an external partner, a guest, an agent, an
     MCP report) is assertive content, never a proposal; an agent restating a rule ("added it to my instructions")
     is evidence that it was received. Proposals are capped per author per day.
-  - *Who confirms.* Only the operator confirms, retires or replaces a rule, and picks between two that conflict; the
-    endpoints that do it get the same host and origin checks as the action endpoints. The confirm view shows the
-    author, whether they're a fleet member, a link to the source, the scope it will apply to (which actor, subject or
-    routine, or the whole fleet), when it stops being in force, if ever, and the exact text that will be stored.
-  - *Stable text.* A confirmed rule keeps the text and hash it was confirmed with. If its source is edited, the rule
-    becomes `source_changed` and keeps the confirmed text until the operator reconfirms; it never takes the new text
-    silently. If the source is deleted or purged, the rule's text is tombstoned with it.
+  - *Who confirms.* Only the operator confirms, retires or replaces a rule (a confirmed end date running out counts as
+    theirs), and picks between two that conflict; the endpoints that do it get the same host and origin checks as the
+    action endpoints. The confirm view shows the author, whether they're a fleet member, a link to the source, the
+    scope it will apply to (which actor, subject or routine, or the whole fleet), when it stops being in force, if
+    ever, and the exact text that will be stored.
+  - *Stable text.* A confirmed rule keeps the text and hash it was confirmed with, its end condition included. If its
+    source is edited, the rule becomes `source_changed` and keeps the confirmed text until the operator reconfirms; it
+    never takes the new text silently. If the source is deleted or purged, the rule's text is tombstoned with it.
   - *Display only.* Rules are shown on the actor, subject or routine they apply to. They never change surfacing,
     membership or suggested actions, never feed a drafted reply, and the app never sends one to an agent: that's
     the operator's reply. Changing this is a design change. When a model sees rule text (to suggest a conflict, say),
