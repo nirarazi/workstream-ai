@@ -88,7 +88,7 @@ a plugin adds as data.
 | **Stream** | A long-lived grouping, keyed by a subject, lane or project. | Never done; has health (quiet, stuck, overdue, noisy). The Northwind stream holds every Northwind case. |
 | **Observation** | Evidence. | A message, a tracker event, a forge event, an agent's MCP report (any MCP tool call: status report, approval request or completion). Append-only. |
 | **Ref** | A pointer to an external thing. | Ticket, PR, document, URL, commit, build. Open ref kinds, registered by packs. |
-| **Rule** | A standing instruction: how work is to be done from now on. | "Never state a date that isn't in the change calendar." Has a scope (an actor, a subject, a routine or the whole fleet), an author, a source observation, its confirmed text, and the rule it replaces. Has no done condition; it's replaced or retired. |
+| **Rule** | A standing instruction: how work is to be done from now on. | "Never state a date that isn't in the change calendar." Has a scope (an actor, a subject, a routine or the whole fleet), an author, a source observation, its confirmed text, the rule it replaces, and optionally when it stops being in force. Has no done condition; it's replaced, retired or runs out. |
 
 Decisions, incidents and milestones are not kinds. A decision is an ask whose request is a choice between options;
 an incident is a work item with a severity and a timeline; a milestone is a work item whose done condition is a set
@@ -99,6 +99,14 @@ A rule is the one kind added after the first draft. A rule isn't an ask: an ask 
 force until it's replaced. Telling an agent about a rule ("please add this to your instructions") is an ordinary ask
 inside a case, done once the rule is applied; the rule itself goes on. Rules matter because they explain what agents
 do, they can conflict, and the operator needs to see what each agent has been told: context is the product.
+
+A rule is not a decision. A decision settles one question once ("go with option B for Northwind's contract"): it's
+the answer that closes an ask, and then it's history. A rule applies every time the situation comes up again ("for
+contracts over $X, always use option B"). The test is whether it would apply next time. One message often holds
+both: "No, don't send the discount" decides; "and never offer one without asking me" proposes a rule. Three alike
+decisions are still three decisions until someone says "from now on". Some rules hold only until something happens
+("don't contact Northwind until the contract is signed"); they carry an *in force until*: a date, or an end
+condition in words.
 
 **The rule:** if a real need fits none of the nine, the core is wrong and is revisited deliberately, in a design
 change like this one. It is never grown silently by adding a table for the case at hand.
@@ -283,7 +291,8 @@ type ClaimBody =
   | { type: "act"; act: "directive" | "commissive" | "assertive" | "declarative" | "expressive" | "telemetry";
       span?: { start: number; end: number } }                 // offsets into parts.own; absent = all of it
   | { type: "rule"; span: { start: number; end: number };
-      scope: { kind: "fleet" } | { kind: "actor" | "subject" | "routine"; name: string } }   // resolved on confirm
+      scope: { kind: "fleet" } | { kind: "actor" | "subject" | "routine"; name: string };   // resolved on confirm
+      until?: { span: { start: number; end: number } } }   // "until the contract is signed", "through Friday"
   | { type: "ask"; move: "request" | "promise" | "refuse" | "report_done" | "accept" | "reject" | "withdraw";
       from: Handle; to?: Handle; askRef?: string; span?: { start: number; end: number } }
   | { type: "subjectMention"; subjectKind: string; name: string; relation: "about" | "dependency" | "mention" }
@@ -358,11 +367,14 @@ permalink metadata Slack already gives it; an email adapter would use MIME parts
   `subject_aliases` says two names are the same subject. A name is soft evidence until the operator confirms it.
 - **`actors` and `actor_handles`** for actors: one person, many handles. Today's `agents` table migrates into them.
 - **`rules(id, scope_kind, scope_name, scope_id, text, text_hash, source_observation, author, replaces, status,
-  decided_by, created_at, retired_at)`.** A proposal keeps the scope name it claimed and a suggested `scope_id`,
-  looked up through subject names and actor handles; the operator confirms the scope. `status` is `proposed`,
-  `confirmed`, `source_changed` or `retired`. `text` is the exact span as confirmed, never a paraphrase. `replaces`
-  points back to the rule this one replaced, which the operator retires when confirming it. Proposals come only from
-  rule claims; everything else is the operator's.
+  in_force_until_date, in_force_until_condition, decided_by, created_at, retired_at)`.** A proposal keeps the scope
+  name it claimed and a suggested `scope_id`, looked up through subject names and actor handles; the operator confirms
+  the scope. `status` is `proposed`, `confirmed`, `source_changed` or `retired`. `text` is the exact span as
+  confirmed, never a paraphrase. `replaces` points back to the rule this one replaced, which the operator retires when
+  confirming it. An *in force until* is a date or a condition in words, never both, and the operator confirms it with
+  the rule. A date retires the rule when it passes. A condition is never evaluated by the app: when there's evidence
+  it may be met (the case it names is done, say), the rule is shown as possibly ended, and only the operator retires
+  it. Proposals come only from rule claims; everything else is the operator's.
 
 ### Operator actions and backfill
 
@@ -549,7 +561,7 @@ operator and where their replies go, so they get the same care as the action end
   - *Who confirms.* Only the operator confirms, retires or replaces a rule, and picks between two that conflict; the
     endpoints that do it get the same host and origin checks as the action endpoints. The confirm view shows the
     author, whether they're a fleet member, a link to the source, the scope it will apply to (which actor, subject or
-    routine, or the whole fleet), and the exact text that will be stored.
+    routine, or the whole fleet), when it stops being in force, if ever, and the exact text that will be stored.
   - *Stable text.* A confirmed rule keeps the text and hash it was confirmed with. If its source is edited, the rule
     becomes `source_changed` and keeps the confirmed text until the operator reconfirms; it never takes the new text
     silently. If the source is deleted or purged, the rule's text is tombstoned with it.
