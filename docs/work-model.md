@@ -754,6 +754,13 @@ as a ninth kind.
 
 ## 9. Revised plan
 
+**Where it stands (October 2026, branch `v2/work-model`).** Steps 1–3 are done. Step 5 is partly done: deterministic
+recognizers (keys, records, releases, tagged and named subjects, reports, telemetry, chatter) run inside the v2
+grouping (`core/grouping/`), but claims aren't stored as their own table yet. Step 6 is mostly done: the v2 grouping
+runs in shadow mode after each poll, with an over-merge detector, scored on dev and held-out pairs and on pairs drawn
+where each of its decisions acts (section 6), and a development lab shows its streams, cases and graphs. Step 4 (asks
+and actors) and step 6's ULIDs are next.
+
 **The old phase 8 (apply the re-link) must not run as designed:** it would mint new items from scratch and discard
 the operator's merges and manual links (section 1). Re-linking becomes continuous re-clustering under constraints,
 at the end of this plan.
