@@ -3,7 +3,7 @@
 import { describe, it, expect } from "vitest";
 import { Database } from "../../core/graph/db.js";
 import { ContextGraph } from "../../core/graph/index.js";
-import { loadGroupingMessages } from "../../core/grouping/load.js";
+import { actorOfHandle, loadGroupingMessages } from "../../core/grouping/load.js";
 
 describe("loadGroupingMessages", () => {
   it("reads each message once, from the thread it replies in, with its sender's kind and its own lines", () => {
@@ -26,5 +26,12 @@ describe("loadGroupingMessages", () => {
       ["slack:C0OPS:1700000002.000100", "1700000001.000100", false, "agent", "Reply"],
     ]);
     db.close();
+  });
+});
+
+describe("actorOfHandle", () => {
+  it("makes a handle named \"X - something\" the actor named X, and leaves other handles their own", () => {
+    const actors = actorOfHandle(new Map([["U1", "Atlas"], ["U2", "Atlas - Release Agent"], ["U3", "Relay – Ops"], ["U4", "Dana"]]));
+    expect(Object.fromEntries(actors)).toEqual({ U1: "U1", U2: "U1", U3: "U3", U4: "U4" });
   });
 });

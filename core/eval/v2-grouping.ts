@@ -11,6 +11,7 @@ import type { SenderKind } from "../graph/resolver.js";
 import type { ClusterOptions, Placement } from "../grouping/cluster.js";
 import { groupMessages } from "../grouping/index.js";
 import type { GroupingMessage } from "../grouping/recognize.js";
+import { actorOfHandle, loadActorNames } from "../grouping/load.js";
 import type { StatusCategory } from "../types.js";
 import type { MessageIndex } from "./linking-data.js";
 import type { Grouping } from "./linking-metrics.js";
@@ -32,13 +33,15 @@ export function groupingMessages(db: BetterSqlite3.Database, index: Pick<Message
     SELECT e.id, e.status, ${digest} AS digest, ${bot} FROM events e LEFT JOIN agents a ON a.id = e.agent_id
   `).all() as Array<{ id: string; status: StatusCategory; digest: number; is_bot: number | null; bot_type: string | null }>)
     .map((r) => [r.id, r]));
+  // As the grouping's own loader does: a sender's handles are one actor
+  const actorOf = actorOfHandle(loadActorNames(db));
   return index.observations.map((o) => {
     const r = rows.get(o.eventId);
     return {
       key: o.id,
       threadId: o.threadId,
       channelId: o.channelId,
-      senderId: o.senderId,
+      senderId: o.senderId ? actorOf.get(o.senderId) ?? o.senderId : null,
       senderKind: r ? senderKind(r.is_bot, r.bot_type) : "unknown",
       at: o.timestamp,
       text: o.text,

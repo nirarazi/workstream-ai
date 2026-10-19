@@ -26,6 +26,22 @@ export function loadActorNames(db: BetterSqlite3.Database): Map<string, string> 
   return new Map((db.prepare("SELECT id, name FROM agents").all() as Array<{ id: string; name: string }>).map((r) => [r.id, r.name]));
 }
 
+/**
+ * One actor for several handles (docs/work-model.md, step 4): a handle named "Atlas - Release Agent" is the actor
+ * named exactly "Atlas", when there is one. Returns each handle's actor id (the handle itself when it has no other).
+ */
+export function actorOfHandle(names: ReadonlyMap<string, string>): Map<string, string> {
+  const byName = new Map<string, string>();
+  for (const [id, name] of names) if (!byName.has(name.trim().toLowerCase())) byName.set(name.trim().toLowerCase(), id);
+  const out = new Map<string, string>();
+  for (const [id, name] of names) {
+    const base = /^(.+?)\s+[-–—]\s+\S.*$/.exec(name.trim())?.[1].toLowerCase();
+    const actor = base ? byName.get(base) : undefined;
+    out.set(id, actor && actor !== id ? actor : id);
+  }
+  return out;
+}
+
 function parseNames(json: string | null): string[] | null {
   if (!json) return null;
   try {
@@ -63,6 +79,8 @@ export function loadGroupingMessages(db: BetterSqlite3.Database): LoadedMessage[
     timestamp: string; digest: number; targeted: number; required: string | null; platform: string | null; channel_id: string | null; channel_name: string; sender_name: string;
     is_bot: number | null; bot_type: string | null;
   }>;
+  // A sender's handles count as one actor: an agent posting under two names is still one sender
+  const actorOf = actorOfHandle(loadActorNames(db));
   const chosen = new Map<string, (typeof rows)[number]>();
   for (const r of rows) {
     const key = `${r.platform ?? "unknown"}:${r.channel_id ?? ""}:${r.message_id}`;
@@ -80,7 +98,7 @@ export function loadGroupingMessages(db: BetterSqlite3.Database): LoadedMessage[
       threadId: r.thread_id,
       channelId: r.channel_id,
       channelName: r.channel_name,
-      senderId: r.agent_id,
+      senderId: r.agent_id ? actorOf.get(r.agent_id) ?? r.agent_id : null,
       senderName: r.sender_name,
       senderKind: senderKind(r.is_bot, r.bot_type),
       at: r.timestamp,
