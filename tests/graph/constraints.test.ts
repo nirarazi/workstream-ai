@@ -118,6 +118,18 @@ describe("constraints from operator actions", () => {
     expect(graph.constraints.live().map((x) => [x.kind, x.origin])).toEqual([["cannot_link", "unmerge:OPS-102"]]);
   });
 
+  it("retires an unmerge's cannot_link when the operator merges the same two again", () => {
+    graph.upsertWorkItem({ id: "OPS-102", source: "extracted" });
+    said("T1", "1700000000.000001", "OPS-102");
+    graph.upsertWorkItem({ id: "OPS-101", source: "jira" });
+    said("T0", "1700000000.000002", "OPS-101");
+    graph.foldIntoTrackerItem("OPS-102", "OPS-101", "hierarchy", "jira");
+    graph.unmergeWorkItem("OPS-102");
+    graph.upsertWorkItem({ id: "thread:T5", source: "inferred" });
+    graph.mergeWorkItems("OPS-102", "OPS-101");
+    expect(graph.constraints.live().map((x) => x.kind)).toEqual(["key_alias"]);
+  });
+
   it("backfills earlier merges and manual links once, and never revives one that was undone", () => {
     graph.upsertWorkItem({ id: "OPS-1", source: "jira" });
     graph.upsertWorkItem({ id: "OPS-2", source: "jira" });

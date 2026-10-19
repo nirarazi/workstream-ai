@@ -145,10 +145,13 @@ function mapIssueToWorkItem(issue: JiraIssue, baseUrl: string): WorkItemDetail {
   };
 }
 
-/** The issues this one duplicates: its outward links of Jira's "Duplicate" type (named so by default, or "duplicates") */
+/**
+ * The issues this one duplicates: its outward links of Jira's built-in "Duplicate" type (outward: "duplicates"). A
+ * custom type that only sounds like it ("Possible duplicate") isn't one: it folds nothing.
+ */
 function duplicatesOf(issue: JiraIssue): { duplicates?: string[] } {
   const keys = (issue.fields.issuelinks ?? [])
-    .filter((l) => l.outwardIssue && /duplicate/i.test(`${l.type?.name ?? ""} ${l.type?.outward ?? ""}`))
+    .filter((l) => l.outwardIssue && l.type?.name === "Duplicate" && /^duplicates$/i.test(l.type?.outward?.trim() ?? "duplicates"))
     .map((l) => l.outwardIssue!.key);
   return keys.length > 0 ? { duplicates: keys } : {};
 }

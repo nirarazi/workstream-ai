@@ -277,6 +277,7 @@ describe("JiraAdapter", () => {
             { type: { name: "Duplicate", outward: "duplicates" }, outwardIssue: { key: "OPS-100" } },
             { type: { name: "Duplicate", outward: "duplicates" }, inwardIssue: { key: "OPS-500" } },
             { type: { name: "Blocks", outward: "blocks" }, outwardIssue: { key: "OPS-200" } },
+            { type: { name: "Possible duplicate", outward: "possibly duplicates" }, outwardIssue: { key: "OPS-300" } },
           ],
         },
       })));

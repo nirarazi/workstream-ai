@@ -572,7 +572,7 @@ export function createApp(
       if (verdict === "digest") {
         const status = check.digestStatus as StatusCategory;
         const needs = status === "blocked_on_human" || status === "needs_decision";
-        state.graph.upsertWorkItem({
+        state.graph.upsertWorkItemExact({
           id: workItemId,
           source: item.source,
           currentAtcStatus: status,
@@ -1065,6 +1065,10 @@ export function createApp(
     if (!workItem) {
       return c.json({ ok: false, error: "Work item not found" }, 404);
     }
+    // Merged into another since the UI showed it: acting on it would change nothing the operator sees
+    if (workItem.mergedInto) {
+      return c.json({ ok: false, error: `Merged into ${workItem.mergedInto}: refresh and act on that item` }, 409);
+    }
 
     // The thread an action's message goes to: the item's latest linked thread, else the latest thread with an event
     // for it (an item that only appears in classifier breakdowns)
@@ -1081,7 +1085,7 @@ export function createApp(
       switch (body.action) {
         case "approve":
         case "close":
-          state.graph.upsertWorkItem({
+          state.graph.upsertWorkItemExact({
             id: body.workItemId,
             source: workItem.source,
             currentAtcStatus: "completed",
@@ -1094,7 +1098,7 @@ export function createApp(
         case "snooze": {
           const durationMs = (body.snoozeDuration ?? 3600) * 1000;
           const snoozedUntil = new Date(Date.now() + durationMs).toISOString();
-          state.graph.upsertWorkItem({
+          state.graph.upsertWorkItemExact({
             id: body.workItemId,
             source: workItem.source,
             snoozedUntil,
@@ -1104,7 +1108,7 @@ export function createApp(
 
         case "redirect":
           // Redirect keeps status but acknowledges operator saw it
-          state.graph.upsertWorkItem({
+          state.graph.upsertWorkItemExact({
             id: body.workItemId,
             source: workItem.source,
             currentAtcStatus: "in_progress",
@@ -1121,7 +1125,7 @@ export function createApp(
         case "noise": {
           // The operator's word that this isn't work: kept as a constraint, so no regrouping makes it an item again
           state.graph.markNotAnItem(body.workItemId);
-          state.graph.upsertWorkItem({
+          state.graph.upsertWorkItemExact({
             id: body.workItemId,
             source: workItem.source,
             currentAtcStatus: "noise",
@@ -1161,7 +1165,7 @@ export function createApp(
           });
 
           // Create the real work item first (threads and junction rows FK-reference it)
-          state.graph.upsertWorkItem({
+          state.graph.upsertWorkItemExact({
             id: ticket.id,
             source: tasks.name,
             title: ticket.title,
@@ -1190,7 +1194,7 @@ export function createApp(
           }
 
           // Mark the synthetic work item as completed (superseded)
-          state.graph.upsertWorkItem({
+          state.graph.upsertWorkItemExact({
             id: body.workItemId,
             source: workItem.source,
             currentAtcStatus: "completed",

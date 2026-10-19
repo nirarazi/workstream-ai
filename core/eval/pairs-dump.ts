@@ -30,11 +30,6 @@ const MAX_TEXT = 1500;
 const MAX_CONTEXT = 300;
 
 let openSource: ReadOnlyCopy | undefined;
-onStopSignals(() => {
-  const copy = openSource;
-  openSource = undefined;
-  copy?.close();
-});
 
 const cut = (text: string, max: number) => (text.length > max ? text.slice(0, max) + " …(truncated)" : text);
 const context = (m: ContextMessage) => ({ sender: m.sender, at: m.timestamp, text: cut(m.text, MAX_CONTEXT) });
@@ -82,9 +77,16 @@ function main(): void {
   }
 }
 
-try {
-  main();
-} catch (err) {
-  console.error(`eval:pairs-dump: ${err instanceof Error ? err.message : String(err)}`);
-  process.exit(1);
+if (process.argv[1]?.endsWith("pairs-dump.ts")) {
+  onStopSignals(() => {
+    const copy = openSource;
+    openSource = undefined;
+    copy?.close();
+  });
+  try {
+    main();
+  } catch (err) {
+    console.error(`eval:pairs-dump: ${err instanceof Error ? err.message : String(err)}`);
+    process.exit(1);
+  }
 }

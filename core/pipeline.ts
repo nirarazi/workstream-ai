@@ -867,7 +867,8 @@ export class Pipeline {
         actionRequiredFrom: cachedResult.actionRequiredFrom,
         nextAction: cachedResult.nextAction,
         // Same text, same thread: a digest the first time is one now
-        digest: this.canBeDigest(message) && namesDigest(this.linker.extractIds(message.text), ownItemId),
+        digest: this.canBeDigest(message)
+          && namesDigest(new Set(this.linker.extractIds(message.text).map((id) => this.graph.resolveItemRef(id))), ownItemId),
       });
       return cachedResult;
     }
@@ -982,7 +983,7 @@ export class Pipeline {
       // A digest makes none of the items it names the thread's own: they're all mentioned. Decided as the linker does,
       // from all the IDs in the text, linked or not, so the two agree (IDs the model adds don't make a message a digest).
       const digest = this.canBeDigest(message)
-        && namesDigest(this.linker.extractIds(message.text).map((id) => this.graph.resolveItemRef(id)), ownItemId);
+        && namesDigest(new Set(this.linker.extractIds(message.text).map((id) => this.graph.resolveItemRef(id))), ownItemId);
 
       // The IDs in the text as the model may write them back ("ops-77", "OPS 77" and "OPS‑77" all name OPS-77), and
       // the model's IDs and lines in that form: the linked ID where it is one, else upper-cased when the text names it
@@ -1065,6 +1066,9 @@ export class Pipeline {
 
       // From here on, the items the IDs name now: an ID whose item was merged into another is that one
       const resolve = (id: string) => this.graph.resolveItemRef(id);
+      // Items named here only by a step of theirs (a sub-task folded into its parent): a step's "done" isn't the case's
+      const stepOnly = new Set([...allWorkItemIds].filter((id) => this.graph.isStepRef(id)).map(resolve));
+      for (const id of allWorkItemIds) if (!this.graph.isStepRef(id)) stepOnly.delete(resolve(id));
       const named = [...allWorkItemIds].map(resolve);
       allWorkItemIds.clear();
       for (const id of named) allWorkItemIds.add(id);
@@ -1208,7 +1212,8 @@ export class Pipeline {
           }
 
           // The operator's line for an item is their word too: not waiting on them unless it names someone else
-          const itemStatus = fromTheOperator ? theirStatus : itemClassification?.status ?? classification.status;
+          const said = fromTheOperator ? theirStatus : itemClassification?.status ?? classification.status;
+          const itemStatus = said === "completed" && stepOnly.has(workItemId) ? "in_progress" : said;
           const itemConfidence = itemClassification?.confidence ?? classification.confidence;
           const itemTitle = itemClassification?.title ?? classification.title;
 
@@ -1259,7 +1264,7 @@ export class Pipeline {
         // Enrichment is best-effort and the event is already stored: after stop() just skip the rest
         if (stopped()) break;
         // The tracker knows the item by its own ticket key, not its id
-        const ticket = this.graph.getItemKeys(workItemId).find((k) => k.key.startsWith("ticket:"))?.key.slice("ticket:".length);
+        const ticket = this.graph.ownTicketKey(workItemId);
         if (!ticket) continue;
         try {
           const detail = await this.taskAdapter.getWorkItem(ticket);

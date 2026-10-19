@@ -818,6 +818,12 @@ Calls made while the maintainer was away, each easy to change. Newest last.
    and writes `not_an_item`. Dismiss writes nothing.
 4. **Step 3: tracker merges aren't corrections.** A sub-task folded into its parent writes no constraint (the tracker
    can change); undoing the fold does.
+5. **A step's "done" is progress on its case.** After a sub-task is folded into its parent, a message or an MCP
+   `workstream_complete` saying the sub-task is done sets the case in progress, not done: the case is done when its
+   own ticket is, or the operator says so. A fold also carries the sub-task's ask (blocked, a decision) to the case,
+   so it stays in Needs me.
+6. **Operator actions act on the item they name.** Approve, close, snooze and Noise on an item that was merged since
+   the UI showed it are refused (409), so the UI refreshes, rather than acting on the item it went into.
 
 ## 10. Open questions
 

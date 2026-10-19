@@ -36,8 +36,9 @@ function setup(itemTypeRoles: unknown[] = []) {
     taskAdapter: { enabled: true, ticketPrefixes: [], itemTypeRoles } } as any;
   const linker = new WorkItemLinker(graph, [new DefaultExtractor({ ticketPatterns: ["\\b([A-Z]{2,6}-\\d+)\\b"], prPatterns: [] })]);
   const adapter = { name: "fake", readThreads: vi.fn(async () => [thread]), getThreadMessages: vi.fn(async () => []) };
-  const pipeline = new Pipeline(adapter as any, { classify: vi.fn(async () => IN_PROGRESS) } as any, graph, linker, tracker as any, config);
-  return { graph, pipeline, tracker };
+  let answer = IN_PROGRESS;
+  const pipeline = new Pipeline(adapter as any, { classify: vi.fn(async () => answer) } as any, graph, linker, tracker as any, config);
+  return { graph, pipeline: Object.assign(pipeline, { setClassification: (c: Classification) => { answer = c; } }), tracker, thread };
 }
 
 describe("Pipeline: tracker hierarchy", () => {
@@ -48,6 +49,19 @@ describe("Pipeline: tracker hierarchy", () => {
     expect(graph.getWorkItemById("OPS-101")!.title).toBe("Export");
     expect(graph.getWorkItemById("OPS-102")!.mergedInto).toBe("OPS-101");
     expect(graph.getEventsForWorkItem("OPS-101").map((e) => e.messageId)).toEqual(["m1"]);
+  });
+
+  it("counts a step's done as progress on the case, not the case done", async () => {
+    const { graph, pipeline, thread } = setup();
+    await pipeline.processOnce();
+    // The sub-task is folded; then an agent says the sub-task is done
+    const done = { ...thread.messages[0], id: "m2", text: "OPS-102 done", timestamp: new Date(Date.now() + 1000).toISOString() };
+    thread.messages = [done];
+    thread.id = "T2";
+    done.threadId = "T2";
+    pipeline.setClassification({ ...IN_PROGRESS, status: "completed", entryType: "progress" });
+    await pipeline.processOnce();
+    expect(graph.getWorkItemById("OPS-101")!.currentAtcStatus).toBe("in_progress");
   });
 
   it("keeps a sub-task its own case when the operator says its type is a case", async () => {

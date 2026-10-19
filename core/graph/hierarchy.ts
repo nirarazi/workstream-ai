@@ -46,8 +46,10 @@ export function belongsTo(
   detail: WorkItemDetail,
   overrides: readonly ItemTypeRoleOverride[] = [],
 ): { key: string; reason: "step" | "duplicate" } | null {
+  const role = detail.itemType ? roleOf(detail.itemType, projectOf(detail.id), overrides) : "case";
+  // A container holds cases: it's never folded into anything, by a duplicate link or a parent
+  if (role === "container") return null;
   const duplicateOf = detail.duplicates?.[0];
   if (duplicateOf) return { key: duplicateOf, reason: "duplicate" };
-  if (!detail.itemType || !detail.parent) return null;
-  return roleOf(detail.itemType, projectOf(detail.id), overrides) === "step" ? { key: detail.parent.key, reason: "step" } : null;
+  return role === "step" && detail.parent ? { key: detail.parent.key, reason: "step" } : null;
 }

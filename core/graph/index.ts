@@ -449,10 +449,11 @@ export class ContextGraph {
     statusAt?: string | null;
     snoozedUntil?: string | null;
     pinned?: boolean;
-  }): WorkItem {
+  }, opts: { exact?: boolean } = {}): WorkItem {
     const now = new Date().toISOString();
-    // A reference to a key another item holds now (merged into it, say) updates that item
-    const id = this.resolveItemRef(item.id);
+    // A reference to a key another item holds now (merged into it, say) updates that item; an operator action on an
+    // item (exact) means that very item
+    const id = opts.exact ? item.id : this.resolveItemRef(item.id);
     if (id !== item.id) log.debug("Work item reference", item.id, "resolved to", id);
 
     const stmt = this.db.db.prepare(`
@@ -499,8 +500,8 @@ export class ContextGraph {
    * id (unmerging one, say) don't go through this: they mean that very item.
    */
   resolveItemRef(ref: string): string {
-    const db = this.db.db;
-    const row = db.prepare("SELECT merged_into FROM work_items WHERE id = ?").get(ref) as { merged_into: string | null } | undefined;
+    const mergedInto = this.db.db.prepare("SELECT merged_into FROM work_items WHERE id = ?");
+    const row = mergedInto.get(ref) as { merged_into: string | null } | undefined;
     if (row && !row.merged_into) return ref;
     for (const key of keysForRef(ref)) {
       const holder = this.findItemByKey(key);
@@ -510,7 +511,7 @@ export class ContextGraph {
     let live = ref;
     for (let hops = 0, next: string | null = row.merged_into; next && hops < 20; hops++) {
       live = next;
-      next = (db.prepare("SELECT merged_into FROM work_items WHERE id = ?").get(next) as { merged_into: string | null } | undefined)?.merged_into ?? null;
+      next = (mergedInto.get(next) as { merged_into: string | null } | undefined)?.merged_into ?? null;
     }
     return live;
   }
@@ -537,6 +538,37 @@ export class ContextGraph {
       log.warn(`Couldn't fold ${ref} into ${intoKey}`, err);
       return itemId;
     }
+  }
+
+  /**
+   * The ticket key the tracker knows an item by: its own (not one a merge gave it), or, for an item with none of its
+   * own (a conversation a ticket was merged into), the first one merged into it. Without the "ticket:" prefix.
+   */
+  ownTicketKey(itemId: string): string | null {
+    const tickets = this.getItemKeys(itemId).filter((k) => k.key.startsWith("ticket:"));
+    const key = (tickets.find((k) => k.decidedBy !== "merge") ?? tickets[0])?.key;
+    return key ? key.slice("ticket:".length) : null;
+  }
+
+  /**
+   * Whether a reference names a step of the item it resolves to: a sub-task the tracker folded into its parent. A
+   * step's "done" is progress on the case, not the case done (docs/work-model.md, "Decisions to review").
+   */
+  isStepRef(ref: string): boolean {
+    const holder = this.resolveItemRef(ref);
+    for (const key of keysForRef(ref)) {
+      const row = this.db.db.prepare(`
+        SELECT k.evidence FROM item_keys k JOIN work_item_merges m ON m.source_id = k.evidence
+        WHERE k.key = ? AND k.item_id = ? AND k.retired_at IS NULL AND k.decided_by = 'merge' AND m.decided_by = 'hierarchy'
+      `).get(key, holder) as { evidence: string } | undefined;
+      if (row) return true;
+    }
+    return false;
+  }
+
+  /** An operator action's write to an item: that very item, never another its id or key resolves to */
+  upsertWorkItemExact(item: Parameters<ContextGraph["upsertWorkItem"]>[0]): WorkItem {
+    return this.upsertWorkItem(item, { exact: true });
   }
 
   /** The live item a reference names (see resolveItemRef), or null when there's none */
@@ -679,6 +711,21 @@ export class ContextGraph {
     }));
   }
 
+  private carryStatusOnFold(source: WorkItem, target: WorkItem, at: string): void {
+    const asks = (st: StatusCategory | null) => st === "blocked_on_human" || st === "needs_decision";
+    if (!source.currentAtcStatus) return;
+    const newer = !target.statusAt || (source.statusAt !== null && source.statusAt > target.statusAt);
+    const carry = newer || (asks(source.currentAtcStatus) && !asks(target.currentAtcStatus));
+    if (!carry) return;
+    this.db.db.prepare(`
+      UPDATE work_items SET current_atc_status = ?, current_confidence = ?, status_at = ?, updated_at = ?,
+        dismissed_at = CASE WHEN dismissed_at IS NOT NULL AND dismissed_at < COALESCE(?, '') THEN NULL ELSE dismissed_at END,
+        dismiss_reason = CASE WHEN dismissed_at IS NOT NULL AND dismissed_at < COALESCE(?, '') THEN NULL ELSE dismiss_reason END
+      WHERE id = ?
+    `).run(source.currentAtcStatus, source.currentConfidence, source.statusAt ?? at, at, source.statusAt, source.statusAt, target.id);
+    if (target.currentAtcStatus === "completed" && source.currentAtcStatus !== "completed") this.setReopened(target.id, source.statusAt ?? at);
+  }
+
   /** Moves the source's live keys to the target (a key the target holds already stays the target's alone) */
   private moveKeysOnMerge(sourceId: string, targetId: string, at: string): void {
     const db = this.db.db;
@@ -694,21 +741,30 @@ export class ContextGraph {
     db.prepare("UPDATE item_keys SET retired_at = ? WHERE item_id = ? AND retired_at IS NULL").run(at, sourceId);
   }
 
-  /** Gives back the keys a merge moved from the source to the target */
+  /**
+   * Gives back the keys a merge moved from the source to the target, as the source held them: its own keys as its
+   * own, and a key an earlier merge gave it as that merge's (so undoing that one, next, gives it back in turn).
+   */
   private returnKeysOnUnmerge(sourceId: string, targetId: string, at: string): void {
     const db = this.db.db;
     const moved = db.prepare(`
       SELECT key, source, confidence FROM item_keys
       WHERE item_id = ? AND decided_by = 'merge' AND evidence = ? AND retired_at IS NULL
     `).all(targetId, sourceId) as Array<{ key: string; source: string; confidence: number }>;
+    const heldBefore = db.prepare(`
+      SELECT source, confidence, decided_by, evidence FROM item_keys
+      WHERE item_id = ? AND key = ? AND retired_at IS NOT NULL ORDER BY retired_at DESC, rowid DESC LIMIT 1
+    `);
     const insert = db.prepare(`
       INSERT INTO item_keys (key, item_id, source, confidence, decided_by, evidence, created_at, retired_at)
-      VALUES (?, ?, ?, ?, 'unmerge', ?, ?, NULL)
+      VALUES (?, ?, ?, ?, ?, ?, ?, NULL)
     `);
     const retire = db.prepare("UPDATE item_keys SET retired_at = ? WHERE item_id = ? AND key = ? AND retired_at IS NULL");
     for (const k of moved) {
       retire.run(at, targetId, k.key);
-      insert.run(k.key, sourceId, k.source, k.confidence, targetId, at);
+      const before = heldBefore.get(sourceId, k.key) as { source: string; confidence: number; decided_by: string; evidence: string | null } | undefined;
+      if (before) insert.run(k.key, sourceId, before.source, before.confidence, before.decided_by, before.evidence, at);
+      else insert.run(k.key, sourceId, k.source, k.confidence, "unmerge", targetId, at);
     }
   }
 
@@ -856,8 +912,11 @@ export class ContextGraph {
     return rows.map(toThread);
   }
 
-  /** Makes a thread the given item's own; its other items become mentions, since a thread's messages count for its own */
-  /** The operator links a thread to an item: kept as a constraint, so a regrouping keeps it there */
+  /**
+   * Makes a thread the given item's own; its other items become mentions, since a thread's messages count for its own.
+   * The operator's link is kept as a constraint, so a regrouping keeps it there. A link replaces the
+   * thread's earlier link; a cannot_link from an earlier unlink stays, and if it contradicts this link it's suspended.
+   */
   linkThread(threadId: string, workItemId: string): void {
     this.transaction(() => {
       this.db.db.prepare(
@@ -867,7 +926,6 @@ export class ContextGraph {
         "UPDATE thread_work_items SET relation = 'mentioned' WHERE thread_id = ? AND work_item_id <> ?"
       ).run(threadId, workItemId);
       this.linkThreadWorkItem(threadId, workItemId, "primary");
-      // A new link replaces an earlier one, and an earlier unlink from the same item no longer applies
       this.constraints.retireByOrigin(`link:${threadId}`);
       this.writeLinkConstraint(threadId, workItemId, "operator");
       this.settleConstraints();
@@ -972,6 +1030,7 @@ export class ContextGraph {
       for (const obs of this.observationKeysOf(itemId)) {
         this.constraints.add({ kind: "not_an_item", a: obs, decidedBy: "operator", origin: `noise:${itemId}` });
       }
+      this.settleConstraints();
     });
   }
 
@@ -1022,10 +1081,11 @@ export class ContextGraph {
     }
     const record = this.db.db.prepare("SELECT moved FROM work_item_merges WHERE source_id = ?").get(sourceId) as { moved: string } | undefined;
     const eventIds = record ? ((JSON.parse(record.moved) as { events?: string[] }).events ?? []) : [];
+    // One bound value however many events moved (SQLite caps bound variables)
     const observed = eventIds.length === 0 ? [] : (this.db.db.prepare(`
       SELECT DISTINCT o.dedupe_key FROM events e JOIN observations o ON o.id = e.observation_id
-      WHERE e.id IN (${eventIds.map(() => "?").join(", ")})
-    `).all(...eventIds) as Array<{ dedupe_key: string }>).map((r) => r.dedupe_key);
+      WHERE e.id IN (SELECT value FROM json_each(?))
+    `).all(JSON.stringify(eventIds)) as Array<{ dedupe_key: string }>).map((r) => r.dedupe_key);
     const movedSet = new Set(observed);
     const anchor = (this.db.db.prepare(`
       SELECT o.dedupe_key FROM events e JOIN observations o ON o.id = e.observation_id
@@ -1518,7 +1578,8 @@ export class ContextGraph {
     const dataJson = JSON.stringify(enrichment.data);
 
     // The tracker's key for what was fetched: the item's ticket key
-    const key = this.getItemKeys(enrichment.workItemId).find((k) => k.key.startsWith("ticket:"))?.key ?? null;
+    const own = this.ownTicketKey(enrichment.workItemId);
+    const key = own ? `ticket:${own}` : null;
     const stmt = this.db.db.prepare(`
       INSERT INTO enrichments (id, work_item_id, source, data, fetched_at, key)
       VALUES (?, ?, ?, ?, ?, ?)
@@ -2290,6 +2351,11 @@ export class ContextGraph {
       // The operator's merge is a constraint (the tracker's structure is a key, not a correction)
       if (decidedBy === "operator") {
         this.constraints.retireByOrigin(`merge:${sourceId}`, mergedAt);
+        // Merging back what they kept apart (undoing a tracker fold) is the newer word on the same pair
+        const targetAnchor = this.anchorObservationKey(targetId);
+        for (const c of this.constraints.live("cannot_link")) {
+          if (c.origin === `unmerge:${sourceId}` && targetAnchor && (c.a === targetAnchor || c.b === targetAnchor)) this.constraints.retire(c.id, mergedAt);
+        }
         this.writeMergeConstraints(sourceId, targetId, "operator", mergedAt);
       }
       // Collect what's being moved (for the undo record)
@@ -2327,9 +2393,14 @@ export class ContextGraph {
 
       const record: MergeRecord = { threads, events, links, rows };
       db.prepare("INSERT OR REPLACE INTO work_item_merges (source_id, target_id, merged_at, moved, decided_by) VALUES (?, ?, ?, ?, ?)")
-        .run(sourceId, targetId, mergedAt, JSON.stringify(record), opts.decidedBy ?? "operator");
+        .run(sourceId, targetId, mergedAt, JSON.stringify(record), decidedBy);
 
       this.moveKeysOnMerge(sourceId, targetId, mergedAt);
+      // The tracker's fold is the engine's doing, not the operator's: what the source was waiting on stays in front of
+      // them. An ask on the source (blocked, a decision) carries over unless the target's status is newer and an ask
+      // too, and a newer status carries over anyway; a dismissal older than what carries over is lifted.
+      if (decidedBy !== "operator") this.carryStatusOnFold(source, target, mergedAt);
+      else this.settleConstraints();
 
       // Soft-delete source, touch target
       db.prepare("UPDATE work_items SET merged_into = ?, updated_at = ? WHERE id = ?").run(targetId, mergedAt, sourceId);
@@ -2359,11 +2430,13 @@ export class ContextGraph {
         .get(sourceId) as { target_id: string; merged_at: string; moved: string; decided_by: string } | undefined;
       // Undoing a merge the tracker's structure decided: the operator says no, so it isn't made again
       if (saved && saved.decided_by !== "operator") {
-        const sourceKey = this.getItemKeys(targetId).find((k) => k.decidedBy === "merge" && k.evidence === sourceId && k.key.startsWith("ticket:"))?.key;
-        const targetKey = this.getItemKeys(targetId).find((k) => k.key.startsWith("ticket:") && k.decidedBy !== "merge")?.key;
-        if (sourceKey && targetKey) {
-          db.prepare("INSERT OR REPLACE INTO declined_merges (source_key, target_key, decided_by, declined_at) VALUES (?, ?, ?, ?)")
-            .run(sourceKey, targetKey, saved.decided_by, new Date().toISOString());
+        const keys = this.getItemKeys(targetId).filter((k) => k.key.startsWith("ticket:"));
+        const sourceKey = keys.find((k) => k.decidedBy === "merge" && k.evidence === sourceId)?.key;
+        // Against every ticket key the target holds, its own and ones merged into it: the fold may have named the
+        // target by a key that resolved to it
+        const declined = db.prepare("INSERT OR REPLACE INTO declined_merges (source_key, target_key, decided_by, declined_at) VALUES (?, ?, ?, ?)");
+        if (sourceKey) {
+          for (const k of keys) if (k.key !== sourceKey) declined.run(sourceKey, k.key, saved.decided_by, new Date().toISOString());
         }
       }
 

@@ -172,6 +172,8 @@ function createMockGraph(): ContextGraph {
     // No merges here: a reference names the item with that id, and a ticket-shaped id is the item's ticket key
     resolveItemRef: vi.fn((id: string) => id),
     getItemKeys: vi.fn((id: string) => (/^[A-Z]+-\d+$/.test(id) ? [{ key: `ticket:${id}` }] : [])),
+    ownTicketKey: vi.fn((id: string) => (/^[A-Z]+-\d+$/.test(id) ? id : null)),
+    isStepRef: vi.fn(() => false),
   } as unknown as ContextGraph;
   (graph as unknown as { getWorkItemByRef: unknown }).getWorkItemByRef = vi.fn((id: string) => graph.getWorkItemById(id));
   return graph;

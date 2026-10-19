@@ -40,4 +40,25 @@ describe("Pipeline: references to a merged item", () => {
     expect(graph.getWorkItemById("OPS-200")!.currentAtcStatus).toBe("blocked_on_human");
     expect(graph.getWorkItemsForThread("T1").map((l) => l.workItemId)).toEqual(["OPS-200"]);
   });
+
+  it("counts IDs that name one item once when deciding whether a message is a digest", async () => {
+    const db = new Database(":memory:");
+    onTestFinished(() => db.close());
+    const graph = new ContextGraph(db);
+    for (const id of ["OPS-1", "OPS-2", "OPS-3", "OPS-50"]) graph.upsertWorkItem({ id, source: "jira" });
+    graph.mergeWorkItems("OPS-2", "OPS-1");
+    graph.mergeWorkItems("OPS-3", "OPS-1");
+    graph.upsertThread({ id: "T1", channelId: "C1", channelName: "fleet-ops", platform: "slack", workItemId: "OPS-50" });
+    const message = {
+      id: "m1", threadId: "T1", channelId: "C1", channelName: "fleet-ops", userId: "U0ATLAS", userName: "Atlas",
+      text: "OPS-50 waits on OPS-1, OPS-2 and OPS-3", timestamp: new Date().toISOString(), platform: "slack", senderType: "agent",
+    } as Message;
+    const thread: Thread = { id: "T1", channelId: "C1", channelName: "fleet-ops", platform: "slack", workItemId: "OPS-50", lastActivity: message.timestamp, messageCount: 1, messages: [message] };
+    const linker = new WorkItemLinker(graph, [new DefaultExtractor({ ticketPatterns: ["\\b([A-Z]{2,6}-\\d+)\\b"], prPatterns: [] })]);
+    const adapter = { name: "fake", readThreads: vi.fn(async () => [thread]), getThreadMessages: vi.fn(async () => []) };
+    const pipeline = new Pipeline(adapter as any, { classify: vi.fn(async () => ({ ...BLOCKED, workItemIds: [] })) } as any, graph, linker, undefined, CONFIG);
+    await pipeline.processOnce();
+    const row = db.db.prepare("SELECT digest FROM events WHERE message_id = 'm1'").get() as { digest: number };
+    expect(row.digest).toBe(0);
+  });
 });

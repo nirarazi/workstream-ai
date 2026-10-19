@@ -60,6 +60,13 @@ describe("observeSlackMessage", () => {
     expect(o.participants).toEqual([{ platform: "slack", id: "U0DANA" }]);
   });
 
+  it("reads a long run of unclosed links quickly", () => {
+    const text = "<https://x".repeat(4000) + " <@U0DANA|".repeat(4000);
+    const started = Date.now();
+    observeSlackMessage(message({ text }), workspace);
+    expect(Date.now() - started).toBeLessThan(50);
+  });
+
   it("can't key a message without a workspace or an id", () => {
     expect(observeSlackMessage(message(), { teamId: "", url: null })).toBeNull();
     expect(observeSlackMessage(message({ id: "" }), workspace)).toBeNull();

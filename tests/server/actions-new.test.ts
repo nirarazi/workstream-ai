@@ -125,6 +125,21 @@ describe("dismiss and noise actions", () => {
     expect(wi.statusAt! >= before).toBe(true); // a message posted before now can't reopen it
   });
 
+  it("refuses an action on an item merged since it was shown, and leaves the item it went into alone", async () => {
+    graph.upsertWorkItem({ id: "OPS-201", source: "jira", currentAtcStatus: "blocked_on_human" });
+    graph.mergeWorkItems("OPS-201", "OPS-200");
+    const app = createApp(makeState(graph, db));
+
+    const res = await app.request("/api/action", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ workItemId: "OPS-201", action: "close" }),
+    });
+
+    expect(res.status).toBe(409);
+    expect(graph.getWorkItemById("OPS-200")!.currentAtcStatus).toBe("blocked_on_human");
+  });
+
   it("noise action reclassifies work item as noise", async () => {
     const state = makeState(graph, db);
     const app = createApp(state);

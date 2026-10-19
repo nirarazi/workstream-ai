@@ -551,10 +551,11 @@ export class Database {
     const items = this.db.prepare(`
       SELECT id, source, merged_into, updated_at FROM work_items w
       WHERE NOT EXISTS (SELECT 1 FROM item_keys k WHERE k.item_id = w.id)
+      ORDER BY merged_into IS NOT NULL, created_at, id
     `).all() as Array<{ id: string; source: string; merged_into: string | null; updated_at: string }>;
     if (items.length > 0) {
       const holder = this.db.prepare("SELECT item_id FROM item_keys WHERE key = ? AND retired_at IS NULL LIMIT 1");
-      const mergedInto = this.db.prepare("SELECT merged_into FROM work_items WHERE id = ?");
+      const mergedInto = this.db.prepare("SELECT merged_into, updated_at FROM work_items WHERE id = ?");
       const insert = this.db.prepare(`
         INSERT INTO item_keys (key, item_id, source, confidence, decided_by, evidence, created_at, retired_at)
         VALUES (?, ?, ?, 1, ?, ?, ?, ?)
@@ -565,12 +566,14 @@ export class Database {
         for (const item of items) {
           const key = legacyKeyOf(item.id, item.source);
           if (!key) continue;
-          // The live end of a merge chain (bounded, in case of a cycle)
-          let live = item.id;
-          for (let hops = 0, next = item.merged_into; next && hops < 20; hops++) {
-            live = next;
-            next = (mergedInto.get(next) as { merged_into: string | null } | undefined)?.merged_into ?? null;
+          // The merge chain to its live end (bounded, in case of a cycle): [item, its target, that one's target, …]
+          const chain: Array<{ id: string; updatedAt: string }> = [{ id: item.id, updatedAt: item.updated_at }];
+          for (let hops = 0, next = item.merged_into; next && hops < 20 && !chain.some((c) => c.id === next); hops++) {
+            const row = mergedInto.get(next) as { merged_into: string | null; updated_at: string } | undefined;
+            chain.push({ id: next, updatedAt: row?.updated_at ?? now });
+            next = row?.merged_into ?? null;
           }
+          const live = chain[chain.length - 1].id;
           const held = holder.get(key) as { item_id: string } | undefined;
           if (held && held.item_id !== live) {
             skipped++;
@@ -579,14 +582,17 @@ export class Database {
           if (live === item.id) {
             if (!held) insert.run(key, item.id, item.source, "backfill", null, now, null);
           } else {
+            // As the merges would have moved it: retired from each item when that item was merged on, each hop's
+            // row naming the merge that brought it, so undoing the merges one by one hands it back down the chain
             insert.run(key, item.id, item.source, "backfill", null, now, item.updated_at);
-            if (!held) insert.run(key, live, item.source, "merge", item.id, now, null);
+            for (let i = 1; i < chain.length - 1; i++) insert.run(key, chain[i].id, item.source, "merge", chain[i - 1].id, now, chain[i].updatedAt);
+            if (!held) insert.run(key, live, item.source, "merge", chain[chain.length - 2].id, now, null);
           }
           added++;
         }
       })();
       if (added > 0) log.info(`Migration: gave ${added} work items their keys`);
-      if (skipped > 0) log.warn(`Migration: ${skipped} work items' keys are already another item's; left without one`);
+      if (skipped > 0) log.debug(`Migration: ${skipped} work items' keys are already another item's; left without one`);
     }
 
     const enrichmentCols = this.db.pragma("table_info(enrichments)") as Array<{ name: string }>;
@@ -598,7 +604,7 @@ export class Database {
       UPDATE enrichments SET key = (
         SELECT k.key FROM item_keys k
         WHERE k.item_id = enrichments.work_item_id AND k.key LIKE 'ticket:%'
-        ORDER BY k.retired_at IS NOT NULL, k.created_at LIMIT 1
+        ORDER BY k.retired_at IS NOT NULL, k.decided_by = 'merge', k.created_at, k.rowid LIMIT 1
       )
       WHERE key IS NULL
     `);

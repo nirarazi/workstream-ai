@@ -20,8 +20,9 @@ export function slackDedupeKey(teamId: string, channelId: string, ts: string): s
 }
 
 const QUOTE_LINE = /^\s*(?:&gt;|>)\s?/;
-const LINK = /<(https?:\/\/[^>|\s]+)(?:\|[^>]*)?>/g;
-const MENTION = /<@([A-Z0-9]+)(?:\|[^>]*)?>/g;
+// No "<" inside, so an unclosed "<https://…" can't make a later match backtrack over the rest of the text
+const LINK = /<(https?:\/\/[^<>|\s]+)(?:\|[^<>]*)?>/g;
+const MENTION = /<@([A-Z0-9]+)(?:\|[^<>]*)?>/g;
 const PERMALINK = /^https?:\/\/([^/]+)\/archives\/([A-Z0-9]+)\/p(\d{10})(\d{6})(?:[?#].*)?$/;
 
 /** Splits quoted lines (a run of "> …" lines is one quote) from the author's own */

@@ -138,10 +138,12 @@ export function createMcpServer(graph: ContextGraph): McpServer {
     async ({ workItemId, summary }) => {
       // An agent's push is a message: it sets the status time like any polled message does
       const now = new Date().toISOString();
+      // Completing a step (a sub-task folded into its parent) is progress on the case, not the case done
+      const step = graph.isStepRef(workItemId);
       graph.upsertWorkItem({
         id: workItemId,
         source: MCP_SOURCE,
-        currentAtcStatus: "completed",
+        currentAtcStatus: step ? "in_progress" : "completed",
         currentConfidence: 1.0,
         statusAt: now,
       });

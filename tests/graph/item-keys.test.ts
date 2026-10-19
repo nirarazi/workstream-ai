@@ -62,7 +62,32 @@ describe("item keys in the graph", () => {
     expect(graph.findItemByKey("thread:T1")).toBe("thread:T1");
     expect(graph.findItemByKey("ticket:OPS-101")).toBe("OPS-101");
     expect(graph.getItemKeys("OPS-101").map((k) => k.key)).toEqual(["ticket:OPS-101"]);
-    expect(graph.getItemKeys("thread:T1").map((k) => k.decidedBy)).toEqual(["unmerge"]);
+    // Back as the item's own, as it held it before
+    expect(graph.getItemKeys("thread:T1").map((k) => k.decidedBy)).toEqual(["engine"]);
+  });
+
+  it("hands keys back down a merge chain as the merges are undone", () => {
+    for (const id of ["OPS-1", "OPS-2", "OPS-3"]) graph.upsertWorkItem({ id, source: "jira" });
+    graph.mergeWorkItems("OPS-1", "OPS-2");
+    graph.mergeWorkItems("OPS-2", "OPS-3");
+    expect(graph.findItemByKey("ticket:OPS-1")).toBe("OPS-3");
+    graph.unmergeWorkItem("OPS-2");
+    expect(graph.findItemByKey("ticket:OPS-1")).toBe("OPS-2");
+    graph.unmergeWorkItem("OPS-1");
+    expect(graph.findItemByKey("ticket:OPS-1")).toBe("OPS-1");
+    expect(graph.findItemByKey("ticket:OPS-2")).toBe("OPS-2");
+    expect(graph.ownTicketKey("OPS-1")).toBe("OPS-1");
+  });
+
+  it("asks the tracker about an item by its own ticket key, not one merged into it", () => {
+    graph.upsertWorkItem({ id: "OPS-7", source: "jira" });
+    graph.upsertWorkItem({ id: "OPS-9", source: "jira" });
+    graph.mergeWorkItems("OPS-7", "OPS-9");
+    expect(graph.ownTicketKey("OPS-9")).toBe("OPS-9");
+    graph.upsertWorkItem({ id: "thread:T1", source: "inferred" });
+    graph.mergeWorkItems("OPS-9", "thread:T1");
+    // A conversation with no ticket of its own: the first one merged into it
+    expect(["OPS-9", "OPS-7"]).toContain(graph.ownTicketKey("thread:T1"));
   });
 
   it("stores the item's ticket key with an enrichment", () => {
@@ -157,5 +182,33 @@ describe("resolveItemRef", () => {
     graph.upsertWorkItem({ id: "OPS-101", source: "mcp", currentAtcStatus: "blocked_on_human" });
     expect(graph.getWorkItemById("OPS-200")!.currentAtcStatus).toBe("blocked_on_human");
     expect(graph.getWorkItemById("OPS-101")!.currentAtcStatus).toBeNull();
+  });
+});
+
+describe("the item key backfill, for a chain of merges", () => {
+  it("hands each key back down the chain as the merges are undone", () => {
+    const dir = mkdtempSync(join(tmpdir(), "item-keys-chain-"));
+    try {
+      const path = join(dir, "workstream.db");
+      const old = new BetterSqlite3(path);
+      old.exec(`
+        CREATE TABLE work_items (id TEXT PRIMARY KEY, source TEXT NOT NULL, title TEXT NOT NULL DEFAULT '',
+          external_status TEXT, assignee TEXT, url TEXT, current_atc_status TEXT, current_confidence REAL,
+          snoozed_until TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, merged_into TEXT DEFAULT NULL);
+        INSERT INTO work_items (id, source, created_at, updated_at, merged_into) VALUES
+          ('OPS-1', 'jira', 't0', 't1', 'OPS-2'), ('OPS-2', 'jira', 't0', 't2', 'OPS-3'), ('OPS-3', 'jira', 't0', 't0', NULL);
+      `);
+      old.close();
+      const db = new Database(path);
+      const graph = new ContextGraph(db);
+      expect(graph.findItemByKey("ticket:OPS-1")).toBe("OPS-3");
+      graph.unmergeWorkItem("OPS-2");
+      expect(graph.findItemByKey("ticket:OPS-1")).toBe("OPS-2");
+      graph.unmergeWorkItem("OPS-1");
+      expect(graph.findItemByKey("ticket:OPS-1")).toBe("OPS-1");
+      db.close();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

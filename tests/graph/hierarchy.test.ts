@@ -36,6 +36,7 @@ describe("belongsTo", () => {
     expect(belongsTo(detail({ itemType: story, parent: { key: "OPS-1" } }))).toBeNull(); // a story in an epic
     expect(belongsTo(detail({ itemType: story, duplicates: ["OPS-100"] }))).toEqual({ key: "OPS-100", reason: "duplicate" });
     expect(belongsTo(detail({ itemType: subtask, parent: { key: "OPS-101" } }), [{ typeId: "10003", role: "case" }])).toBeNull();
+    expect(belongsTo(detail({ itemType: epic, duplicates: ["OPS-1"] }))).toBeNull(); // a container is never folded
   });
 });
 
@@ -61,12 +62,46 @@ describe("foldIntoTrackerItem", () => {
     expect(graph.resolveItemRef("OPS-102")).toBe("OPS-101");
   });
 
+  it("keeps a sub-task's ask in front of the operator when it's folded into a quiet or finished parent", () => {
+    graph.upsertWorkItem({ id: "OPS-102", source: "extracted", currentAtcStatus: "blocked_on_human", currentConfidence: 0.9, statusAt: "2026-10-19T10:00:00.000Z" });
+    graph.upsertWorkItem({ id: "OPS-101", source: "jira", currentAtcStatus: "completed", currentConfidence: 0.9, statusAt: "2026-10-19T09:00:00.000Z" });
+    graph.foldIntoTrackerItem("OPS-102", "OPS-101", "hierarchy", "jira");
+    const parent = graph.getWorkItemById("OPS-101")!;
+    expect(parent.currentAtcStatus).toBe("blocked_on_human");
+    expect(parent.reopenedAt).toBe("2026-10-19T10:00:00.000Z");
+  });
+
+  it("doesn't let an older update from a sub-task overwrite its parent's newer ask", () => {
+    graph.upsertWorkItem({ id: "OPS-102", source: "extracted", currentAtcStatus: "in_progress", statusAt: "2026-10-19T09:00:00.000Z" });
+    graph.upsertWorkItem({ id: "OPS-101", source: "jira", currentAtcStatus: "needs_decision", statusAt: "2026-10-19T10:00:00.000Z" });
+    graph.foldIntoTrackerItem("OPS-102", "OPS-101", "hierarchy", "jira");
+    expect(graph.getWorkItemById("OPS-101")!.currentAtcStatus).toBe("needs_decision");
+  });
+
   it("doesn't fold again once the operator has undone it", () => {
     graph.foldIntoTrackerItem("OPS-102", "OPS-101", "hierarchy", "jira");
     graph.unmergeWorkItem("OPS-102");
     expect(graph.resolveItemRef("OPS-102")).toBe("OPS-102");
     expect(graph.foldIntoTrackerItem("OPS-102", "OPS-101", "hierarchy", "jira")).toBe("OPS-102");
     expect(graph.getWorkItemById("OPS-102")!.mergedInto).toBeNull();
+  });
+
+  it("doesn't fold again after an unmerge when the parent's ticket resolves to another item", () => {
+    graph.upsertWorkItem({ id: "OPS-101", source: "jira" });
+    graph.upsertWorkItem({ id: "OPS-200", source: "jira" });
+    graph.mergeWorkItems("OPS-101", "OPS-200");
+    expect(graph.foldIntoTrackerItem("OPS-102", "OPS-101", "hierarchy", "jira")).toBe("OPS-200");
+    graph.unmergeWorkItem("OPS-102");
+    expect(graph.foldIntoTrackerItem("OPS-102", "OPS-101", "hierarchy", "jira")).toBe("OPS-102");
+  });
+
+  it("knows a folded sub-task's id as a step of its parent, and an operator merge as not one", () => {
+    graph.foldIntoTrackerItem("OPS-102", "OPS-101", "hierarchy", "jira");
+    expect(graph.isStepRef("OPS-102")).toBe(true);
+    expect(graph.isStepRef("OPS-101")).toBe(false);
+    graph.upsertWorkItem({ id: "OPS-300", source: "jira" });
+    graph.mergeWorkItems("OPS-300", "OPS-101");
+    expect(graph.isStepRef("OPS-300")).toBe(false);
   });
 
   it("leaves an item the operator merged the ticket into as it is", () => {
