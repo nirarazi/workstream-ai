@@ -69,6 +69,7 @@ export function releaseKey(text: string, senderKind: SenderKind): string | null 
 /** Machine output: key=value lines, tick markers, idle heartbeats */
 const TELEMETRY = [
   /^[A-Z][A-Z0-9_]*=\S+(?:\s+[a-z_]+=\S+)*\s*$/,
+  /^[A-Z][A-Z0-9_]{2,}(?:\s+[a-z_]+=\S+)+\s*$/,
   /\bheartbeat tick\b/i,
   /^[\s:\w]*\bIdle since\b/i,
 ];
@@ -81,7 +82,16 @@ export function stripEmphasis(text: string): string {
   return text.replace(/(?<![\w/])[_*~]+|[_*~]+(?![\w/])/g, " ");
 }
 
-export function recognize(message: GroupingMessage, options: ResolverOptions): Recognized {
+/** The one known subject a message names near its start, as a whole phrase, or null for none or several */
+function namedSubject(text: string, subjects: readonly string[]): string | null {
+  const head = stripEmphasis(text.slice(0, 300)).toLowerCase().replace(/\s+/g, " ");
+  const found = subjects.filter((s) => new RegExp(`(?<![\\p{L}\\p{N}])${s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\p{L}\\p{N}])`, "u").test(head));
+  // A longer name containing a shorter one ("dana lee" and "lee") is one subject
+  const distinct = found.filter((s) => !found.some((o) => o !== s && o.includes(s)));
+  return distinct.length === 1 ? distinct[0] : null;
+}
+
+export function recognize(message: GroupingMessage, options: ResolverOptions & { subjects?: readonly string[] }): Recognized {
   const own = message.text;
   const lines = refsByLine(stripEmphasis(own), options);
   const about = aboutRef(lines);
@@ -100,7 +110,8 @@ export function recognize(message: GroupingMessage, options: ResolverOptions): R
   );
   const kind: MessageKind = telemetry ? "telemetry" : report ? "report" : noise ? "noise" : "work";
 
-  const subjectKey = tagged ? `subject:${tagged.subject}` : null;
+  const named = !tagged && options.subjects?.length ? namedSubject(own, options.subjects) : null;
+  const subjectKey = tagged ? `subject:${tagged.subject}` : named ? `subject:${named}` : null;
   const aboutKey = about.subject ?? subjectKey ?? releaseKey(own, message.senderKind);
   const mentions = refs.filter((r) => r !== aboutKey && keyKind(r) !== "subject");
   return { kind, about: kind === "work" ? aboutKey : null, mentions, lane: tagged?.lane ?? null, question };

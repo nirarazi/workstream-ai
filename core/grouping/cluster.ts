@@ -20,6 +20,10 @@ export interface Weights {
   otherKeyInThread: number;
   /** The same person's message just before, in the same channel, and this one names nothing */
   followUp: number;
+  /** The same sender (a person or an agent) going on, a little later, with neither message naming a key */
+  continuation: number;
+  /** A reply, as a top-level post, to someone else's message in the same channel just before (a person in it) */
+  exchange: number;
   /** A near-copy of the same sender's message just before */
   nearCopy: number;
   /** The bar a candidate's score must clear */
@@ -28,10 +32,12 @@ export interface Weights {
 
 export const DEFAULT_WEIGHTS: Weights = {
   sameKey: 10,
-  thread: 4,
+  thread: 6,
   otherKeyInThread: -8,
   followUp: 5,
-  nearCopy: 6,
+  continuation: 3,
+  exchange: 3,
+  nearCopy: 5,
   join: 3,
 };
 
@@ -41,6 +47,10 @@ export interface ClusterOptions extends ResolverOptions {
   followUpMs?: number;
   /** A near-copy joins within this long */
   nearCopyMs?: number;
+  /** A sender's keyless continuation joins within this long */
+  continuationMs?: number;
+  /** A top-level reply to someone else joins within this long */
+  exchangeMs?: number;
   /** Live, applied constraints, by message key (observations' dedupeKeys or the eval's message keys) */
   constraints?: Array<{ kind: "must_link" | "cannot_link" | "pin" | "not_an_item"; a: string; b: string | null }>;
 }
@@ -59,6 +69,19 @@ interface Cluster {
 }
 
 const MINUTE = 60_000;
+
+/** Subject names from routines' tagged lines, longest first, for naming them in untagged messages */
+function subjectLexicon(messages: readonly GroupingMessage[], options: ClusterOptions): string[] {
+  const names = new Set<string>();
+  for (const m of messages) {
+    const about = recognize(m, options).about;
+    if (about?.startsWith("subject:")) {
+      const name = about.slice("subject:".length);
+      if (name.split(" ").length >= 2 || name.length >= 6) names.add(name);
+    }
+  }
+  return [...names].sort((a, b) => b.length - a.length);
+}
 
 /**
  * The cluster of a subject named a little differently: one name the other's first words ("spring26 offer" and "spring26
@@ -93,7 +116,11 @@ export function cluster(messages: readonly GroupingMessage[], options: ClusterOp
   const w = { ...DEFAULT_WEIGHTS, ...options.weights };
   const followUpMs = options.followUpMs ?? 10 * MINUTE;
   const nearCopyMs = options.nearCopyMs ?? 3 * MINUTE;
+  const continuationMs = options.continuationMs ?? 30 * MINUTE;
+  const exchangeMs = options.exchangeMs ?? 10 * MINUTE;
   const sorted = [...messages].sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : a.key < b.key ? -1 : 1));
+  // The subjects routines name in their tagged lines, so a message naming one untagged is about it too
+  const subjects = subjectLexicon(sorted, options);
 
   const notAnItem = new Set<string>();
   const cannot = new Map<string, Set<string>>();
@@ -114,12 +141,13 @@ export function cluster(messages: readonly GroupingMessage[], options: ClusterOp
   const byKey = new Map<string, string>();
   const ofMessage = new Map<string, string>();
   const threadCluster = new Map<string, string>();
-  const lastBySender = new Map<string, { message: GroupingMessage; cluster: string }>();
+  const lastBySender = new Map<string, { message: GroupingMessage; cluster: string; about: string | null }>();
+  const lastInChannel = new Map<string, { message: GroupingMessage; cluster: string }>();
   const out = new Map<string, Placement>();
   let next = 0;
 
   for (const m of sorted) {
-    const recognized = recognize(m, options);
+    const recognized = recognize(m, { ...options, subjects });
     if (notAnItem.has(m.key) || recognized.kind !== "work") {
       out.set(m.key, { cluster: null, recognized, reasons: [notAnItem.has(m.key) ? "operator: not an item" : recognized.kind] });
       continue;
@@ -145,8 +173,18 @@ export function cluster(messages: readonly GroupingMessage[], options: ClusterOp
     const before = lastBySender.get(senderSlot);
     if (before) {
       const gap = Date.parse(m.at) - Date.parse(before.message.at);
-      if (m.senderKind === "human" && !about && recognized.mentions.length === 0 && gap <= followUpMs) add(before.cluster, w.followUp, "followUp");
+      const keyless = !about && recognized.mentions.length === 0;
+      if (m.senderKind === "human" && keyless && gap <= followUpMs) add(before.cluster, w.followUp, "followUp");
+      else if (keyless && !before.about && gap <= continuationMs) add(before.cluster, w.continuation, "continuation");
       if (gap <= nearCopyMs && overlap(m.text, before.message.text) >= 0.6) add(before.cluster, w.nearCopy, "nearCopy");
+    }
+    // A top-level post answering someone else's just before it in the channel, where a person is one of the two
+    const lastHere = m.channelId ? lastInChannel.get(m.channelId) : undefined;
+    if (lastHere && m.threadId === m.key.slice(m.key.lastIndexOf(":") + 1) && !about
+      && lastHere.message.senderId !== m.senderId
+      && (m.senderKind === "human" || lastHere.message.senderKind === "human")
+      && Date.parse(m.at) - Date.parse(lastHere.message.at) <= exchangeMs) {
+      add(lastHere.cluster, w.exchange, "exchange");
     }
     for (const other of must.get(m.key) ?? []) add(ofMessage.get(other), 1000, "operator: must link");
     // A cluster holding a message the operator kept apart from this one is out
@@ -175,7 +213,8 @@ export function cluster(messages: readonly GroupingMessage[], options: ClusterOp
     }
     ofMessage.set(m.key, id);
     if (!threadCluster.has(m.threadId)) threadCluster.set(m.threadId, id);
-    lastBySender.set(senderSlot, { message: m, cluster: id });
+    lastBySender.set(senderSlot, { message: m, cluster: id, about });
+    if (m.channelId) lastInChannel.set(m.channelId, { message: m, cluster: id });
     out.set(m.key, { cluster: id, recognized, reasons });
   }
   return out;
