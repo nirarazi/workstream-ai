@@ -107,16 +107,23 @@ export function parseLabels(content: string): LinkingLabels {
   return { version: LABELS_VERSION, keyFormat: KEY_FORMAT, pairs: data.pairs, notWork: data.notWork };
 }
 
+/** Other label sets beside the operator's (labels.<name>.json), such as a model's bulk labels; never a path */
+export function labelsFileName(name?: string): string {
+  if (name === undefined || name === LABELS_FILE) return LABELS_FILE;
+  if (!/^labels\.[a-z0-9-]{1,32}\.json$/.test(name)) throw new Error(`Linking labels: ${name} isn't a labels file name (labels.<name>.json)`);
+  return name;
+}
+
 /** The labels under <root>/eval-data/linking/, or none yet. A symlinked file, or a directory elsewhere, is refused. */
-export function loadLabels(root: string): LinkingLabels {
-  const path = projectFile(root, LINKING_DIR, LABELS_FILE);
+export function loadLabels(root: string, file = LABELS_FILE): LinkingLabels {
+  const path = projectFile(root, LINKING_DIR, labelsFileName(file));
   return path ? parseLabels(readFileSync(path, "utf-8")) : emptyLabels();
 }
 
-/** Saves the labels to <root>/eval-data/linking/labels.json (0700 directory, 0600 file, replaced atomically) */
-export function saveLabels(root: string, labels: LinkingLabels): string {
+/** Saves the labels to <root>/eval-data/linking/labels.json (or another labels file) (0700 directory, 0600 file, replaced atomically) */
+export function saveLabels(root: string, labels: LinkingLabels, file = LABELS_FILE): string {
   const dir = prepareOutDir(root, LINKING_DIR);
-  return writePrivateFile(dir, LABELS_FILE, JSON.stringify(labels, null, 2) + "\n");
+  return writePrivateFile(dir, labelsFileName(file), JSON.stringify(labels, null, 2) + "\n");
 }
 
 /** Adds or replaces the verdict on a pair (stored with a < b) */

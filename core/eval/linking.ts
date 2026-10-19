@@ -1,13 +1,14 @@
 #!/usr/bin/env node
 // core/eval/linking.ts — Score message groupings against the operator's pair verdicts
 //
-// Usage: npm run eval:linking -- [--grouping current,relink] [--db workstream.db] [--gold clusters.json]
+// Usage: npm run eval:linking -- [--grouping current,relink] [--db workstream.db] [--gold clusters.json] [--labels labels.<name>.json]
 // Reads eval-data/linking/labels.json (npm run eval:pairs writes it) and prints, per grouping side by side: pairwise
 // precision (low: unrelated work merged), recall (low: one piece of work split) and F1, the over-merged and split
 // pair counts, the not-work rate among labeled messages in items, and how often each grouping agrees with the
 // verdicts per sampling stratum. Rates carry Wilson 95% intervals. Pairs are drawn by stratum, so the numbers describe
 // the labeled pairs, not all pairs. --gold adds B-cubed scores against a full clustering of message keys ({ "clusters": [[keys], …] }).
-// By default it scores the current grouping, and the re-link proposal when npm run relink has written it.
+// By default it scores the current grouping, and the re-link proposal when npm run relink has written it. --labels
+// scores against another label set in eval-data/linking/ instead of the operator's.
 
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -41,10 +42,10 @@ function row(label: string, cells: string[]): string {
 }
 
 function main(): void {
-  const flags = parseFlags(process.argv.slice(2), ["grouping", "db", "gold"] as const);
+  const flags = parseFlags(process.argv.slice(2), ["grouping", "db", "gold", "labels"] as const);
   const root = projectRoot();
   const names = parseGroupingNames(flags.grouping ?? (existsSync(relinkItemsPath(root)) ? "current,relink" : "current"));
-  const labels = loadLabels(root);
+  const labels = loadLabels(root, flags.labels);
   if (labels.pairs.length === 0 && labels.notWork.length === 0) {
     console.log("No linking labels yet. Run: npm run eval:pairs");
     return;

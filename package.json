@@ -20,6 +20,8 @@
     "eval:run": "tsx core/eval/run.ts",
     "eval:pairs": "tsx core/eval/pairs.ts",
     "eval:linking": "tsx core/eval/linking.ts",
+    "eval:pairs-dump": "tsx core/eval/pairs-dump.ts",
+    "eval:agreement": "tsx core/eval/agreement.ts",
     "engine": "WORKSTREAM_DEV_UI=true tsx watch core/server.ts",
     "dev:web": "concurrently \"WORKSTREAM_DEV_UI=true tsx watch core/server.ts\" \"vite\"",
     "start:web": "vite build && WORKSTREAM_SERVE_STATIC=true tsx core/server.ts"
