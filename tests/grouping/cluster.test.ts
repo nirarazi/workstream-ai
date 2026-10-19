@@ -2,7 +2,7 @@
 
 import { describe, it, expect } from "vitest";
 import { cluster, type ClusterOptions } from "../../core/grouping/cluster.js";
-import { recognize, releaseKey, stripEmphasis, taggedSubject, type GroupingMessage } from "../../core/grouping/recognize.js";
+import { recognize, recordKey, releaseKey, stripEmphasis, taggedSubject, type GroupingMessage } from "../../core/grouping/recognize.js";
 import { DefaultExtractor } from "../../core/graph/extractors/default.js";
 
 const extractor = new DefaultExtractor({ ticketPatterns: ["\\b([A-Z]{2,6}-\\d+)\\b"] });
@@ -135,6 +135,17 @@ describe("cluster", () => {
     const naming = msg("Contoso Partners asked again", { senderId: "U0RELAY", channelId: "C0OTHER", at: "2026-10-20T09:30:00.000Z" });
     const lone = cluster([once, naming], options);
     expect(lone.get(naming.key)!.cluster).not.toBe(lone.get(once.key)!.cluster);
+  });
+
+  it("keys a tool's alert by the record it links to, so alerts about different records stay apart", () => {
+    expect(recordKey("*QUOTE <https://crm.example/index.php?module=Quotes&amp;action=Detail&amp;record=66e3525b-e8a1>* new")).toBe("record:crm.example/index.php#66e3525b-e8a1");
+    expect(recordKey("see https://docs.example/guide")).toBeNull();
+    const g = groups([
+      msg("*QUOTE <https://crm.example/q?record=aaaa1111>* New lead: pending review", { senderKind: "notification" }),
+      msg("*QUOTE <https://crm.example/q?record=bbbb2222>* New lead: pending review", { senderKind: "notification" }),
+      msg("*QUOTE <https://crm.example/q?record=aaaa1111>* Lead updated: documents in", { senderKind: "notification" }),
+    ]);
+    expect(g.map((x) => x.length).sort()).toEqual([1, 2]);
   });
 
   it("keeps a sender's templated notes about different keys apart", () => {

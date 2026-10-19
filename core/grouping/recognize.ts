@@ -76,6 +76,29 @@ export function taggedSubject(firstLine: string): { lane: string; subject: strin
   return { lane: m[1].toLowerCase(), subject: name.toLowerCase() };
 }
 
+/**
+ * The record a message's first line links to, as a key: a URL whose query names a record ("…?record=a1b2c3d4",
+ * "…&id=4471", "recordId="), as tools' alerts about a quote, an order or a lead do. "record:<host><path>#<id>".
+ */
+const RECORD_PARAM = /^(?:record|recordid|record_id|id|issue|ticket|order|quote)$/i;
+
+export function recordKey(firstLine: string): string | null {
+  for (const [, url] of firstLine.slice(0, MAX_FIRST_LINE).matchAll(/<?(https?:\/\/[^\s<>|]+)/g)) {
+    let parsed: URL;
+    try {
+      parsed = new URL(url.replace(/&amp;/g, "&"));
+    } catch {
+      continue;
+    }
+    for (const [name, value] of parsed.searchParams) {
+      if (RECORD_PARAM.test(name) && /^[\w-]{4,64}$/.test(value)) {
+        return `record:${parsed.host.toLowerCase()}${parsed.pathname.toLowerCase()}#${value.toLowerCase()}`;
+      }
+    }
+  }
+  return null;
+}
+
 /** A release or build a pipeline posts about: a version with a release word near it */
 const RELEASE_WORDS = /\b(?:release|tag|image|build|deploy(?:ed|ing|ment)?|rollout|rolled out)\b/i;
 const VERSION = /\bv?(\d+\.\d+\.\d+)(?:-[a-z0-9]+)?\b/i;
@@ -195,8 +218,9 @@ export function recognize(message: GroupingMessage, options: ResolverOptions & {
   const named = !tagged && options.subjects?.size ? namedSubject(own, options.subjects) : null;
   const subjectKey = tagged ? `subject:${tagged.subject}` : named ? `subject:${named}` : null;
   const release = releaseKey(own, message.senderKind);
-  const aboutKey = about.subject ?? subjectKey ?? release;
-  const aboutBy = about.subject || (!subjectKey && release) ? "key" : tagged ? "tagged" : named ? "named" : null;
+  const record = about.subject || subjectKey || release ? null : recordKey(firstLine);
+  const aboutKey = about.subject ?? subjectKey ?? release ?? record;
+  const aboutBy = about.subject || (!subjectKey && (release || record)) ? "key" : tagged ? "tagged" : named ? "named" : null;
   const mentions = refs.filter((r) => r !== aboutKey && keyKind(r) !== "subject");
   const work = kind === "work";
   return { kind, about: work ? aboutKey : null, aboutBy: work && aboutKey ? aboutBy : null, mentions, lane: tagged?.lane ?? null, asks };
