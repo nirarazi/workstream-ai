@@ -5,6 +5,7 @@ import type BetterSqlite3Type from "better-sqlite3";
 import fs from "node:fs";
 import path from "node:path";
 import { createLogger } from "../logger.js";
+import { legacyKeyOf } from "./item-keys.js";
 
 const log = createLogger("graph:db");
 
@@ -156,6 +157,21 @@ CREATE TABLE IF NOT EXISTS work_item_merges (
   merged_at  TEXT NOT NULL,
   moved      TEXT NOT NULL
 );
+
+-- The keys that name a work item (core/graph/item-keys.ts): ticket:OPS-101, pr:…, mcp:…, legacy thread:…. A key is
+-- held by one live item (retired_at NULL); retired rows stay, so where a key pointed before is kept.
+CREATE TABLE IF NOT EXISTS item_keys (
+  key        TEXT NOT NULL,
+  item_id    TEXT NOT NULL REFERENCES work_items(id),
+  source     TEXT NOT NULL,
+  confidence REAL NOT NULL DEFAULT 1,
+  decided_by TEXT NOT NULL,
+  evidence   TEXT,
+  created_at TEXT NOT NULL,
+  retired_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_item_keys_key ON item_keys(key) WHERE retired_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_item_keys_item ON item_keys(item_id);
 
 CREATE INDEX IF NOT EXISTS idx_events_thread_id ON events(thread_id);
 CREATE INDEX IF NOT EXISTS idx_events_work_item_id ON events(work_item_id);
@@ -411,6 +427,8 @@ export class Database {
       log.info("Migration: added reopened_at column to work_items");
     }
 
+    this.backfillItemKeys();
+
     // Backfill thread_work_items junction table from existing data
     const twiCount = (this.db.prepare("SELECT COUNT(*) AS n FROM thread_work_items").get() as { n: number }).n;
     if (twiCount === 0) {
@@ -444,6 +462,69 @@ export class Database {
         log.info(`Migration: deleted ${breakdownResult.changes} breakdown duplicate events`);
       }
     }
+  }
+
+  /**
+   * Gives each work item that has no key yet the key its id already was (item-keys.ts), and enrichments the ticket
+   * key of their item. Idempotent: items with keys are left alone, so it runs on every start. A merged item's key goes
+   * to the live item it was merged into, as a merge would have moved it, with a retired row for the item itself so
+   * unmerging gives it back.
+   */
+  private backfillItemKeys(): void {
+    const items = this.db.prepare(`
+      SELECT id, source, merged_into, updated_at FROM work_items w
+      WHERE NOT EXISTS (SELECT 1 FROM item_keys k WHERE k.item_id = w.id)
+    `).all() as Array<{ id: string; source: string; merged_into: string | null; updated_at: string }>;
+    if (items.length > 0) {
+      const holder = this.db.prepare("SELECT item_id FROM item_keys WHERE key = ? AND retired_at IS NULL LIMIT 1");
+      const mergedInto = this.db.prepare("SELECT merged_into FROM work_items WHERE id = ?");
+      const insert = this.db.prepare(`
+        INSERT INTO item_keys (key, item_id, source, confidence, decided_by, evidence, created_at, retired_at)
+        VALUES (?, ?, ?, 1, ?, ?, ?, ?)
+      `);
+      const now = new Date().toISOString();
+      let added = 0, skipped = 0;
+      this.db.transaction(() => {
+        for (const item of items) {
+          const key = legacyKeyOf(item.id, item.source);
+          if (!key) continue;
+          // The live end of a merge chain (bounded, in case of a cycle)
+          let live = item.id;
+          for (let hops = 0, next = item.merged_into; next && hops < 20; hops++) {
+            live = next;
+            next = (mergedInto.get(next) as { merged_into: string | null } | undefined)?.merged_into ?? null;
+          }
+          const held = holder.get(key) as { item_id: string } | undefined;
+          if (held && held.item_id !== live) {
+            skipped++;
+            continue;
+          }
+          if (live === item.id) {
+            if (!held) insert.run(key, item.id, item.source, "backfill", null, now, null);
+          } else {
+            insert.run(key, item.id, item.source, "backfill", null, now, item.updated_at);
+            if (!held) insert.run(key, live, item.source, "merge", item.id, now, null);
+          }
+          added++;
+        }
+      })();
+      if (added > 0) log.info(`Migration: gave ${added} work items their keys`);
+      if (skipped > 0) log.warn(`Migration: ${skipped} work items' keys are already another item's; left without one`);
+    }
+
+    const enrichmentCols = this.db.pragma("table_info(enrichments)") as Array<{ name: string }>;
+    if (!enrichmentCols.some((c) => c.name === "key")) {
+      this.db.exec("ALTER TABLE enrichments ADD COLUMN key TEXT DEFAULT NULL");
+      log.info("Migration: added key column to enrichments");
+    }
+    this.db.exec(`
+      UPDATE enrichments SET key = (
+        SELECT k.key FROM item_keys k
+        WHERE k.item_id = enrichments.work_item_id AND k.key LIKE 'ticket:%'
+        ORDER BY k.retired_at IS NOT NULL, k.created_at LIMIT 1
+      )
+      WHERE key IS NULL
+    `);
   }
 
   prepare<T>(sql: string): BetterSqlite3Type.Statement<T[]> {

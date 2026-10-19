@@ -18,6 +18,7 @@ import type {
 } from "../types.js";
 import type { Database } from "./db.js";
 import type { Extractor } from "./extractors/interface.js";
+import { legacyKeyOf, type ItemKey } from "./item-keys.js";
 import type {
   AgentRow,
   EnrichmentRow,
@@ -476,8 +477,81 @@ export class ContextGraph {
       now,
     );
     log.debug("Upserted work item", item.id);
+    this.ensureItemKey(item.id, item.source);
 
     return this.getWorkItemById(item.id)!;
+  }
+
+  // --- Item keys (core/graph/item-keys.ts) ---
+
+  /** Gives an item that has never had a key the key its id is, unless another live item holds that key */
+  private ensureItemKey(itemId: string, source: string): void {
+    const db = this.db.db;
+    if (db.prepare("SELECT 1 FROM item_keys WHERE item_id = ? LIMIT 1").get(itemId)) return;
+    const key = legacyKeyOf(itemId, source);
+    if (!key || this.findItemByKey(key)) return;
+    db.prepare(`
+      INSERT INTO item_keys (key, item_id, source, confidence, decided_by, evidence, created_at, retired_at)
+      VALUES (?, ?, ?, 1, 'engine', NULL, ?, NULL)
+    `).run(key, itemId, source, new Date().toISOString());
+  }
+
+  /** The live item holding a key, or null */
+  findItemByKey(key: string): string | null {
+    const row = this.db.db.prepare("SELECT item_id FROM item_keys WHERE key = ? AND retired_at IS NULL LIMIT 1").get(key) as
+      | { item_id: string }
+      | undefined;
+    return row?.item_id ?? null;
+  }
+
+  /** An item's keys: the live ones, or with `all`, the retired ones too (oldest first) */
+  getItemKeys(itemId: string, opts: { all?: boolean } = {}): ItemKey[] {
+    const rows = this.db.db.prepare(`
+      SELECT * FROM item_keys WHERE item_id = ? ${opts.all ? "" : "AND retired_at IS NULL"} ORDER BY created_at, rowid
+    `).all(itemId) as Array<{ key: string; item_id: string; source: string; confidence: number; decided_by: string; evidence: string | null; created_at: string; retired_at: string | null }>;
+    return rows.map((r) => ({
+      key: r.key,
+      itemId: r.item_id,
+      source: r.source,
+      confidence: r.confidence,
+      decidedBy: r.decided_by,
+      evidence: r.evidence,
+      createdAt: r.created_at,
+      retiredAt: r.retired_at,
+    }));
+  }
+
+  /** Moves the source's live keys to the target (a key the target holds already stays the target's alone) */
+  private moveKeysOnMerge(sourceId: string, targetId: string, at: string): void {
+    const db = this.db.db;
+    const insert = db.prepare(`
+      INSERT INTO item_keys (key, item_id, source, confidence, decided_by, evidence, created_at, retired_at)
+      VALUES (?, ?, ?, ?, 'merge', ?, ?, NULL)
+    `);
+    for (const k of this.getItemKeys(sourceId)) {
+      if (this.findItemByKey(k.key) === sourceId && !this.getItemKeys(targetId).some((t) => t.key === k.key)) {
+        insert.run(k.key, targetId, k.source, k.confidence, sourceId, at);
+      }
+    }
+    db.prepare("UPDATE item_keys SET retired_at = ? WHERE item_id = ? AND retired_at IS NULL").run(at, sourceId);
+  }
+
+  /** Gives back the keys a merge moved from the source to the target */
+  private returnKeysOnUnmerge(sourceId: string, targetId: string, at: string): void {
+    const db = this.db.db;
+    const moved = db.prepare(`
+      SELECT key, source, confidence FROM item_keys
+      WHERE item_id = ? AND decided_by = 'merge' AND evidence = ? AND retired_at IS NULL
+    `).all(targetId, sourceId) as Array<{ key: string; source: string; confidence: number }>;
+    const insert = db.prepare(`
+      INSERT INTO item_keys (key, item_id, source, confidence, decided_by, evidence, created_at, retired_at)
+      VALUES (?, ?, ?, ?, 'unmerge', ?, ?, NULL)
+    `);
+    const retire = db.prepare("UPDATE item_keys SET retired_at = ? WHERE item_id = ? AND key = ? AND retired_at IS NULL");
+    for (const k of moved) {
+      retire.run(at, targetId, k.key);
+      insert.run(k.key, sourceId, k.source, k.confidence, targetId, at);
+    }
   }
 
   getWorkItemById(id: string): WorkItem | null {
@@ -1121,14 +1195,16 @@ export class ContextGraph {
     const now = new Date().toISOString();
     const dataJson = JSON.stringify(enrichment.data);
 
+    // The tracker's key for what was fetched: the item's ticket key
+    const key = this.getItemKeys(enrichment.workItemId).find((k) => k.key.startsWith("ticket:"))?.key ?? null;
     const stmt = this.db.db.prepare(`
-      INSERT INTO enrichments (id, work_item_id, source, data, fetched_at)
-      VALUES (?, ?, ?, ?, ?)
+      INSERT INTO enrichments (id, work_item_id, source, data, fetched_at, key)
+      VALUES (?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         data = excluded.data,
         fetched_at = excluded.fetched_at
     `);
-    stmt.run(id, enrichment.workItemId, enrichment.source, dataJson, now);
+    stmt.run(id, enrichment.workItemId, enrichment.source, dataJson, now, key);
     log.debug("Upserted enrichment for work item", enrichment.workItemId);
 
     const row = this.db.db.prepare("SELECT * FROM enrichments WHERE id = ?").get(id) as
@@ -1925,6 +2001,8 @@ export class ContextGraph {
       db.prepare("INSERT OR REPLACE INTO work_item_merges (source_id, target_id, merged_at, moved) VALUES (?, ?, ?, ?)")
         .run(sourceId, targetId, mergedAt, JSON.stringify(record));
 
+      this.moveKeysOnMerge(sourceId, targetId, mergedAt);
+
       // Soft-delete source, touch target
       db.prepare("UPDATE work_items SET merged_into = ?, updated_at = ? WHERE id = ?").run(targetId, mergedAt, sourceId);
       db.prepare("UPDATE work_items SET updated_at = ? WHERE id = ?").run(mergedAt, targetId);
@@ -2015,8 +2093,10 @@ export class ContextGraph {
       }
 
       db.prepare("DELETE FROM work_item_merges WHERE source_id = ?").run(sourceId);
+      const unmergedAt = new Date().toISOString();
+      this.returnKeysOnUnmerge(sourceId, targetId, unmergedAt);
       // Clear merged_into
-      db.prepare("UPDATE work_items SET merged_into = NULL, updated_at = ? WHERE id = ?").run(new Date().toISOString(), sourceId);
+      db.prepare("UPDATE work_items SET merged_into = NULL, updated_at = ? WHERE id = ?").run(unmergedAt, sourceId);
     });
 
     log.info("Unmerged work item", sourceId, "from", targetId);
