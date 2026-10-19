@@ -7,8 +7,9 @@
 // already labeled, and asks about each (labels are keyed by the message's platform identity, see linking-labels.ts):
 //   s  same work      d  different work      1 / 2  mark message A / B "not work" (again to clear)
 //   u  unsure, skip   n  add note            q  save & quit
-// A note goes with the next verdict or not-work mark. A skipped pair comes back once at the end of the session, and
-// nothing is recorded for it, so a later session can draw it again.
+// A dimmed hint under the keys says what each verdict means. A note goes with the next verdict or not-work mark. A
+// skipped pair comes back once at the end of the session, and nothing is recorded for it, so a later session can draw
+// it again.
 // Each message shows its sender, channel, time, its own lines and a few messages around it in its thread. Which item
 // each grouping put it in isn't shown, so the verdict isn't steered by it. The database is read from a private
 // read-only copy; labels go to eval-data/linking/labels.json and are saved after every label, merged with whatever
@@ -138,6 +139,13 @@ function gap(a: Observation, b: Observation): string | null {
 
 const isNotWork = (id: string) => session.labels.notWork.some((n) => n.message === id);
 
+/** What the verdicts mean, shown under the keys (docs/streams-and-message-linking.md has the full definitions) */
+const HINT = [
+  "Same work: both move or discuss one case (one ticket, one PR, one order, or one goal with one partner), updates too.",
+  "Different work: different cases, even with the same partner, agent, channel, routine or routine run.",
+  "Not work: about no single case: heartbeats, health checks, empty tick logs, chatter, many-case digests or briefings.",
+];
+
 function renderMessage(tag: string, o: Observation | undefined, id: string): void {
   if (!o) {
     console.log(`${BOLD}── ${tag} ──${RESET} ${DIM}(message ${clean(id)} not found)${RESET}\n`);
@@ -169,6 +177,7 @@ function render(): void {
   }
   if (note) console.log(`  note: ${clean(note)}`);
   console.log("  s same work · d different work · 1/2 A/B not work · u unsure, skip · n note · q quit");
+  for (const line of HINT) console.log(`  ${DIM}${line}${RESET}`);
 }
 
 function next(): void {
