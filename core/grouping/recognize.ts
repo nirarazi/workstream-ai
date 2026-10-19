@@ -128,8 +128,16 @@ const PRIORITY_LIST = /\b(?:in priority order|most urgent first|top \d+ things)\
 const COUNTED = /^(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten|several|all)\s+\S+/i;
 /** Health and liveness: "All green ✓ Gateway: running …", "HEARTBEAT_OK", "nothing needs a Slack post" */
 const HEALTH = /^[\W_]*all green\b|\bHEARTBEAT_OK\b|\bnothing needs a slack post\b/i;
-/** A person checking on the fleet or greeting it, in a few words: "OK are we still alive?", "How are you", "Are you down?" */
-const CHATTER = /^[\W_]*(?:(?:ok|so|hey|hi)[,!]?\s+)?(?:are (?:we|you|they)(?: all)? (?:still )?(?:alive|up|down|there|ok|running|healthy)|how are you|good (?:morning|night)|thanks?(?: you)?|thx)\b[^\n]{0,40}$/i;
+/** A person checking on the fleet or greeting it, in a few words: "OK are we still alive?", "Atlas are you alive?", "How are you" */
+const CHATTER = /^[\W_]*(?:(?:ok|so|hey|hi|<@[^<>\s]+>|[a-z]+)[,!]?\s+)?(?:are (?:we|you|they)(?: all)? (?:still )?(?:alive|up|down|there|ok|running|healthy)|how are you|good (?:morning|night)|thanks?(?: you)?|thx)\b[^\n]{0,40}$/i;
+/** An agent answering a liveness check, in a few words: "Alive and kicking. What do you need?", "Yes, here — what's up?" */
+const ALIVE = /^[\W_]*(?:yes,?\s+)?(?:alive and kicking|(?:i'?m )?here)\b[^\n]{0,40}$/i;
+/** A short post that ends on a runtime's idle token: "Nothing new since the last sweep. HEARTBEAT_OK NO_REPLY" */
+const IDLE_TOKEN = /^[\s\S]{0,400}(?:^|\s)(?:HEARTBEAT_OK|NO_REPLY|TICK_DONE)\W*$/;
+/** A fragment of an agent runtime's serialized log, pasted or leaked into chat */
+const LOG_FRAGMENT = /"(?:tool_use_id|stream_event|session_id|parent_tool_use_id)"\s*:/;
+/** The platform's own notices: a channel renamed, an integration added, messages held back by a rate limit */
+const PLATFORM_NOTICE = /^[\W_]*(?:added an integration to this channel|has (?:renamed|joined|left|archived) the channel|set the channel (?:topic|description|purpose))\b|\bwe are not displaying some messages sent by this application\b/i;
 
 /** Machine output: key=value lines, tick markers, idle heartbeats, a sweep's "no change since the last check" */
 const TELEMETRY = [
@@ -212,11 +220,12 @@ export function recognize(message: GroupingMessage, options: ResolverOptions & {
   const asks = message.status === "blocked_on_human" || message.status === "needs_decision";
   const head = firstLine.slice(0, MAX_FIRST_LINE);
   const machine = message.senderKind !== "human";
-  const telemetry = machine && !asks && (TELEMETRY.some((re) => re.test(head)) || HEALTH.test(head));
+  const telemetry = (!asks && PLATFORM_NOTICE.test(own)) ||
+    (machine && !asks && (TELEMETRY.some((re) => re.test(head)) || HEALTH.test(head) || IDLE_TOKEN.test(own) || LOG_FRAGMENT.test(own)));
   // Anyone's: a briefing is told by its header, which people rarely start a message with otherwise (and an agent posting
   // under a person's account reads as a person)
   const briefing = !tagged && (BRIEFING.test(head) || PRIORITY_LIST.test(own.slice(0, MAX_FIRST_LINE)));
-  const chatter = !asks && own.trim().length <= 80 && CHATTER.test(own.trim());
+  const chatter = !asks && own.trim().length <= 80 && (CHATTER.test(own.trim()) || (machine && ALIVE.test(own.trim())));
   const report = briefing || (!tagged && isReport(
     { threadId: message.threadId, senderKind: message.senderKind, text: own, status: message.status ?? null, priorInThread: 0, digest: message.digest },
     lines, [], about.subject,

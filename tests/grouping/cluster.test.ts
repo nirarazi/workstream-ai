@@ -79,6 +79,19 @@ describe("recognizers", () => {
     expect(taggedSubject("[drain] Five items: • Northwind …")).toBeNull();
   });
 
+  it("reads liveness checks, idle tokens, log fragments and the platform's notices as not work", () => {
+    expect(recognize(msg("Atlas are you alive?", { senderKind: "human" }), options).kind).toBe("chatter");
+    expect(recognize(msg("<@U0AGENT1|Relay> are you there?", { senderKind: "human" }), options).kind).toBe("chatter");
+    expect(recognize(msg("Alive and kicking. What do you need?"), options).kind).toBe("chatter");
+    expect(recognize(msg("Here", { senderKind: "human" }), options).kind).toBe("work");
+    expect(recognize(msg("Sunday, outside calling hours. Ready for Monday.\n\nHEARTBEAT_OK\n\nNO_REPLY"), options).kind).toBe("telemetry");
+    expect(recognize(msg("Waiting on Dana for OPS-101. NO_REPLY", { status: "blocked_on_human" }), options).kind).toBe("work");
+    expect(recognize(msg(`OPS-101 shipped. ${"Details follow. ".repeat(40)}HEARTBEAT_OK`), options).kind).toBe("work");
+    expect(recognize(msg('_{"type":"stream_event","event":{"type":"content_block_stop"},"session_id":"s-1"}'), options).kind).toBe("telemetry");
+    expect(recognize(msg("has renamed the channel from \"deploys\" to \"engineering\"", { senderKind: "human" }), options).kind).toBe("telemetry");
+    expect(recognize(msg("_Due to a high volume of activity, we are not displaying some messages sent by this application._"), options).kind).toBe("telemetry");
+  });
+
   it("keys a pipeline's release notes by version, never a person's message", () => {
     expect(releaseKey(":label: Tag `1.13.90-production` pushed from PR #896", "agent")).toBe("release:1.13.90");
     expect(releaseKey("Upgraded to 2.0.1 locally", "agent")).toBeNull();
