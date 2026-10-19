@@ -266,6 +266,28 @@ describe("JiraAdapter", () => {
       expect(url).toContain("fields=summary,status,assignee,labels,description");
     });
 
+    it("maps the issue's type and hierarchy level, its parent, and the issues it duplicates", async () => {
+      const base = makeJiraIssue();
+      mockFetch.mockResolvedValueOnce(jsonResponse(makeJiraIssue({
+        fields: {
+          ...base.fields,
+          issuetype: { id: "10003", name: "Sub-task", hierarchyLevel: -1 },
+          parent: { key: "OPS-381", fields: { summary: "Auth" } },
+          issuelinks: [
+            { type: { name: "Duplicate", outward: "duplicates" }, outwardIssue: { key: "OPS-100" } },
+            { type: { name: "Duplicate", outward: "duplicates" }, inwardIssue: { key: "OPS-500" } },
+            { type: { name: "Blocks", outward: "blocks" }, outwardIssue: { key: "OPS-200" } },
+          ],
+        },
+      })));
+
+      const item = await adapter.getWorkItem("OPS-382");
+      expect(item!.itemType).toEqual({ id: "10003", name: "Sub-task", hierarchyLevel: -1 });
+      expect(item!.parent).toEqual({ key: "OPS-381", title: "Auth" });
+      expect(item!.duplicates).toEqual(["OPS-100"]);
+      expect(mockFetch.mock.calls[0][0]).toContain("issuetype,parent,issuelinks");
+    });
+
     it("should return null for 404", async () => {
       mockFetch.mockResolvedValueOnce(jsonResponse({ errorMessages: ["not found"] }, 404));
 

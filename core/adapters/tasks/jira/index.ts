@@ -47,6 +47,9 @@ interface JiraIssueFields {
   assignee: { displayName: string } | null;
   labels: string[];
   description: unknown; // ADF document or null
+  issuetype?: { id: string; name: string; hierarchyLevel?: number };
+  parent?: { key: string; fields?: { summary?: string } };
+  issuelinks?: Array<{ type?: { name?: string; outward?: string }; outwardIssue?: { key: string } }>;
 }
 
 interface JiraIssue {
@@ -134,10 +137,23 @@ function mapIssueToWorkItem(issue: JiraIssue, baseUrl: string): WorkItemDetail {
     url: `${baseUrl}/browse/${issue.key}`,
     labels: issue.fields.labels ?? [],
     description,
+    ...(issue.fields.issuetype
+      ? { itemType: { id: issue.fields.issuetype.id, name: issue.fields.issuetype.name, hierarchyLevel: issue.fields.issuetype.hierarchyLevel ?? null } }
+      : {}),
+    ...(issue.fields.parent ? { parent: { key: issue.fields.parent.key, title: issue.fields.parent.fields?.summary } } : {}),
+    ...duplicatesOf(issue),
   };
 }
 
-const ISSUE_FIELDS = "summary,status,assignee,labels,description";
+/** The issues this one duplicates: its outward links of Jira's "Duplicate" type (named so by default, or "duplicates") */
+function duplicatesOf(issue: JiraIssue): { duplicates?: string[] } {
+  const keys = (issue.fields.issuelinks ?? [])
+    .filter((l) => l.outwardIssue && /duplicate/i.test(`${l.type?.name ?? ""} ${l.type?.outward ?? ""}`))
+    .map((l) => l.outwardIssue!.key);
+  return keys.length > 0 ? { duplicates: keys } : {};
+}
+
+const ISSUE_FIELDS = "summary,status,assignee,labels,description,issuetype,parent,issuelinks";
 
 // --- Adapter ---
 

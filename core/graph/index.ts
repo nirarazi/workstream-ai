@@ -510,6 +510,30 @@ export class ContextGraph {
     return live;
   }
 
+  /**
+   * Folds a tracker item into the one its structure says it belongs to (a sub-task into its parent, a duplicate into
+   * its original), as an ordinary merge the operator can undo; undone once, it isn't made again. Returns the item the
+   * reference names afterwards.
+   */
+  foldIntoTrackerItem(ref: string, intoKey: string, reason: "hierarchy" | "duplicate", source: string, title?: string): string {
+    const itemId = this.resolveItemRef(ref);
+    const ownKey = `ticket:${ref.toUpperCase()}`;
+    // Only the ticket's own item: one the operator merged it into is theirs to keep as it is
+    if (!this.getItemKeys(itemId).some((k) => k.key === ownKey && k.decidedBy !== "merge")) return itemId;
+    if (this.db.db.prepare("SELECT 1 FROM declined_merges WHERE source_key = ? AND target_key = ?")
+      .get(ownKey, `ticket:${intoKey.toUpperCase()}`)) return itemId;
+    const target = this.upsertWorkItem({ id: intoKey, source, ...(title ? { title } : {}) });
+    if (target.id === itemId || target.mergedInto) return itemId;
+    try {
+      this.mergeWorkItems(itemId, target.id, { decidedBy: reason });
+      log.info(`Folded ${ref} into ${intoKey} (${reason})`);
+      return target.id;
+    } catch (err) {
+      log.warn(`Couldn't fold ${ref} into ${intoKey}`, err);
+      return itemId;
+    }
+  }
+
   /** The live item a reference names (see resolveItemRef), or null when there's none */
   getWorkItemByRef(ref: string): WorkItem | null {
     return this.getWorkItemById(this.resolveItemRef(ref));
@@ -2081,7 +2105,7 @@ export class ContextGraph {
    * own item was the source makes the target its own). What moved, and what was dropped, is kept so unmerging puts
    * back exactly that.
    */
-  mergeWorkItems(sourceId: string, targetId: string): {
+  mergeWorkItems(sourceId: string, targetId: string, opts: { decidedBy?: "operator" | "hierarchy" | "duplicate" } = {}): {
     sourceId: string;
     targetId: string;
     sourceTitle: string;
@@ -2134,8 +2158,8 @@ export class ContextGraph {
       }
 
       const record: MergeRecord = { threads, events, links, rows };
-      db.prepare("INSERT OR REPLACE INTO work_item_merges (source_id, target_id, merged_at, moved) VALUES (?, ?, ?, ?)")
-        .run(sourceId, targetId, mergedAt, JSON.stringify(record));
+      db.prepare("INSERT OR REPLACE INTO work_item_merges (source_id, target_id, merged_at, moved, decided_by) VALUES (?, ?, ?, ?, ?)")
+        .run(sourceId, targetId, mergedAt, JSON.stringify(record), opts.decidedBy ?? "operator");
 
       this.moveKeysOnMerge(sourceId, targetId, mergedAt);
 
@@ -2163,8 +2187,17 @@ export class ContextGraph {
     const db = this.db.db;
 
     this.transaction(() => {
-      const saved = db.prepare("SELECT target_id, merged_at, moved FROM work_item_merges WHERE source_id = ?")
-        .get(sourceId) as { target_id: string; merged_at: string; moved: string } | undefined;
+      const saved = db.prepare("SELECT target_id, merged_at, moved, decided_by FROM work_item_merges WHERE source_id = ?")
+        .get(sourceId) as { target_id: string; merged_at: string; moved: string; decided_by: string } | undefined;
+      // Undoing a merge the tracker's structure decided: the operator says no, so it isn't made again
+      if (saved && saved.decided_by !== "operator") {
+        const sourceKey = this.getItemKeys(targetId).find((k) => k.decidedBy === "merge" && k.evidence === sourceId && k.key.startsWith("ticket:"))?.key;
+        const targetKey = this.getItemKeys(targetId).find((k) => k.key.startsWith("ticket:") && k.decidedBy !== "merge")?.key;
+        if (sourceKey && targetKey) {
+          db.prepare("INSERT OR REPLACE INTO declined_merges (source_key, target_key, decided_by, declined_at) VALUES (?, ?, ?, ?)")
+            .run(sourceKey, targetKey, saved.decided_by, new Date().toISOString());
+        }
+      }
 
       if (saved && saved.target_id === targetId) {
         const record = JSON.parse(saved.moved) as MergeRecord;

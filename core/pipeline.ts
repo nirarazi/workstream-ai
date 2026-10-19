@@ -12,6 +12,7 @@ import { DIGEST_MIN_ITEMS, namesDigest, type WorkItemLinker } from "./graph/link
 import { knownTicketPrefixes, looksLikeTicketKey } from "./graph/extractors/default.js";
 import { ownLines } from "./graph/own-lines.js";
 import type { DigestJudge } from "./digests/judge.js";
+import { belongsTo } from "./graph/hierarchy.js";
 
 export { DIGEST_MIN_ITEMS };
 
@@ -1263,6 +1264,14 @@ export class Pipeline {
         try {
           const detail = await this.taskAdapter.getWorkItem(ticket);
           if (stopped()) break;
+          // A sub-task or a duplicate is part of another item: its messages go there, and its details don't
+          // overwrite that item's
+          const home = detail ? belongsTo(detail, this.config?.taskAdapter?.itemTypeRoles ?? []) : null;
+          if (detail && home) {
+            const into = this.graph.foldIntoTrackerItem(ticket, home.key, home.reason === "step" ? "hierarchy" : "duplicate",
+              this.taskAdapter.name, home.reason === "step" ? detail.parent?.title : undefined);
+            if (into !== workItemId) continue;
+          }
           if (detail) {
             this.graph.upsertEnrichment({
               workItemId,

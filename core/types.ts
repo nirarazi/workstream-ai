@@ -185,6 +185,12 @@ export interface WorkItemDetail {
   url: string | null;
   labels: string[];
   description: string | null;
+  /** The item's type, with its level in the tracker's hierarchy (above 0: holds others; 0: standard; below: a part) */
+  itemType?: { id: string; name: string; hierarchyLevel: number | null };
+  /** The item it's a part or a child of */
+  parent?: { key: string; title?: string };
+  /** Keys of the items this one duplicates */
+  duplicates?: string[];
 }
 
 export interface WorkItemComment {

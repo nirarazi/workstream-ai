@@ -207,6 +207,16 @@ CREATE TABLE IF NOT EXISTS observation_refs (
 );
 CREATE INDEX IF NOT EXISTS idx_observation_refs_to ON observation_refs(to_key, kind);
 
+-- Merges the tracker's structure decided (a sub-task into its parent, a duplicate into its original) that the operator
+-- undid, by key, so they aren't made again. Step 3's constraints take these over as cannot_link.
+CREATE TABLE IF NOT EXISTS declined_merges (
+  source_key TEXT NOT NULL,
+  target_key TEXT NOT NULL,
+  decided_by TEXT NOT NULL,
+  declined_at TEXT NOT NULL,
+  PRIMARY KEY (source_key, target_key)
+);
+
 CREATE INDEX IF NOT EXISTS idx_events_thread_id ON events(thread_id);
 CREATE INDEX IF NOT EXISTS idx_events_work_item_id ON events(work_item_id);
 CREATE INDEX IF NOT EXISTS idx_threads_work_item_id ON threads(work_item_id);
@@ -462,6 +472,13 @@ export class Database {
     }
 
     this.backfillItemKeys();
+
+    // Who decided a merge: the operator, or the tracker's structure (hierarchy, duplicate)
+    const mergeCols = this.db.pragma("table_info(work_item_merges)") as Array<{ name: string }>;
+    if (!mergeCols.some((c) => c.name === "decided_by")) {
+      this.db.exec("ALTER TABLE work_item_merges ADD COLUMN decided_by TEXT NOT NULL DEFAULT 'operator'");
+      log.info("Migration: added decided_by column to work_item_merges");
+    }
 
     // The observation an event classified (rows stored before observations existed get theirs from the engine's backfill)
     const eventColsForObservation = this.db.pragma("table_info(events)") as Array<{ name: string }>;

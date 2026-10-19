@@ -31,6 +31,14 @@ taskAdapter:
   # Ticket. Empty = accept any KEY-123 style key, except technical terms such as UTF-8 or SHA-256 (set this if
   # one of your project keys is such a term).
   ticketPrefixes: []
+  # Where your tracker's item types sit. By default from the tracker's hierarchy: a type above the standard level
+  # (an epic) holds many cases; a standard one (story, task, bug) is a case; one below it (a sub-task) is part of its
+  # parent's case, so its messages join the parent's item. To correct a type, give its id (not its name, so a rename
+  # keeps it), optionally for one project:
+  #   itemTypeRoles:
+  #     - { typeId: "10003", role: case }               # this type's sub-tasks are cases of their own
+  #     - { typeId: "10003", role: step, project: OPS }  # except in OPS
+  itemTypeRoles: []
 
 extractors:
   # Regex patterns for work item ID extraction

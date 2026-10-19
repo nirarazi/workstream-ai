@@ -51,6 +51,12 @@ const ConfigSchema = z.object({
     token: z.string().optional(),
     ticketPrefixes: z.array(z.string()),
     defaultProject: z.string().optional(),
+    /** The operator's corrections to where item types sit (core/graph/hierarchy.ts) */
+    itemTypeRoles: z.array(z.object({
+      typeId: z.string(),
+      role: z.enum(["container", "case", "step"]),
+      project: z.string().optional(),
+    })).optional(),
   }),
   extractors: z.object({
     ticketPatterns: z.array(z.string()),
