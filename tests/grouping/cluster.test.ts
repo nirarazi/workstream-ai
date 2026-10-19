@@ -2,7 +2,7 @@
 
 import { describe, it, expect } from "vitest";
 import { cluster, type ClusterOptions } from "../../core/grouping/cluster.js";
-import { recognize, recordKey, releaseKey, stripEmphasis, taggedSubject, type GroupingMessage } from "../../core/grouping/recognize.js";
+import { jobKey, recognize, recordKey, releaseKey, stripEmphasis, taggedSubject, type GroupingMessage } from "../../core/grouping/recognize.js";
 import { DefaultExtractor } from "../../core/graph/extractors/default.js";
 
 const extractor = new DefaultExtractor({ ticketPatterns: ["\\b([A-Z]{2,6}-\\d+)\\b"] });
@@ -90,6 +90,18 @@ describe("recognizers", () => {
     expect(recognize(msg('_{"type":"stream_event","event":{"type":"content_block_stop"},"session_id":"s-1"}'), options).kind).toBe("telemetry");
     expect(recognize(msg("has renamed the channel from \"deploys\" to \"engineering\"", { senderKind: "human" }), options).kind).toBe("telemetry");
     expect(recognize(msg("_Due to a high volume of activity, we are not displaying some messages sent by this application._"), options).kind).toBe("telemetry");
+  });
+
+  it("keys a scheduler's alerts by job, so alerts about different jobs stay apart", () => {
+    expect(jobKey(':warning: Cron job "Nightly Export" failed: job interrupted by restart', "agent")).toBe("job:nightly export");
+    expect(jobKey('Cron job "Nightly export" failed', "human")).toBeNull();
+    expect(jobKey("The nightly export failed again", "agent")).toBeNull();
+    const g = groups([
+      msg(':warning: Cron job "Nightly export" failed: job interrupted by gateway restart'),
+      msg(':warning: Cron job "Morning sweep" failed: job interrupted by gateway restart'),
+      msg(':warning: Cron job "Nightly export" failed: timeout'),
+    ]);
+    expect(g).toHaveLength(2);
   });
 
   it("keys a pipeline's release notes by version, never a person's message", () => {

@@ -36,6 +36,7 @@ export function streamOf(keys: readonly string[], channelId: string | null): str
   const ticket = keys.find((k) => k.startsWith("ticket:"));
   if (ticket) return `project:${ticket.slice("ticket:".length).replace(/-\d+$/, "")}`;
   if (keys.some((k) => k.startsWith("release:"))) return "releases";
+  if (keys.some((k) => k.startsWith("job:"))) return "jobs";
   const record = keys.find((k) => k.startsWith("record:"));
   if (record) return `records:${record.slice("record:".length).split("#")[0]}`;
   return `channel:${channelId ?? "?"}`;

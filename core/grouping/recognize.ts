@@ -31,7 +31,7 @@ export type MessageKind = "work" | "report" | "telemetry" | "chatter";
 
 export interface Recognized {
   kind: MessageKind;
-  /** The one key it's about: "ticket:…", "pr:…", "subject:…" or "release:…" */
+  /** The one key it's about: "ticket:…", "pr:…", "subject:…", "release:…", "job:…" or "record:…" */
   about: string | null;
   /**
    * How it's known: from a ticket, PR or release the message leads with (key), a routine's tagged line (tagged), or a
@@ -102,6 +102,20 @@ export function recordKey(firstLine: string): string | null {
 /** A release or build a pipeline posts about: a version with a release word near it */
 const RELEASE_WORDS = /\b(?:release|tag|image|build|deploy(?:ed|ing|ment)?|rollout|rolled out)\b/i;
 const VERSION = /\bv?(\d+\.\d+\.\d+)(?:-[a-z0-9]+)?\b/i;
+
+/** A scheduler's alert about one named job: 'Cron job "Nightly export" failed: …' */
+const JOB_ALERT = /\b(?:cron job|scheduled job|job|task|workflow)\s+["“]([^"”\n]{3,80})["”]\s+(?:failed|errored|timed out|succeeded|completed|finished)\b/i;
+
+/**
+ * The job a machine's alert is about, by name, from its first line: "job:<name>". Each job is its own case, however
+ * alike the alerts read (their text differs only in the name, so they would otherwise join as near copies).
+ */
+export function jobKey(text: string, senderKind: SenderKind): string | null {
+  if (senderKind === "human") return null;
+  const first = text.split("\n").find((l) => l.trim()) ?? "";
+  const m = JOB_ALERT.exec(first.slice(0, MAX_FIRST_LINE));
+  return m ? `job:${m[1].trim().toLowerCase().replace(/\s+/g, " ")}` : null;
+}
 
 export function releaseKey(text: string, senderKind: SenderKind): string | null {
   if (senderKind === "human") return null;
@@ -234,7 +248,7 @@ export function recognize(message: GroupingMessage, options: ResolverOptions & {
 
   const named = !tagged && options.subjects?.size ? namedSubject(own, options.subjects) : null;
   const subjectKey = tagged ? `subject:${tagged.subject}` : named ? `subject:${named}` : null;
-  const release = releaseKey(own, message.senderKind);
+  const release = releaseKey(own, message.senderKind) ?? jobKey(own, message.senderKind);
   // An alert often puts its link on the line after its header: the start of the message, not just its first line
   const record = about.subject || subjectKey || release ? null : recordKey(own.slice(0, MAX_FIRST_LINE));
   const aboutKey = about.subject ?? subjectKey ?? release ?? record;
