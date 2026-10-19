@@ -58,6 +58,19 @@ describe("MCP Server", () => {
       expect(events[0].confidence).toBe(1.0);
     });
 
+    it("records the report as an agent_report observation from an unverified author, linked to its event", async () => {
+      await client.callTool({
+        name: "workstream_report_status",
+        arguments: { workItemId: "northwind-export", status: "in_progress", message: "Exporting" },
+      });
+      const [event] = graph.getEventsForWorkItem("northwind-export");
+      const observation = graph.getObservation(graph.getObservationIdForEvent(event.id)!)!;
+      expect(observation.dedupeKey).toMatch(/^mcp-report:/);
+      expect(observation).toMatchObject({ kind: "agent_report", author: { platform: "mcp", id: "unknown" }, senderKind: "agent" });
+      expect(observation.parts.own).toBe("Exporting");
+      expect(graph.findItemByKey("mcp:northwind-export")).toBe("northwind-export");
+    });
+
     it("updates an existing work item status", async () => {
       // First report
       await client.callTool({

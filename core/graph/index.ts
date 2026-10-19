@@ -19,6 +19,8 @@ import type {
 import type { Database } from "./db.js";
 import type { Extractor } from "./extractors/interface.js";
 import { legacyKeyOf, type ItemKey } from "./item-keys.js";
+import type { Observation, ObservationDraft } from "../observations/types.js";
+import { ulid } from "../observations/ulid.js";
 import type {
   AgentRow,
   EnrichmentRow,
@@ -480,6 +482,70 @@ export class ContextGraph {
     this.ensureItemKey(item.id, item.source);
 
     return this.getWorkItemById(item.id)!;
+  }
+
+  // --- Observations (core/observations/types.ts) ---
+
+  /**
+   * Stores an observation once, by its dedupeKey, and returns its id (the stored one's, when it was seen before).
+   * Events already stored for the same message, and not yet linked, are linked to it.
+   */
+  recordObservation(draft: ObservationDraft): string {
+    const db = this.db.db;
+    const id = ulid();
+    db.prepare(`
+      INSERT OR IGNORE INTO observations (id, dedupe_key, kind, platform, container_kind, container_id, container_name,
+        message_id, occurred_at, author_platform, author_id, sender_kind, own_text, quoted, forwarded, participants,
+        refs, external_refs, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      id, draft.dedupeKey, draft.kind, draft.platform, draft.container.kind, draft.container.id,
+      draft.container.name ?? null, draft.messageId, draft.occurredAt, draft.author.platform, draft.author.id,
+      draft.senderKind, draft.parts.own, JSON.stringify(draft.parts.quoted), JSON.stringify(draft.parts.forwarded),
+      JSON.stringify(draft.participants), JSON.stringify(draft.refs), JSON.stringify(draft.externalRefs),
+      new Date().toISOString(),
+    );
+    const stored = (db.prepare("SELECT id FROM observations WHERE dedupe_key = ?").get(draft.dedupeKey) as { id: string }).id;
+    db.prepare(`
+      UPDATE events SET observation_id = ?
+      WHERE observation_id IS NULL AND message_id = ?
+        AND thread_id IN (SELECT id FROM threads WHERE platform = ? AND channel_id = ?)
+    `).run(stored, draft.messageId, draft.platform, draft.container.id);
+    return stored;
+  }
+
+  /** Records several observations in one transaction */
+  recordObservations(drafts: ObservationDraft[]): void {
+    this.transaction(() => {
+      for (const draft of drafts) this.recordObservation(draft);
+    });
+  }
+
+  getObservation(id: string): Observation | null {
+    const row = this.db.db.prepare("SELECT * FROM observations WHERE id = ?").get(id) as Record<string, string | null> | undefined;
+    if (!row) return null;
+    const json = <T>(v: string | null, fallback: T): T => (v ? (JSON.parse(v) as T) : fallback);
+    return {
+      id: row.id!,
+      dedupeKey: row.dedupe_key!,
+      kind: row.kind as Observation["kind"],
+      platform: row.platform!,
+      occurredAt: row.occurred_at!,
+      container: { kind: row.container_kind!, id: row.container_id!, ...(row.container_name ? { name: row.container_name } : {}) },
+      messageId: row.message_id!,
+      author: { platform: row.author_platform!, id: row.author_id! },
+      participants: json(row.participants, []),
+      senderKind: row.sender_kind as Observation["senderKind"],
+      parts: { own: row.own_text!, quoted: json(row.quoted, []), forwarded: json(row.forwarded, []) },
+      refs: json(row.refs, { quotes: [], forwards: [] }),
+      externalRefs: json(row.external_refs, []),
+    };
+  }
+
+  /** The observation an event classified, or null (an event stored before observations, not yet backfilled) */
+  getObservationIdForEvent(eventId: string): string | null {
+    const row = this.db.db.prepare("SELECT observation_id FROM events WHERE id = ?").get(eventId) as { observation_id: string | null } | undefined;
+    return row?.observation_id ?? null;
   }
 
   // --- Item keys (core/graph/item-keys.ts) ---
@@ -1061,13 +1127,19 @@ export class ContextGraph {
     actionRequiredFrom?: string[] | null;
     nextAction?: string | null;
     digest?: boolean;
+    /** The observation it classifies; by default the one recorded for the same message in the thread's channel */
+    observationId?: string | null;
   }): Event {
     const id = randomUUID();
     const now = new Date().toISOString();
+    const observationId = event.observationId ?? (this.db.db.prepare(`
+      SELECT o.id FROM observations o JOIN threads t ON t.id = ?
+      WHERE o.platform = t.platform AND o.container_id = t.channel_id AND o.message_id = ?
+    `).get(event.threadId, event.messageId) as { id: string } | undefined)?.id ?? null;
 
     const stmt = this.db.db.prepare(`
-      INSERT OR IGNORE INTO events (id, thread_id, message_id, work_item_id, agent_id, status, confidence, reason, raw_text, timestamp, created_at, entry_type, targeted_at_operator, action_required_from, next_action, digest)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT OR IGNORE INTO events (id, thread_id, message_id, work_item_id, agent_id, status, confidence, reason, raw_text, timestamp, created_at, entry_type, targeted_at_operator, action_required_from, next_action, digest, observation_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     const result = stmt.run(
       id,
@@ -1086,6 +1158,7 @@ export class ContextGraph {
       event.actionRequiredFrom ? JSON.stringify(event.actionRequiredFrom) : null,
       event.nextAction ?? null,
       event.digest ? 1 : 0,
+      observationId,
     );
 
     if (result.changes === 0) {

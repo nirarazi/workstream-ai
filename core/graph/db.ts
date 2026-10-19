@@ -173,6 +173,30 @@ CREATE TABLE IF NOT EXISTS item_keys (
 CREATE INDEX IF NOT EXISTS idx_item_keys_key ON item_keys(key) WHERE retired_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_item_keys_item ON item_keys(item_id);
 
+-- L0: each message or report seen, once (core/observations/types.ts). Append-only; JSON columns hold the lists.
+CREATE TABLE IF NOT EXISTS observations (
+  id             TEXT PRIMARY KEY,
+  dedupe_key     TEXT NOT NULL UNIQUE,
+  kind           TEXT NOT NULL,
+  platform       TEXT NOT NULL,
+  container_kind TEXT NOT NULL,
+  container_id   TEXT NOT NULL,
+  container_name TEXT,
+  message_id     TEXT NOT NULL,
+  occurred_at    TEXT NOT NULL,
+  author_platform TEXT NOT NULL,
+  author_id      TEXT NOT NULL,
+  sender_kind    TEXT NOT NULL,
+  own_text       TEXT NOT NULL,
+  quoted         TEXT NOT NULL DEFAULT '[]',
+  forwarded      TEXT NOT NULL DEFAULT '[]',
+  participants   TEXT NOT NULL DEFAULT '[]',
+  refs           TEXT NOT NULL DEFAULT '{}',
+  external_refs  TEXT NOT NULL DEFAULT '[]',
+  created_at     TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_observations_message ON observations(platform, container_id, message_id);
+
 CREATE INDEX IF NOT EXISTS idx_events_thread_id ON events(thread_id);
 CREATE INDEX IF NOT EXISTS idx_events_work_item_id ON events(work_item_id);
 CREATE INDEX IF NOT EXISTS idx_threads_work_item_id ON threads(work_item_id);
@@ -428,6 +452,14 @@ export class Database {
     }
 
     this.backfillItemKeys();
+
+    // The observation an event classified (rows stored before observations existed get theirs from the engine's backfill)
+    const eventColsForObservation = this.db.pragma("table_info(events)") as Array<{ name: string }>;
+    if (!eventColsForObservation.some((c) => c.name === "observation_id")) {
+      this.db.exec("ALTER TABLE events ADD COLUMN observation_id TEXT DEFAULT NULL");
+      log.info("Migration: added observation_id column to events");
+    }
+    this.db.exec("CREATE INDEX IF NOT EXISTS idx_events_observation ON events(observation_id)");
 
     // Backfill thread_work_items junction table from existing data
     const twiCount = (this.db.prepare("SELECT COUNT(*) AS n FROM thread_work_items").get() as { n: number }).n;

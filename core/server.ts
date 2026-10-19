@@ -25,6 +25,7 @@ import { detectAnomalies, type FleetItemInput } from "./graph/anomalies.js";
 import { Sidekick, type SidekickMessage } from "./sidekick/index.js";
 import { buildUnifiedStatus, buildTimeline, usableName } from "./stream.js";
 import type { OperatorIdentityMap, StatusCategory } from "./types.js";
+import { backfillObservations } from "./observations/backfill.js";
 
 const log = createLogger("server");
 
@@ -1929,6 +1930,14 @@ async function main(): Promise<void> {
       const threadsBackfilled = await adapter.backfillThreads?.(db) ?? 0;
       if (threadsBackfilled > 0) {
         log.info(`Backfilled metadata for ${threadsBackfilled} channels`);
+      }
+
+      // Observations for messages classified before they were recorded (keyed by the workspace the adapter knows)
+      try {
+        const observed = backfillObservations(db, graph, adapter);
+        if (observed > 0) log.info(`Recorded observations for ${observed} earlier messages`);
+      } catch (err) {
+        log.warn("Failed to backfill observations", err);
       }
     } catch (err) {
       log.error("Failed to connect messaging adapter", err);

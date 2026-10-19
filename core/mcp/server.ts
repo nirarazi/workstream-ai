@@ -27,6 +27,29 @@ export function createMcpServer(graph: ContextGraph): McpServer {
     });
   }
 
+  /**
+   * Records an agent's push as an observation (an agent_report) and returns its message id. Its author is whatever
+   * agent called the tool: unverified, so it's recorded as unknown, never as a verified actor.
+   */
+  function recordReport(text: string, at: string): string {
+    const messageId = randomUUID();
+    graph.recordObservation({
+      dedupeKey: `mcp-report:${messageId}`,
+      kind: "agent_report",
+      platform: "mcp",
+      occurredAt: at,
+      container: { kind: "mcp", id: "mcp" },
+      messageId,
+      author: { platform: "mcp", id: "unknown" },
+      participants: [],
+      senderKind: "agent",
+      parts: { own: text, quoted: [], forwarded: [] },
+      refs: { quotes: [], forwards: [] },
+      externalRefs: [],
+    });
+    return messageId;
+  }
+
   // --- workstream_report_status ---
   server.tool(
     "workstream_report_status",
@@ -48,9 +71,10 @@ export function createMcpServer(graph: ContextGraph): McpServer {
 
       ensureMcpThread(workItemId);
 
+      const messageId = recordReport(message, now);
       graph.insertEvent({
         threadId: MCP_THREAD_ID,
-        messageId: randomUUID(),
+        messageId,
         workItemId,
         status: status as StatusCategory,
         confidence: 1.0,
@@ -86,9 +110,10 @@ export function createMcpServer(graph: ContextGraph): McpServer {
 
       ensureMcpThread(workItemId);
 
+      const messageId = recordReport(description, now);
       graph.insertEvent({
         threadId: MCP_THREAD_ID,
-        messageId: randomUUID(),
+        messageId,
         workItemId,
         status: "needs_decision",
         confidence: 1.0,
@@ -123,9 +148,10 @@ export function createMcpServer(graph: ContextGraph): McpServer {
 
       ensureMcpThread(workItemId);
 
+      const messageId = recordReport(summary, now);
       graph.insertEvent({
         threadId: MCP_THREAD_ID,
-        messageId: randomUUID(),
+        messageId,
         workItemId,
         status: "completed",
         confidence: 1.0,

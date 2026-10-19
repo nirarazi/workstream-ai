@@ -4,6 +4,7 @@ import type { Credentials, Thread, Message, KnownThread } from "../../types.js";
 import type { ContextGraph } from "../../graph/index.js";
 import type { Database } from "../../graph/db.js";
 import type { AdapterSetupInfo } from "../setup.js";
+import type { ObservationDraft } from "../../observations/types.js";
 
 /** Optional hints for readThreads; an adapter that ignores them still works, it just misses late replies. */
 export interface ReadThreadsOptions {
@@ -88,6 +89,13 @@ export interface MessagingAdapter {
 
   /** Backfill agent names/avatars from platform user data. Called once after connect. */
   backfillAgents?(graph: ContextGraph): Promise<number>;
+
+  /**
+   * A message it returned, as an observation (core/observations/types.ts): its platform-wide dedupeKey, its own text
+   * apart from quoted text, and what it replies to or quotes. Null when it can't key it (not connected yet). Without
+   * this method, the engine records no observations for the adapter's messages.
+   */
+  observe?(message: Message): ObservationDraft | null;
 
   /** Backfill platform-specific thread metadata (e.g. channel privacy). Called once after connect. */
   backfillThreads?(db: Database): Promise<number>;

@@ -280,6 +280,7 @@ export class Pipeline {
       return { processed: 0, classified: 0, errors: 1 };
     }
     if (stopped()) return { processed, classified, errors };
+    this.recordObservations(threads);
 
     // Track latest timestamp per channel for cursor updates
     const latestTimestamps = new Map<string, string>();
@@ -745,6 +746,21 @@ export class Pipeline {
     return createHash("sha256").update(`${threadId}:${text}`).digest("hex");
   }
 
+
+  /**
+   * Records every message read as an observation (L0), once each: classified or not, and whether or not this poll
+   * gets to it. Nothing reads them yet; a failure here is logged and never stops the poll.
+   */
+  private recordObservations(threads: Thread[]): void {
+    const observe = this.messagingAdapter.observe?.bind(this.messagingAdapter);
+    if (!observe) return;
+    try {
+      const drafts = threads.flatMap((t) => t.messages.map((m) => observe(m)).filter((d) => d !== null));
+      if (drafts.length > 0) this.graph.recordObservations(drafts);
+    } catch (err) {
+      log.warn("Failed to record observations", err);
+    }
+  }
   private getPerChannelSince(): { globalSince: Date; perChannelSince: Map<string, Date> } {
     // Build a per-channel cursor map from the database.
     // Channels with a stored cursor use their own timestamp.

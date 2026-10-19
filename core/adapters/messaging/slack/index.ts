@@ -9,6 +9,8 @@ import type { Database } from "../../../graph/db.js";
 import { createLogger } from "../../../logger.js";
 import { registerMessagingAdapter } from "../../registry.js";
 import { SlackRateLimiter, perMinuteLimit } from "./rate-limiter.js";
+import { observeSlackMessage } from "./observe.js";
+import type { ObservationDraft } from "../../../observations/types.js";
 
 const log = createLogger("slack-adapter");
 
@@ -235,6 +237,8 @@ export class SlackAdapter implements MessagingAdapter {
   private messageHandler: ((msg: Message) => void) | null = null;
   private limiter = new SlackRateLimiter();
   private workspaceUrl: string | null = null;
+  /** The workspace's team id, part of every observation's dedupeKey */
+  private teamId: string | null = null;
   private authedUser: { userId: string; userName: string } | null = null;
 
   /** @deprecated The Slack adapter now manages its own per-method rate limiting internally. */
@@ -265,6 +269,7 @@ export class SlackAdapter implements MessagingAdapter {
       const authResult = await this.client.auth.test();
       // Store workspace URL for constructing Slack links (e.g. channel URLs)
       this.workspaceUrl = (authResult.url as string | undefined)?.replace(/\/+$/, "") ?? null;
+      this.teamId = (authResult.team_id as string | undefined) ?? null;
       this.authedUser = {
         userId: (authResult.user_id as string) ?? "",
         userName: (authResult.user as string) ?? "",
@@ -632,6 +637,10 @@ export class SlackAdapter implements MessagingAdapter {
   /** Get avatar URL for a user ID, or empty string if unknown */
   getUserAvatar(userId: string): string {
     return this.userInfoMap.get(userId)?.avatar ?? "";
+  }
+
+  observe(message: Message): ObservationDraft | null {
+    return this.teamId ? observeSlackMessage(message, { teamId: this.teamId, url: this.workspaceUrl }) : null;
   }
 
   /** Get workspace URL (e.g. "https://myteam.slack.com") for link construction */
