@@ -113,9 +113,15 @@ describe("cluster", () => {
 
   it("names a subject known from tagged lines when a message mentions it untagged", () => {
     const tagged = msg("[drain] Northwind Traders (Ohio): no reply");
+    const again = msg("[drain] Northwind Traders (Ohio): still nothing");
     const untagged = msg("I took the overdue task: Northwind Traders, the January start", { senderId: "U0RELAY", channelId: "C0OTHER" });
-    const placed = cluster([untagged, tagged], options);
+    const placed = cluster([untagged, tagged, again], options);
     expect(placed.get(untagged.key)!.cluster).toBe(placed.get(tagged.key)!.cluster);
+    // Tagged once only, a name isn't known yet: one stray tagged line can't add a subject
+    const once = msg("[drain] Contoso Partners (Texas): sent", { at: "2026-10-20T09:00:00.000Z" });
+    const naming = msg("Contoso Partners asked again", { senderId: "U0RELAY", channelId: "C0OTHER", at: "2026-10-20T09:30:00.000Z" });
+    const lone = cluster([once, naming], options);
+    expect(lone.get(naming.key)!.cluster).not.toBe(lone.get(once.key)!.cluster);
   });
 
   it("keeps a sender's templated notes about different keys apart", () => {

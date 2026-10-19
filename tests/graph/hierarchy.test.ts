@@ -107,6 +107,14 @@ describe("foldIntoTrackerItem", () => {
     expect(graph.getWorkItemById("OPS-101")!.currentAtcStatus).toBe("blocked_on_human");
   });
 
+  it("brings a sub-task's ask back into view when it's folded into a parent the operator dismissed", () => {
+    graph.upsertWorkItem({ id: "OPS-101", source: "jira", currentAtcStatus: "in_progress", statusAt: "2026-10-19T09:00:00.000Z" });
+    graph.upsertWorkItem({ id: "OPS-102", source: "extracted", currentAtcStatus: "blocked_on_human", statusAt: "2026-10-19T10:00:00.000Z" });
+    graph.dismissWorkItem("OPS-101");
+    graph.foldIntoTrackerItem("OPS-102", "OPS-101", "hierarchy", "jira");
+    expect(graph.getWorkItemById("OPS-101")).toMatchObject({ currentAtcStatus: "blocked_on_human", dismissedAt: null });
+  });
+
   it("doesn't let an older update from a sub-task overwrite its parent's newer ask", () => {
     graph.upsertWorkItem({ id: "OPS-102", source: "extracted", currentAtcStatus: "in_progress", statusAt: "2026-10-19T09:00:00.000Z" });
     graph.upsertWorkItem({ id: "OPS-101", source: "jira", currentAtcStatus: "needs_decision", statusAt: "2026-10-19T10:00:00.000Z" });

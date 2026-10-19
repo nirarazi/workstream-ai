@@ -732,13 +732,16 @@ export class ContextGraph {
     // from between the two can't overwrite it
     const statusAt = newer ? (source.statusAt ?? at) : at;
     // A dismissal from before the carried status is lifted (it's news since); one from after it, the operator's later
-    // word, stays
+    // word on the parent, stays, unless what's carried is an ask the operator never dismissed: dismissing the parent
+    // wasn't dismissing the sub-task's ask, which mustn't drop out of Needs me
+    const liftAnyway = asks(status) && (!source.dismissedAt || (source.statusAt !== null && source.dismissedAt < source.statusAt));
+    const liftBefore = liftAnyway ? "9999" : source.statusAt;
     this.db.db.prepare(`
       UPDATE work_items SET current_atc_status = ?, current_confidence = ?, status_at = ?, updated_at = ?,
         dismissed_at = CASE WHEN dismissed_at IS NOT NULL AND dismissed_at < COALESCE(?, '') THEN NULL ELSE dismissed_at END,
         dismiss_reason = CASE WHEN dismissed_at IS NOT NULL AND dismissed_at < COALESCE(?, '') THEN NULL ELSE dismiss_reason END
       WHERE id = ?
-    `).run(status, source.currentConfidence, statusAt, at, source.statusAt, source.statusAt, target.id);
+    `).run(status, source.currentConfidence, statusAt, at, liftBefore, liftBefore, target.id);
     if (target.currentAtcStatus === "completed") this.setReopened(target.id, statusAt);
     return { statusAt, before };
   }

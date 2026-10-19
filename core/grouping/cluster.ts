@@ -9,11 +9,13 @@
 // Pure and deterministic: the same messages, constraints and weights give the same clusters.
 
 import type { ResolverOptions } from "../graph/resolver.js";
-import { recognize, type GroupingMessage, type Recognized } from "./recognize.js";
+import { recognize, SubjectLexicon, type GroupingMessage, type Recognized } from "./recognize.js";
 
 export interface Weights {
   /** Holds the key the message is about */
   sameKey: number;
+  /** Holds a subject the message only names, untagged: weaker than a reply's thread */
+  namedSubject: number;
   /** The message's thread belongs to the cluster */
   thread: number;
   /** The thread's cluster is about a different key than the message */
@@ -32,6 +34,7 @@ export interface Weights {
 
 export const DEFAULT_WEIGHTS: Weights = {
   sameKey: 10,
+  namedSubject: 5,
   thread: 6,
   otherKeyInThread: -8,
   followUp: 5,
@@ -70,17 +73,20 @@ interface Cluster {
 
 const MINUTE = 60_000;
 
-/** Subject names from routines' tagged lines, longest first, for naming them in untagged messages */
-function subjectLexicon(messages: readonly GroupingMessage[], options: ClusterOptions): string[] {
-  const names = new Set<string>();
+/**
+ * Subject names from routines' tagged lines, for naming them in untagged messages: a name tagged at least twice (so
+ * one stray tagged line can't add a subject), of two words or six letters or more
+ */
+function subjectLexicon(messages: readonly GroupingMessage[], options: ClusterOptions): SubjectLexicon {
+  const seen = new Map<string, number>();
   for (const m of messages) {
-    const about = recognize(m, options).about;
-    if (about?.startsWith("subject:")) {
-      const name = about.slice("subject:".length);
-      if (name.split(" ").length >= 2 || name.length >= 6) names.add(name);
+    const r = recognize(m, options);
+    if (r.aboutBy === "tagged" && r.about?.startsWith("subject:")) {
+      const name = r.about.slice("subject:".length);
+      if (name.split(" ").length >= 2 || name.length >= 6) seen.set(name, (seen.get(name) ?? 0) + 1);
     }
   }
-  return [...names].sort((a, b) => b.length - a.length);
+  return new SubjectLexicon([...seen].filter(([, n]) => n >= 2).map(([name]) => name));
 }
 
 /**
@@ -143,6 +149,10 @@ export function cluster(messages: readonly GroupingMessage[], options: ClusterOp
   const byKey = new Map<string, string>();
   const ofMessage = new Map<string, string>();
   const threadCluster = new Map<string, string>();
+  const threadOf = new Map<string, string>();
+  /** Whether the operator kept a message apart from anything in a cluster */
+  const cannotWith = (key: string, clusterId: string) =>
+    [...(cannot.get(key) ?? [])].some((other) => ofMessage.get(other) === clusterId);
   const lastBySender = new Map<string, { message: GroupingMessage; cluster: string; about: string | null }>();
   const lastInChannel = new Map<string, { message: GroupingMessage; cluster: string }>();
   const out = new Map<string, Placement>();
@@ -166,11 +176,13 @@ export function cluster(messages: readonly GroupingMessage[], options: ClusterOp
       scores.set(id, s);
     };
 
-    if (about) add(byKey.get(about) ?? similarSubject(byKey, about), w.sameKey, `sameKey ${about}`);
+    const named = recognized.aboutBy === "named" && !pins.has(m.key);
+    if (about) add(byKey.get(about) ?? similarSubject(byKey, about), named ? w.namedSubject : w.sameKey, `${named ? "namedSubject" : "sameKey"} ${about}`);
     const inThread = threadCluster.get(m.threadId);
     if (inThread) {
       const keys = clusters.get(inThread)!.keys;
-      const otherKey = about !== null && keys.size > 0 && !keys.has(about);
+      // A subject only named in passing doesn't take a reply out of its thread
+      const otherKey = about !== null && !named && keys.size > 0 && !keys.has(about);
       add(inThread, otherKey ? w.otherKeyInThread : w.thread, otherKey ? "thread, about another key" : "thread");
     }
     const senderSlot = `${m.senderId ?? "?"}|${m.channelId ?? "?"}`;
@@ -211,8 +223,28 @@ export function cluster(messages: readonly GroupingMessage[], options: ClusterOp
       clusters.set(id, { id, keys: new Set(), members: [] });
       reasons = ["new"];
     }
+    // Promotion: a reply that joins a key's case by that key takes its thread's keyless conversation along, when the
+    // conversation lives only in this thread (a merge of what was one case all along)
+    const threadOwn = threadCluster.get(m.threadId);
+    if (threadOwn && threadOwn !== id && about && !named && byKey.get(about) === id) {
+      const conv = clusters.get(threadOwn)!;
+      const onlyHere = conv.keys.size === 0 && conv.members.every((k) => threadOf.get(k) === m.threadId);
+      if (onlyHere && !conv.members.some((k) => cannotWith(k, id))) {
+        for (const k of conv.members) {
+          ofMessage.set(k, id);
+          clusters.get(id)!.members.push(k);
+          const p = out.get(k)!;
+          out.set(k, { ...p, cluster: id, reasons: [...p.reasons, `promoted with ${about}`] });
+        }
+        for (const [slot, last] of lastBySender) if (last.cluster === threadOwn) lastBySender.set(slot, { ...last, cluster: id });
+        for (const [ch, last] of lastInChannel) if (last.cluster === threadOwn) lastInChannel.set(ch, { ...last, cluster: id });
+        clusters.delete(threadOwn);
+        threadCluster.set(m.threadId, id);
+      }
+    }
     const c = clusters.get(id)!;
     c.members.push(m.key);
+    threadOf.set(m.key, m.threadId);
     if (about && !byKey.has(about)) {
       c.keys.add(about);
       byKey.set(about, id);

@@ -33,6 +33,11 @@ export interface Recognized {
   kind: MessageKind;
   /** The one key it's about: "ticket:…", "pr:…", "subject:…" or "release:…" */
   about: string | null;
+  /**
+   * How it's known: from a ticket, PR or release the message leads with (key), a routine's tagged line (tagged), or a
+   * subject the message only names, untagged (named), which is weaker evidence than a reply's thread
+   */
+  aboutBy: "key" | "tagged" | "named" | null;
   /** Keys it names but isn't about */
   mentions: string[];
   /** The routine lane a tagged line names ("drain"), if any */
@@ -48,6 +53,7 @@ export interface Recognized {
 const TAGGED_LINE = /^[\s*_]*\[([a-z][a-z0-9-]{1,30})\](.+)$/i;
 /** Where a tagged line's subject ends */
 const SUBJECT_END = /\(|:|\s[—–-]\s|,|\.\s|;/;
+const NAME_JOINERS = new Set(["and", "&", "of", "de", "la", "van", "von", "der", "du", "da", "di", "y", "e"]);
 /** Only the start of a first line is read for a tag and a subject */
 const MAX_FIRST_LINE = 500;
 const MAX_SUBJECT_WORDS = 6;
@@ -60,6 +66,11 @@ export function taggedSubject(firstLine: string): { lane: string; subject: strin
   const name = rest.split(SUBJECT_END)[0].trim().replace(/\s+/g, " ");
   const words = name.split(" ").filter(Boolean);
   if (words.length === 0 || words.length > MAX_SUBJECT_WORDS || !/^[\p{Lu}\d$]/u.test(name) || COUNTED.test(name)) return null;
+  // A name: capitalised words (and joining words), as "Northwind Traders" or "Rick Lee and Dana Ross"; or a short
+  // phrase led by a code, as "SPRING26 offer". A sentence ("Dana said yes by email") isn't one.
+  const capitalised = words.every((w) => /^[\p{Lu}\d&'$]/u.test(w) || NAME_JOINERS.has(w.toLowerCase()));
+  const coded = words.length <= 3 && /^[\p{Lu}\d]{3,}$/u.test(words[0]) && /\d/.test(words[0]);
+  if (!capitalised && !coded) return null;
   return { lane: m[1].toLowerCase(), subject: name.toLowerCase() };
 }
 
@@ -112,26 +123,44 @@ export function stripEmphasis(text: string): string {
   return text.replace(/(?<![\w/_*~])[_*~]+|(?<![_*~])[_*~]+(?![\w/_*~])/g, " ");
 }
 
-const subjectPatterns = new Map<string, RegExp>();
-function subjectPattern(subject: string): RegExp {
-  let re = subjectPatterns.get(subject);
-  if (!re) {
-    re = new RegExp(`(?<![\\p{L}\\p{N}])${subject.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\p{L}\\p{N}])`, "u");
-    subjectPatterns.set(subject, re);
+/**
+ * Known subject names, indexed by first word, with their patterns: built once per grouping run (no state is kept
+ * between runs), so a message is tested only against subjects whose first word it contains.
+ */
+export class SubjectLexicon {
+  private byFirstWord = new Map<string, Array<{ name: string; re: RegExp }>>();
+
+  constructor(names: Iterable<string>) {
+    for (const name of names) {
+      const first = name.split(" ")[0];
+      const re = new RegExp(`(?<![\\p{L}\\p{N}])${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\p{L}\\p{N}])`, "u");
+      this.byFirstWord.set(first, [...(this.byFirstWord.get(first) ?? []), { name, re }]);
+    }
   }
-  return re;
+
+  get size(): number {
+    return this.byFirstWord.size;
+  }
+
+  /** The known subjects a (lower-cased, normalised) text names */
+  found(head: string): string[] {
+    const words = new Set(head.split(/[^\p{L}\p{N}/'&$-]+/u).filter(Boolean));
+    const out: string[] = [];
+    for (const w of words) for (const s of this.byFirstWord.get(w) ?? []) if (s.re.test(head)) out.push(s.name);
+    return out;
+  }
 }
 
 /** The one known subject a message names near its start, as a whole phrase, or null for none or several */
-function namedSubject(text: string, subjects: readonly string[]): string | null {
+function namedSubject(text: string, subjects: SubjectLexicon): string | null {
   const head = stripEmphasis(text.slice(0, 300)).toLowerCase().replace(/\s+/g, " ");
-  const found = subjects.filter((s) => subjectPattern(s).test(head));
+  const found = subjects.found(head);
   // A longer name containing a shorter one ("dana lee" and "lee") is one subject
   const distinct = found.filter((s) => !found.some((o) => o !== s && o.includes(s)));
   return distinct.length === 1 ? distinct[0] : null;
 }
 
-export function recognize(message: GroupingMessage, options: ResolverOptions & { subjects?: readonly string[] }): Recognized {
+export function recognize(message: GroupingMessage, options: ResolverOptions & { subjects?: SubjectLexicon }): Recognized {
   const own = message.text;
   const lines = refsByLine(stripEmphasis(own), options);
   const about = aboutRef(lines);
@@ -155,9 +184,12 @@ export function recognize(message: GroupingMessage, options: ResolverOptions & {
   ));
   const kind: MessageKind = telemetry ? "telemetry" : report ? "report" : chatter ? "chatter" : "work";
 
-  const named = !tagged && options.subjects?.length ? namedSubject(own, options.subjects) : null;
+  const named = !tagged && options.subjects?.size ? namedSubject(own, options.subjects) : null;
   const subjectKey = tagged ? `subject:${tagged.subject}` : named ? `subject:${named}` : null;
-  const aboutKey = about.subject ?? subjectKey ?? releaseKey(own, message.senderKind);
+  const release = releaseKey(own, message.senderKind);
+  const aboutKey = about.subject ?? subjectKey ?? release;
+  const aboutBy = about.subject || (!subjectKey && release) ? "key" : tagged ? "tagged" : named ? "named" : null;
   const mentions = refs.filter((r) => r !== aboutKey && keyKind(r) !== "subject");
-  return { kind, about: kind === "work" ? aboutKey : null, mentions, lane: tagged?.lane ?? null, asks };
+  const work = kind === "work";
+  return { kind, about: work ? aboutKey : null, aboutBy: work && aboutKey ? aboutBy : null, mentions, lane: tagged?.lane ?? null, asks };
 }
