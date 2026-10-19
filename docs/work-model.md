@@ -838,7 +838,9 @@ Calls made while the maintainer was away, each easy to change. Newest last.
 8. **Long threads stay together.** Letting a subject named in passing split a thread that already has another
    subject cost dev F1 (0.86 to 0.85). A reply leaves its thread's case only for a ticket, PR or record another
    case already holds: a key first named in a conversation (a sub-task, a duplicate, the PR it spawned) is that
-   conversation's. That rule raised F1 from 0.84 to 0.88 on dev and from 0.82 to 0.87 on test.
+   conversation's. That rule raised F1 from 0.84 to 0.88 on dev and from 0.82 to 0.87 on test. Holding back such a key
+   when the conversation was already about another one (so later messages about it start their own case) was tried
+   and dropped: of the pairs drawn where that would act, 4 of 5 judged were the same work.
 9. **Hand-set weights stay.** Fitting them to the dev pairs overfit (test F1 0.80 to 0.76); refit when the label
    set has grown.
 10. **The over-merge detector is on.** It cuts a case's weak bridge (a top-level exchange, a continuation or a
