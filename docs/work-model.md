@@ -180,8 +180,12 @@ prior"). The rule is a separate, standing thing whose source is that first messa
 A message moves no case when none of its parts does; that message is not work. A report or digest is not an act: it's
 a message whose assertive parts are about several cases or subjects, found by counting them (plan step 5). Each of
 those parts is activity on its own case (a `mention` assignment, not membership), so the report is a member of no
-case, never becomes one item, and never merges them. The pair labeller (section 6) judges whole messages, so it marks
-a report not work as a unit. A notification is a sender kind, not an act.
+case, never becomes one item, and never merges them. Where a report itself belongs depends on what it answers: one
+that answers a question about one case ("where are we with Northwind's renewal?") is progress on that case, a `member`
+of it; one that walks many cases at someone's request ("let's go over the outreach one by one") is the progress of an
+on-demand run (below). Its lines stay `mention`s either way. The pair labeller (section 6) judges whole messages the
+same way: a report is not work as a unit unless it answers a question about one case. A notification is a
+sender kind, not an act.
 
 **Who tags acts.** Every observation gets act claims, cheapest source first: fleet-pack recognizers for the runtime's
 telemetry and report formats, default-pack recognizers for ask moves and short acknowledgements, then the
@@ -207,6 +211,15 @@ the routine's normal ticking.
 Example: Monday's partner review finds a renewal due for Northwind and yields an engagement item (a new case) in
 the Northwind stream, with `origin` = this run; Contoso is reviewed with no action, one line on its stream; a
 partner with an open item gets an update on it, not a duplicate.
+
+A run can also start on demand, when a verified fleet member asks for a sweep ("go over our partners one by one")
+under the same conditions as a request that starts a case (section 5). It's a run of a declared routine, or of a
+built-in `review` routine with no cadence. Its sweep comes from that routine, or from a deterministic recognizer over
+subject kinds and stream keys ("our partners" is every partner subject), confirmed by the operator the first time;
+never from the model. Either way it's a schema-validated declarative selector over known subjects, never free text
+turned into a query. Items a run yields count against the requester's cap on items started, and each run has a cap of
+its own. The reports that walk it are its progress. Until on-demand runs exist (plan step 8), such a walk is a report
+that's a member of no case.
 
 ---
 
@@ -236,11 +249,61 @@ Claims at L2, each with its source and confidence:
   resolves the scope and any rule it replaces when confirming it (section 7);
 - **subject mentions:** "Northwind" as a partner, at some confidence, with the same relations. A subject `about`
   places the observation in that subject's stream;
-- **routine-run membership:** this observation is part of Monday's partner review.
+- **routine-run membership:** this observation is part of Monday's partner review;
+- **mined claims:** health, expectations, holder hints and facts (below).
 
 **Status decides surfacing, never membership.** The classifier's status (and the decision model's inbox flag) says
 whether something needs the operator. It is never consulted to decide what an observation belongs to. A noise
 message can still be evidence for an item, and an ask surfaces as an ask whatever the grouping (section 5).
+
+### What else a message tells us, and when to show it
+
+A message carries more than its case: a digest hides an ask to the operator, a status update says an agent's tool is
+down, a promise names a time. Claims can be about any entity, so the aim is to mine every message widely and interrupt
+rarely.
+
+| Claim | Example | Lands on | May interrupt when |
+|---|---|---|---|
+| An ask inside a report | "The restart decision is still waiting on Dana" | an ask (section 2) | at once, like any ask to the operator |
+| Health | "message tool still down, posted through the API", "the build agent's disk is full", "no access to #ops" | the agent, its tool or the fleet | it lasts or blocks a case; otherwise it's shown in the fleet view |
+| Expectation | "checking again tomorrow at 9" | the ask it's about, or else the observation's case | the time passes with nothing posted |
+| Holder hint | "Alex still hasn't answered Relay" | shown beside the case's holder | never on its own; it's evidence that a case is stuck |
+| Fact | "Northwind's renewal date is 1 March" | the subject | never; it's shown when the subject is opened |
+| Contradiction (derived by the engine) | Relay lists the Northwind draft as awaiting approval three days after Dana approved it | the case | it may mean the case is stuck: shown as possibly stuck |
+
+Interrupting is surfacing, not an action. Core sets each claim type's surfacing policy, and it combines with the
+classifier's status: a mined claim can add surfacing the status didn't, never remove it. Everything else waits on the
+page of what it's about. Until the fleet and stream views exist (plan step 9), mined claims are recorded, and those
+about a case are shown on its page. A claim inside one line of a report attaches to the case that line's key or
+subject claims point to; an expectation with neither an ask nor a case is dropped. Packs add recognizers for these
+core claim types. A claim type a pack defines is namespaced (`<pack>/<type>`), schema-validated, never reuses a core
+name, and is display-only.
+
+The limits, which section 7 relies on:
+
+- **Add, never hide.** An expectation never pushes back a stuck-case or held-too-long check; a later "ok" never clears
+  a "down" from another source; wording an ask as a fact or a report never keeps it from surfacing, since ask claims
+  decide that.
+- **Who can author.** Health, expectation and holder-hint claims, and the claims a contradiction is derived from,
+  count only from `parts.own` of adapter-verified fleet members and agents, or from a fleet pack's telemetry
+  recognizers. From anyone else, and from quoted or forwarded text, they're recorded as assertive content and never
+  interrupt. Health about a human is dropped: it's health data about a person. MCP reports have unverified authors
+  (section 7), so their mined claims are recorded and never interrupt. An agent's own tools and resources count as
+  about itself; a claim about someone other than its author ("Alex will reply by Friday", "Atlas is down") is evidence
+  only, never an interrupt on its own. Contradictions are also capped per author per day. Interrupts from mined claims
+  are grouped per agent or tool and capped per author and per observation per day.
+- **Never authority.** Holder hints, health and expectations never move an ask's baton, which moves only by ask moves
+  under section 7. A report's line about an ask is never a follow-up on it, so it never reopens or closes it.
+- **Contradictions only surface.** The engine finds them by comparing claims and state; the model never asserts one.
+  They never change state, reopen or close an ask, or produce a pre-filled reply or approval: the operator writes any
+  resend. Each shows the contradicting claim with its source, and they're capped per observation.
+- **Facts are spans.** A fact's subject is a resolved subject id or an unconfirmed candidate, its attribute comes from
+  a closed list a pack declares, and its value is its span, tombstoned with its source. Facts are about subjects,
+  never about people; subjects that are also contacts get no facts until open question 6 is settled. A fact from an
+  observation about a sensitive subject is sensitive wherever it's shown, and a model sees fact text only delimited as
+  untrusted.
+- **Times are spans.** An expectation's time is a span resolved against the observation's time in the operator's time
+  zone, like a rule's end date; a time before the observation or beyond a set horizon is dropped.
 
 ---
 
@@ -298,7 +361,15 @@ type ClaimBody =
   | { type: "ask"; move: "request" | "promise" | "refuse" | "report_done" | "accept" | "reject" | "withdraw";
       from: Handle; to?: Handle; askRef?: string; span?: { start: number; end: number } }
   | { type: "subjectMention"; subjectKind: string; name: string; relation: "about" | "dependency" | "mention" }
-  | { type: "runMember"; routine: string; run: string; subject?: string };
+  | { type: "runMember"; routine: string; run: string; subject?: string }
+  // Mined claims (section 3): names are resolved by the engine, as a rule's scope is
+  | { type: "health"; about: { kind: "agent" | "tool" | "resource" | "fleet"; name?: string };
+      state: "ok" | "degraded" | "down"; span: { start: number; end: number } }
+  | { type: "expectation"; who?: string; span: { start: number; end: number };   // who absent = the author;
+      askRef?: string }                                                         // span: "tomorrow at 9"
+  | { type: "holderHint"; name: string; span: { start: number; end: number } }  // display and stuck evidence only
+  | { type: "fact"; subjectKind: string; subject: string; attribute: string;    // attribute: from a pack's list
+      span: { start: number; end: number } };
 
 /** What a recognizer returns; the engine adds the source ("<recognizer>@<version>", "model:<name>@<prompt>") */
 interface ClaimDraft {
@@ -422,11 +493,14 @@ operator depends on clustering. A work item (a case) starts only from:
 - a routine run yielding it.
 
 A subject never starts an item. A subject `about` places the observation in the subject's stream and is a strong
-signal for which case inside that stream it belongs to; it never makes all of a subject's observations one item.
-Anything else is activity on its stream, conversation or run: assertive parts, a report, a directive nobody has
-answered, a commissive nobody asked for. Expressive and telemetry parts are not work. Each author has a cap on items
-started per day; unverified authors share one cap per source, and MCP tools count against one cap for the MCP source
-as a whole, never against a claimed agent name.
+signal for which case inside that stream it belongs to; it never makes all of a subject's observations one item. A
+question about existing work ("where are we with X?", told apart by the default pack's request recognizer: a question
+naming a key or an open case's subject) never starts a case, and when the recognizer is unsure, nothing starts: its
+answer is activity on X's case or stream. A request to go through many starts an on-demand run, not a case. Anything
+else is activity on its stream, conversation or run: assertive parts, a report, a directive nobody has answered, a
+commissive nobody asked for. Expressive and telemetry parts are not work. Each author has a cap on items started per
+day; unverified authors share one cap per source, and MCP tools count against one cap for the MCP source as a whole,
+never against a claimed agent name.
 
 ### Deciding
 
@@ -519,6 +593,9 @@ The current eval labels statuses. Identity needs its own labels and its own numb
 Message content, model output, MCP reports and packs are untrusted. Identity decisions change what reaches the
 operator and where their replies go, so they get the same care as the action endpoints.
 
+- **Mined claims only add surfacing.** Health, expectations, holder hints, facts and contradictions follow the limits
+  in section 3 ("What else a message tells us"): they never hide an interrupt, move a baton, change state or trigger
+  an action.
 - **Only the operator writes constraints.** Constraints with `decided_by = operator` come only from operator actions
   in the UI; the backfill of past operator actions is stamped `backfill`. The endpoints that write constraints get the
   same host and origin checks as the action endpoints. The engine stamps every claim's source; a recognizer can't set
@@ -634,20 +711,23 @@ at the end of this plan.
    English and `&gt;` parsing that leaves core, `Extractor` and `ContinuationStrategy` wrapped as recognizers, and
    ask, act and rule claims. `subjects`, `subject_aliases` and `stream_keys`: subjects from lane-tagged lines (the dry
    run's `subject-rule-candidates.json` is the starting list) give stream membership and a candidate signal, never an
-   item key. Report detection counts subjects, not only tickets.
+   item key. Report detection counts subjects, not only tickets. Health, expectation, holder-hint and fact claims are
+   recorded from here and shown on the case's page; they don't yet interrupt.
 6. **Resolver in shadow mode.** Run the resolver in the pipeline beside the current linker, writing `assignments`
    with scores but not changing what the operator sees; compare the two on the pair labels. Add scored candidates
    and `item_lineage`.
 7. **Cutover.** Switch the pipeline to the resolver once its pair-label precision and recall beat the current
    linker's by an agreed margin; re-run the backfill of constraints first.
-8. **Routines, runs and rules.** Routines are declared by fleet packs where the runtime exposes a schedule,
-   otherwise proposed from recurring report patterns and confirmed by the operator. Missed and stuck runs surface.
-   Add `rules`: proposals from rule claims wait in a low-priority review list, with a count on the actor, subject
-   or routine they'd apply to; confirmed rules are shown there. Rules never appear in Needs me.
+8. **Routines, runs and rules.** Routines are declared by fleet packs where the runtime exposes a schedule, otherwise
+   proposed from recurring report patterns and confirmed by the operator. On-demand runs, of a routine or of the
+   built-in `review` routine, start from a verified request (section 2). Missed and stuck runs surface. Add `rules`:
+   proposals from rule claims wait in a low-priority review list, with a count on the actor, subject or routine they'd
+   apply to; confirmed rules are shown there. Rules never appear in Needs me.
 9. **Done policy, the stream view, then re-linking.** A configurable done policy (which source leads, tracker or
-   classifier; quiet time alone never closes an item); the stream view and stream health, over the `stream_keys`
-   that exist from step 5; and re-linking as continuous, constraint-respecting re-clustering with a reviewable diff
-   on version bumps.
+   classifier; quiet time alone never closes an item); the stream view and stream health, over the `stream_keys` that
+   exist from step 5; the surfacing policies for mined claims (missed expectations, health that blocks work,
+   contradictions) and the fleet view; and re-linking as continuous, constraint-respecting re-clustering with a
+   reviewable diff on version bumps.
 
 ---
 
@@ -678,6 +758,8 @@ at the end of this plan.
    stored, logged or shown; never sent to a remote model by default; file text not proposed as a rule isn't kept;
    and a file the agent can write to is marked as a weaker source. Adopting this would amend section 7's authorship
    bullet with an explicit exception: `source_observation` becomes optional, with the pack as `author`.
+10. **Mined claims.** How long must a health problem last, or how many cases must it block, before it interrupts?
+    Which contradictions are worth surfacing, and how is a pack's health format validated?
 
 ---
 
