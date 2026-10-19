@@ -77,7 +77,7 @@ export function taggedSubject(firstLine: string): { lane: string; subject: strin
 }
 
 /**
- * The record a message's first line links to, as a key: a URL whose query names a record ("…?record=a1b2c3d4",
+ * The record the start of a message links to, as a key: a URL whose query names a record ("…?record=a1b2c3d4",
  * "…&id=4471", "recordId="), as tools' alerts about a quote, an order or a lead do. "record:<host><path>#<id>".
  */
 const RECORD_PARAM = /^(?:record|recordid|record_id|id|issue|ticket|order|quote)$/i;
@@ -218,7 +218,8 @@ export function recognize(message: GroupingMessage, options: ResolverOptions & {
   const named = !tagged && options.subjects?.size ? namedSubject(own, options.subjects) : null;
   const subjectKey = tagged ? `subject:${tagged.subject}` : named ? `subject:${named}` : null;
   const release = releaseKey(own, message.senderKind);
-  const record = about.subject || subjectKey || release ? null : recordKey(firstLine);
+  // An alert often puts its link on the line after its header: the start of the message, not just its first line
+  const record = about.subject || subjectKey || release ? null : recordKey(own.slice(0, MAX_FIRST_LINE));
   const aboutKey = about.subject ?? subjectKey ?? release ?? record;
   const aboutBy = about.subject || (!subjectKey && (release || record)) ? "key" : tagged ? "tagged" : named ? "named" : null;
   const mentions = refs.filter((r) => r !== aboutKey && keyKind(r) !== "subject");
