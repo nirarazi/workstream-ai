@@ -787,6 +787,13 @@ at the end of this plan.
    bullet with an explicit exception: `source_observation` becomes optional, with the pack as `author`.
 10. **Mined claims.** How long must a health problem last, or how many cases must it block, before it interrupts?
     Which contradictions are worth surfacing, and how is a pack's health format validated?
+11. **Process from the tracker.** A tracker's workflows (statuses, transitions, required fields, who moves an item
+    where) describe how the org works: a review step before done, a QA gate, a sales stage that needs a signature.
+    Learned as a process per case type, it could tell the classifier what "done" means for a case and which step
+    it's at, show a case's place in its process, and find where cases stall, skip steps or bounce back, then
+    report on it and suggest changes. Open: whether the process is read from the tracker's workflow definitions or
+    inferred from history (what actually happens, which often differs), and how to keep this an inbox that
+    interrupts rarely, not a process dashboard: a stall surfaces only when it needs the operator.
 
 ---
 
