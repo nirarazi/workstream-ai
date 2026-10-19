@@ -63,6 +63,8 @@ export interface Placement {
   recognized: Recognized;
   /** Why it went where it did: "sameKey ticket:OPS-1 +10", "thread +4", … */
   reasons: string[];
+  /** The message whose evidence drew it in most (its thread's last, the first with its key, …): an edge of the graph */
+  via: string | null;
 }
 
 interface Cluster {
@@ -150,6 +152,9 @@ export function cluster(messages: readonly GroupingMessage[], options: ClusterOp
   const ofMessage = new Map<string, string>();
   const threadCluster = new Map<string, string>();
   const threadOf = new Map<string, string>();
+  /** For the graph's edges: a cluster's first message with its key, and each thread's last placed message */
+  const firstWithKey = new Map<string, string>();
+  const lastInThread = new Map<string, string>();
   /** Whether the operator kept a message apart from anything in a cluster */
   const cannotWith = (key: string, clusterId: string) =>
     [...(cannot.get(key) ?? [])].some((other) => ofMessage.get(other) === clusterId);
@@ -163,38 +168,46 @@ export function cluster(messages: readonly GroupingMessage[], options: ClusterOp
     // The operator's pin or link says it's work, whatever the recognizers make of it
     const tied = pins.has(m.key) || must.has(m.key);
     if (notAnItem.has(m.key) || (recognized.kind !== "work" && !tied)) {
-      out.set(m.key, { cluster: null, recognized, reasons: [notAnItem.has(m.key) ? "operator: not an item" : recognized.kind] });
+      out.set(m.key, { cluster: null, recognized, reasons: [notAnItem.has(m.key) ? "operator: not an item" : recognized.kind], via: null });
       continue;
     }
     const about = pins.get(m.key) ?? recognized.about;
-    const scores = new Map<string, { score: number; reasons: string[] }>();
-    const add = (id: string | undefined, points: number, reason: string) => {
+    const scores = new Map<string, { score: number; reasons: string[]; via: string | null; strongest: number }>();
+    const add = (id: string | undefined, points: number, reason: string, via: string | null | undefined) => {
       if (!id) return;
-      const s = scores.get(id) ?? { score: 0, reasons: [] };
+      const s = scores.get(id) ?? { score: 0, reasons: [], via: null, strongest: 0 };
       s.score += points;
       s.reasons.push(`${reason} ${points >= 0 ? "+" : ""}${points}`);
+      if (via && points > s.strongest) {
+        s.via = via;
+        s.strongest = points;
+      }
       scores.set(id, s);
     };
 
     const named = recognized.aboutBy === "named" && !pins.has(m.key);
-    if (about) add(byKey.get(about) ?? similarSubject(byKey, about), named ? w.namedSubject : w.sameKey, `${named ? "namedSubject" : "sameKey"} ${about}`);
+    if (about) {
+      const holder = byKey.get(about) ?? similarSubject(byKey, about);
+      add(holder, named ? w.namedSubject : w.sameKey, `${named ? "namedSubject" : "sameKey"} ${about}`, holder ? firstWithKey.get(holder) : null);
+    }
     const inThread = threadCluster.get(m.threadId);
     if (inThread) {
       const keys = clusters.get(inThread)!.keys;
       // A subject only named in passing doesn't take a reply out of its thread
       const otherKey = about !== null && !named && keys.size > 0 && !keys.has(about);
-      add(inThread, otherKey ? w.otherKeyInThread : w.thread, otherKey ? "thread, about another key" : "thread");
+      // However long after: on the labelled pairs, a late reply in a thread is still that thread's work
+      add(inThread, otherKey ? w.otherKeyInThread : w.thread, otherKey ? "thread, about another key" : "thread", lastInThread.get(m.threadId));
     }
     const senderSlot = `${m.senderId ?? "?"}|${m.channelId ?? "?"}`;
     const before = lastBySender.get(senderSlot);
     if (before) {
       const gap = Date.parse(m.at) - Date.parse(before.message.at);
       const keyless = !about && recognized.mentions.length === 0;
-      if (m.senderKind === "human" && keyless && gap <= followUpMs) add(before.cluster, w.followUp, "followUp");
-      else if (keyless && !before.about && gap <= continuationMs) add(before.cluster, w.continuation, "continuation");
+      if (m.senderKind === "human" && keyless && gap <= followUpMs) add(before.cluster, w.followUp, "followUp", before.message.key);
+      else if (keyless && !before.about && gap <= continuationMs) add(before.cluster, w.continuation, "continuation", before.message.key);
       // A near-copy about another key is a template ("OPS-1 status: …", then "OPS-2 status: …"), not the same post
       const sameSubject = !about || !before.about || about === before.about;
-      if (sameSubject && gap <= nearCopyMs && overlap(m.text, before.message.text) >= 0.6) add(before.cluster, w.nearCopy, "nearCopy");
+      if (sameSubject && gap <= nearCopyMs && overlap(m.text, before.message.text) >= 0.6) add(before.cluster, w.nearCopy, "nearCopy", before.message.key);
     }
     // A top-level post answering someone else's just before it in the channel, where a person is one of the two
     const lastHere = m.channelId ? lastInChannel.get(m.channelId) : undefined;
@@ -202,22 +215,24 @@ export function cluster(messages: readonly GroupingMessage[], options: ClusterOp
       && lastHere.message.senderId !== m.senderId
       && (m.senderKind === "human" || lastHere.message.senderKind === "human")
       && Date.parse(m.at) - Date.parse(lastHere.message.at) <= exchangeMs) {
-      add(lastHere.cluster, w.exchange, "exchange");
+      add(lastHere.cluster, w.exchange, "exchange", lastHere.message.key);
     }
-    for (const other of must.get(m.key) ?? []) add(ofMessage.get(other), 1000, "operator: must link");
+    for (const other of must.get(m.key) ?? []) add(ofMessage.get(other), 1000, "operator: must link", other);
     // A cluster holding a message the operator kept apart from this one is out
     for (const other of cannot.get(m.key) ?? []) {
       const id = ofMessage.get(other);
-      if (id) scores.set(id, { score: -Infinity, reasons: ["operator: cannot link"] });
+      if (id) scores.set(id, { score: -Infinity, reasons: ["operator: cannot link"], via: null, strongest: 0 });
     }
 
-    let best: { id: string; score: number; reasons: string[] } | null = null;
+    let best: { id: string; score: number; reasons: string[]; via: string | null } | null = null;
     for (const [id, s] of scores) if (!best || s.score > best.score || (s.score === best.score && id < best.id)) best = { id, ...s };
     let id: string;
     let reasons: string[];
+    let via: string | null = null;
     if (best && best.score >= w.join) {
       id = best.id;
       reasons = best.reasons;
+      via = best.via;
     } else {
       id = `c${++next}`;
       clusters.set(id, { id, keys: new Set(), members: [] });
@@ -234,7 +249,7 @@ export function cluster(messages: readonly GroupingMessage[], options: ClusterOp
           ofMessage.set(k, id);
           clusters.get(id)!.members.push(k);
           const p = out.get(k)!;
-          out.set(k, { ...p, cluster: id, reasons: [...p.reasons, `promoted with ${about}`] });
+          out.set(k, { ...p, cluster: id, reasons: [...p.reasons, `promoted with ${about}`], via: p.via ?? m.key });
         }
         for (const [slot, last] of lastBySender) if (last.cluster === threadOwn) lastBySender.set(slot, { ...last, cluster: id });
         for (const [ch, last] of lastInChannel) if (last.cluster === threadOwn) lastInChannel.set(ch, { ...last, cluster: id });
@@ -248,12 +263,14 @@ export function cluster(messages: readonly GroupingMessage[], options: ClusterOp
     if (about && !byKey.has(about)) {
       c.keys.add(about);
       byKey.set(about, id);
+      firstWithKey.set(id, m.key);
     }
     ofMessage.set(m.key, id);
     if (!threadCluster.has(m.threadId)) threadCluster.set(m.threadId, id);
     lastBySender.set(senderSlot, { message: m, cluster: id, about });
     if (m.channelId) lastInChannel.set(m.channelId, { message: m, cluster: id });
-    out.set(m.key, { cluster: id, recognized, reasons });
+    lastInThread.set(m.threadId, m.key);
+    out.set(m.key, { cluster: id, recognized, reasons, via });
   }
   return out;
 }

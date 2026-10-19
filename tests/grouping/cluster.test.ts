@@ -57,6 +57,12 @@ describe("recognizers", () => {
     expect(digest).toMatchObject({ kind: "report", asks: true });
   });
 
+  it("reads a sweep's no-change post as telemetry, with or without a time first", () => {
+    expect(recognize(msg("No change since 11:15 check. Inbox unchanged."), options).kind).toBe("telemetry");
+    expect(recognize(msg("13:47 UTC = 9:47 AM EST. No changes since last sweep."), options).kind).toBe("telemetry");
+    expect(recognize(msg("No change needed on OPS-1, merging now"), options).kind).toBe("work");
+  });
+
   it("tells briefings, health checks and chatter from work", () => {
     expect(recognize(msg("*Mission status, Mon Oct 12, 07:15 UTC* • Atlas: blocked on review"), options).kind).toBe("report");
     expect(recognize(msg("_Daily tracker sync — Oct 12_ — 30 open tickets checked"), options).kind).toBe("report");

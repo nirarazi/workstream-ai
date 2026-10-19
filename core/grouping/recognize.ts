@@ -106,8 +106,9 @@ const HEALTH = /^[\W_]*all green\b|\bHEARTBEAT_OK\b|\bnothing needs a slack post
 /** A person checking on the fleet or greeting it, in a few words: "OK are we still alive?", "How are you", "Are you down?" */
 const CHATTER = /^[\W_]*(?:(?:ok|so|hey|hi)[,!]?\s+)?(?:are (?:we|you|they)(?: all)? (?:still )?(?:alive|up|down|there|ok|running|healthy)|how are you|good (?:morning|night)|thanks?(?: you)?|thx)\b[^\n]{0,40}$/i;
 
-/** Machine output: key=value lines, tick markers, idle heartbeats */
+/** Machine output: key=value lines, tick markers, idle heartbeats, a sweep's "no change since the last check" */
 const TELEMETRY = [
+  /^[\W_]*(?:\d{1,2}:\d{2}\s*(?:UTC|[AP]M)?[^.\n]{0,40}\.\s*)?(?:no (?:new )?changes?|nothing (?:has )?changed|nothing new)(?:\s+since\b|\s*[.!:]|\s*$)/i,
   /^[A-Z][A-Z0-9_]*=\S+(?:\s+[a-z_]+=\S+)*\s*$/,
   /^[A-Z][A-Z0-9_]{2,}(?:\s+[a-z_]+=\S+)+\s*$/,
   /\bheartbeat tick\b/i,

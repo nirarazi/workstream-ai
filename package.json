@@ -23,6 +23,7 @@
     "eval:pairs-dump": "tsx core/eval/pairs-dump.ts",
     "eval:agreement": "tsx core/eval/agreement.ts",
     "eval:constraint-labels": "tsx core/eval/constraint-labels.ts",
+    "regroup": "tsx core/grouping/regroup-cli.ts",
     "engine": "WORKSTREAM_DEV_UI=true tsx watch core/server.ts",
     "dev:web": "concurrently \"WORKSTREAM_DEV_UI=true tsx watch core/server.ts\" \"vite\"",
     "start:web": "vite build && WORKSTREAM_SERVE_STATIC=true tsx core/server.ts"
