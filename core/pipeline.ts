@@ -667,7 +667,7 @@ export class Pipeline {
   private isValidWorkItemId(id: string): boolean {
     // Also allow synthetic IDs (thread:xxx), and any work item that already exists (e.g. one an agent created over
     // MCP as "deploy-payments"): the prompt offers those as candidates
-    if (id.startsWith("thread:") || this.graph.getWorkItemById(id)) return true;
+    if (id.startsWith("thread:") || this.graph.getWorkItemByRef(id)) return true;
     const prefixes = this.getValidPrefixes();
     const pullRequest = /^PR\s*#?\d+$/i.test(id);
     // No prefixes known: accept a ticket key (but not a technical term like UTF-8) or a pull request
@@ -818,7 +818,7 @@ export class Pipeline {
 
     // Step 0b: Inherit work item from existing thread (if already linked)
     const existingThread = this.graph.getThreadById(thread.id);
-    const inheritedWorkItemId = existingThread?.workItemId ?? null;
+    const inheritedWorkItemId = existingThread?.workItemId ? this.graph.resolveItemRef(existingThread.workItemId) : null;
     const allWorkItemIds = new Set<string>();
     // The item this thread is about: the one it already belongs to, or the open item a repeated alert joins
     let ownItemId = inheritedWorkItemId;
@@ -980,7 +980,8 @@ export class Pipeline {
       }
       // A digest makes none of the items it names the thread's own: they're all mentioned. Decided as the linker does,
       // from all the IDs in the text, linked or not, so the two agree (IDs the model adds don't make a message a digest).
-      const digest = this.canBeDigest(message) && namesDigest(this.linker.extractIds(message.text), ownItemId);
+      const digest = this.canBeDigest(message)
+        && namesDigest(this.linker.extractIds(message.text).map((id) => this.graph.resolveItemRef(id)), ownItemId);
 
       // The IDs in the text as the model may write them back ("ops-77", "OPS 77" and "OPS‑77" all name OPS-77), and
       // the model's IDs and lines in that form: the linked ID where it is one, else upper-cased when the text names it
@@ -1047,7 +1048,7 @@ export class Pipeline {
       if (allWorkItemIds.size === 0 && classification.status !== "noise" && !digest) {
         const syntheticId = `thread:${thread.id}`;
         // A message classified late (held for a retry) mustn't overwrite the state a newer message already set
-        if (!this.isOlderThanStatus(this.graph.getWorkItemById(syntheticId), message)) {
+        if (!this.isOlderThanStatus(this.graph.getWorkItemByRef(syntheticId), message)) {
           this.graph.upsertWorkItem({
             id: syntheticId,
             source: "inferred",
@@ -1060,6 +1061,12 @@ export class Pipeline {
         allWorkItemIds.add(syntheticId);
         log.debug("Created synthetic work item for unticketed thread", syntheticId, classification.title);
       }
+
+      // From here on, the items the IDs name now: an ID whose item was merged into another is that one
+      const resolve = (id: string) => this.graph.resolveItemRef(id);
+      const named = [...allWorkItemIds].map(resolve);
+      allWorkItemIds.clear();
+      for (const id of named) allWorkItemIds.add(id);
 
       // Step 3: Upsert agent
       const agent = this.graph.upsertAgent({
@@ -1113,6 +1120,7 @@ export class Pipeline {
       // Step 6: Update work item status and write junction rows
       const validatedBreakdownMap = new Map(
         lines
+          .map((b) => ({ ...b, workItemId: resolve(b.workItemId) }))
           .filter((b) => allWorkItemIds.has(b.workItemId))
           .map((b) => [b.workItemId, b]),
       );
@@ -1122,7 +1130,7 @@ export class Pipeline {
       // their account.
       const fromTheOperator = this.isOperator(message);
       const operatorsWordApplies = fromTheOperator && !message.postedByApp;
-      const namedHere = operatorsWordApplies ? new Set(this.linker.extractIds(ownLines(message.text))) : new Set<string>();
+      const namedHere = operatorsWordApplies ? new Set(this.linker.extractIds(ownLines(message.text)).map(resolve)) : new Set<string>();
       for (const workItemId of allWorkItemIds) {
         // Write junction row (primary for the first/inherited ID, mentioned for the rest)
         const relation = workItemId === primaryWorkItemId ? "primary" : "mentioned";
@@ -1249,8 +1257,11 @@ export class Pipeline {
       for (const workItemId of allWorkItemIds) {
         // Enrichment is best-effort and the event is already stored: after stop() just skip the rest
         if (stopped()) break;
+        // The tracker knows the item by its own ticket key, not its id
+        const ticket = this.graph.getItemKeys(workItemId).find((k) => k.key.startsWith("ticket:"))?.key.slice("ticket:".length);
+        if (!ticket) continue;
         try {
-          const detail = await this.taskAdapter.getWorkItem(workItemId);
+          const detail = await this.taskAdapter.getWorkItem(ticket);
           if (stopped()) break;
           if (detail) {
             this.graph.upsertEnrichment({

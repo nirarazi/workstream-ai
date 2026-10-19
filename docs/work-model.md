@@ -608,7 +608,10 @@ merges two items, the earlier snooze or dismissal wins. Either way the operator 
 
 ### Contracts that assume id = key
 
-These change in step 2 of the plan, each with a deprecation path:
+Each changes with a deprecation path. Step 2 of the plan changes the task adapter, MCP and `relink.ts` contracts,
+and references from messages and agents, which resolve through `item_keys` (an ID whose item was merged into
+another names that one). The classifier's candidates and the `thread:` tests wait for step 6, when the resolver
+starts minting ULIDs: until then the current linker's ids are still shaped like their keys, so those contracts hold.
 
 - **`TaskAdapter.getWorkItem(id)`** (`core/adapters/tasks/interface.ts:27`, called at `core/pipeline.ts:1237`) and
   its siblings take a ticket key, looked up from `item_keys`, not an item id. `enrichments` gains a key column.
@@ -754,9 +757,10 @@ at the end of this plan.
    adapter. MCP reports get `mcp-report:<engine-assigned id>` as their `dedupeKey`, a deliberate exception, since the
    MCP server assigns message ids itself (`core/mcp/server.ts:53`). Slack's reply, quote and permalink refs are stored
    (the resolver's rule 4 needs them), as `observation_refs` edges. Add `item_keys` and a key column on `enrichments`;
-   new items get ULIDs, existing ids stay as opaque ids; migrate the id-equals-key contracts (section 5). Task
-   adapters report their item types' hierarchy, and each type gets a role (container, case or step, section 2) with
-   the operator's overrides: a step's key points at its parent's item, a duplicate's at the original's.
+   existing ids stay as they are and are opaque from here on; references from messages and agents resolve through
+   keys, and the id-equals-key contracts that don't wait for ULIDs migrate (section 5). Task adapters report their
+   item types' hierarchy, and each type gets a role (container, case or step, section 2) with the operator's
+   overrides: a step's key points at its parent's item, a duplicate's at the original's.
 3. **Constraints.** Add `constraints`; merge, unmerge, link, unlink and "Not work" write or retire them from here
    on; backfill earlier actions from `work_item_merges` and `threads.manually_linked`.
 4. **Asks on observations, and actors.** Attach asks to observations, not items. Here asks still come from the
@@ -773,9 +777,10 @@ at the end of this plan.
    recorded from here and shown on the case's page; they don't yet interrupt. The lab gets a case-neighbourhood view
    over observations, refs and claims (section 3, "The graph").
 6. **Resolver in shadow mode.** Run the resolver in the pipeline beside the current linker, writing `assignments` with
-   scores but not changing what the operator sees; compare the two on the pair labels. Add scored candidates and
-   `item_lineage`, link prediction for candidates, and a bridge and minimum-cut over-merge detector scored on the pair
-   labels.
+   scores but not changing what the operator sees; compare the two on the pair labels. Items the resolver makes get
+   ULIDs, so the API gives each item its display key and the UI and the classifier's candidates read keys, not ids
+   (section 5, "Contracts"). Add scored candidates and `item_lineage`, link prediction for candidates, and a bridge
+   and minimum-cut over-merge detector scored on the pair labels.
 7. **Cutover.** Switch the pipeline to the resolver once its pair-label precision and recall beat the current
    linker's by an agreed margin; re-run the backfill of constraints first.
 8. **Routines, runs and rules.** Routines are declared by fleet packs where the runtime exposes a schedule, otherwise

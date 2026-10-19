@@ -122,3 +122,40 @@ describe("the item key backfill", () => {
     third.close();
   });
 });
+
+describe("resolveItemRef", () => {
+  let db: Database;
+  let graph: ContextGraph;
+
+  beforeEach(() => {
+    db = new Database(":memory:");
+    graph = new ContextGraph(db);
+  });
+
+  afterEach(() => db.close());
+
+  it("names the live item: by id, by the key a merge moved, or by an agent's MCP id", () => {
+    graph.upsertWorkItem({ id: "OPS-101", source: "jira" });
+    graph.upsertWorkItem({ id: "OPS-200", source: "jira" });
+    graph.upsertWorkItem({ id: "northwind-export", source: "mcp" });
+    expect(graph.resolveItemRef("OPS-101")).toBe("OPS-101");
+    expect(graph.resolveItemRef("northwind-export")).toBe("northwind-export");
+    expect(graph.resolveItemRef("OPS-999")).toBe("OPS-999");
+
+    graph.mergeWorkItems("OPS-101", "OPS-200");
+    expect(graph.resolveItemRef("OPS-101")).toBe("OPS-200");
+    expect(graph.resolveItemRef("ops-101")).toBe("OPS-200");
+    expect(graph.getWorkItemByRef("OPS-101")!.id).toBe("OPS-200");
+    // The operator's actions by id still mean that very item
+    expect(graph.getWorkItemById("OPS-101")!.mergedInto).toBe("OPS-200");
+  });
+
+  it("sends an update for a merged item's id to the item it was merged into", () => {
+    graph.upsertWorkItem({ id: "OPS-101", source: "jira" });
+    graph.upsertWorkItem({ id: "OPS-200", source: "jira" });
+    graph.mergeWorkItems("OPS-101", "OPS-200");
+    graph.upsertWorkItem({ id: "OPS-101", source: "mcp", currentAtcStatus: "blocked_on_human" });
+    expect(graph.getWorkItemById("OPS-200")!.currentAtcStatus).toBe("blocked_on_human");
+    expect(graph.getWorkItemById("OPS-101")!.currentAtcStatus).toBeNull();
+  });
+});

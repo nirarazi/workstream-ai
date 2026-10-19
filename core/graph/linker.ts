@@ -41,16 +41,18 @@ export class WorkItemLinker {
    * that has no ticket of its own yet ("first" in extraction order: by extractor, then pattern, then position, not
    * necessarily first in the text). Other IDs are linked only when they're work items already, so an ID mentioned in
    * passing (in a digest, a plan, a reply about another ticket) doesn't become an item nobody works on here.
-   * Returns the IDs linked; extractIds has all the message names.
+   * Returns the IDs linked, as the message names them (resolveItemRef gives the items they name now); extractIds has
+   * all the message names.
    */
   linkMessage(text: string, threadId: string, canBeDigest = true): string[] {
     const extracted = this.extractIds(text);
     const ownItemId = this.graph.getThreadById(threadId)?.workItemId ?? null;
-    const digest = canBeDigest && namesDigest(extracted, ownItemId);
+    // An ID naming an item that's another's now (merged into it) counts as that item
+    const digest = canBeDigest && namesDigest(extracted.map((id) => this.graph.resolveItemRef(id)), ownItemId);
 
     const ticketOfItsOwn = ownItemId !== null && !ownItemId.startsWith("thread:");
     const workItemIds = extracted.filter((id, i) => {
-      if (this.graph.getWorkItemById(id)) return true;
+      if (this.graph.getWorkItemByRef(id)) return true;
       if (i > 0 || digest || ticketOfItsOwn) {
         log.debug("Not creating a work item for an ID only mentioned", id);
         return false;
@@ -60,11 +62,12 @@ export class WorkItemLinker {
       return true;
     });
 
-    // Write junction rows for all extracted IDs
-    for (let i = 0; i < workItemIds.length; i++) {
+    // Write junction rows for all extracted IDs, for the items they name now
+    const itemIds = workItemIds.map((id) => this.graph.resolveItemRef(id));
+    for (let i = 0; i < itemIds.length; i++) {
       // In a digest only the thread's own item (if it names it) stays primary
-      const relation = digest ? (workItemIds[i] === ownItemId ? "primary" : "mentioned") : i === 0 ? "primary" : "mentioned";
-      this.graph.linkThreadWorkItem(threadId, workItemIds[i], relation);
+      const relation = digest ? (itemIds[i] === ownItemId ? "primary" : "mentioned") : i === 0 ? "primary" : "mentioned";
+      this.graph.linkThreadWorkItem(threadId, itemIds[i], relation);
     }
 
     // Keep threads.work_item_id in sync (backwards compatibility)
@@ -76,11 +79,11 @@ export class WorkItemLinker {
           channelId: thread.channelId,
           channelName: thread.channelName,
           platform: thread.platform,
-          workItemId: workItemIds[0],
+          workItemId: itemIds[0],
           lastActivity: thread.lastActivity,
           messageCount: thread.messageCount,
         });
-        log.debug("Linked thread to work item", threadId, workItemIds[0]);
+        log.debug("Linked thread to work item", threadId, itemIds[0]);
       }
     }
 

@@ -18,7 +18,7 @@ import type {
 } from "../types.js";
 import type { Database } from "./db.js";
 import type { Extractor } from "./extractors/interface.js";
-import { legacyKeyOf, type ItemKey } from "./item-keys.js";
+import { keysForRef, legacyKeyOf, type ItemKey } from "./item-keys.js";
 import type { Observation, ObservationDraft, ObservationRefKind } from "../observations/types.js";
 import { ulid } from "../observations/ulid.js";
 import type {
@@ -446,6 +446,9 @@ export class ContextGraph {
     pinned?: boolean;
   }): WorkItem {
     const now = new Date().toISOString();
+    // A reference to a key another item holds now (merged into it, say) updates that item
+    const id = this.resolveItemRef(item.id);
+    if (id !== item.id) log.debug("Work item reference", item.id, "resolved to", id);
 
     const stmt = this.db.db.prepare(`
       INSERT INTO work_items (id, source, title, external_status, assignee, url, current_atc_status, current_confidence, status_at, snoozed_until, pinned, created_at, updated_at)
@@ -464,7 +467,7 @@ export class ContextGraph {
         updated_at = excluded.updated_at
     `);
     stmt.run(
-      item.id,
+      id,
       item.source,
       item.title ?? "",
       item.externalStatus ?? null,
@@ -478,10 +481,38 @@ export class ContextGraph {
       now,
       now,
     );
-    log.debug("Upserted work item", item.id);
-    this.ensureItemKey(item.id, item.source);
+    log.debug("Upserted work item", id);
+    this.ensureItemKey(id, item.source);
 
-    return this.getWorkItemById(item.id)!;
+    return this.getWorkItemById(id)!;
+  }
+
+  /**
+   * The live item a reference from a message or an agent names: the item with that id when it's live, else the item
+   * holding a key the reference is (a ticket key, a thread key, an MCP id), else the live end of a merged item's
+   * chain. A reference nothing holds is returned as it is, for a new item to take. Operator actions on an item by its
+   * id (unmerging one, say) don't go through this: they mean that very item.
+   */
+  resolveItemRef(ref: string): string {
+    const db = this.db.db;
+    const row = db.prepare("SELECT merged_into FROM work_items WHERE id = ?").get(ref) as { merged_into: string | null } | undefined;
+    if (row && !row.merged_into) return ref;
+    for (const key of keysForRef(ref)) {
+      const holder = this.findItemByKey(key);
+      if (holder) return holder;
+    }
+    if (!row) return ref;
+    let live = ref;
+    for (let hops = 0, next: string | null = row.merged_into; next && hops < 20; hops++) {
+      live = next;
+      next = (db.prepare("SELECT merged_into FROM work_items WHERE id = ?").get(next) as { merged_into: string | null } | undefined)?.merged_into ?? null;
+    }
+    return live;
+  }
+
+  /** The live item a reference names (see resolveItemRef), or null when there's none */
+  getWorkItemByRef(ref: string): WorkItem | null {
+    return this.getWorkItemById(this.resolveItemRef(ref));
   }
 
   // --- Observations (core/observations/types.ts) ---
@@ -773,7 +804,7 @@ export class ContextGraph {
       thread.channelName ?? "",
       JSON.stringify(thread.platformMeta ?? {}),
       thread.platform,
-      thread.workItemId ?? null,
+      thread.workItemId ? this.resolveItemRef(thread.workItemId) : null,
       thread.lastActivity ?? now,
       thread.messageCount ?? 0,
     );
@@ -1177,7 +1208,7 @@ export class ContextGraph {
       id,
       event.threadId,
       event.messageId,
-      event.workItemId ?? null,
+      event.workItemId ? this.resolveItemRef(event.workItemId) : null,
       event.agentId ?? null,
       event.status,
       event.confidence,

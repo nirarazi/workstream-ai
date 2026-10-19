@@ -94,7 +94,7 @@ function createMockClassifier(): Classifier {
 
 function createMockGraph(): ContextGraph {
   const workItems = new Map<string, WorkItem>();
-  return {
+  const graph = {
     upsertAgent: vi.fn().mockReturnValue({
       id: "U-agent1",
       name: "Relay",
@@ -169,7 +169,12 @@ function createMockGraph(): ContextGraph {
     linkThreadWorkItem: vi.fn(),
     addEventTarget: vi.fn(),
     recordDigestCheck: vi.fn(),
+    // No merges here: a reference names the item with that id, and a ticket-shaped id is the item's ticket key
+    resolveItemRef: vi.fn((id: string) => id),
+    getItemKeys: vi.fn((id: string) => (/^[A-Z]+-\d+$/.test(id) ? [{ key: `ticket:${id}` }] : [])),
   } as unknown as ContextGraph;
+  (graph as unknown as { getWorkItemByRef: unknown }).getWorkItemByRef = vi.fn((id: string) => graph.getWorkItemById(id));
+  return graph;
 }
 
 function createMockLinker(): WorkItemLinker {

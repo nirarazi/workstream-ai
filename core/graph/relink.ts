@@ -267,10 +267,14 @@ export function loadSnapshot(db: BetterSqlite3.Database): Snapshot {
   const junction = hasTable(db, "thread_work_items")
     ? (db.prepare("SELECT thread_id, work_item_id, relation FROM thread_work_items").all() as Array<{ thread_id: string; work_item_id: string; relation: string }>)
     : [];
+  // The ticket keys the tracker enriched: enrichments.key where the database has it, else (older) the item's id
+  const enrichedKey = hasColumn(db, "enrichments", "key")
+    ? "COALESCE(SUBSTR(key, LENGTH('ticket:') + 1), work_item_id)"
+    : "work_item_id";
   const enriched = hasTable(db, "enrichments")
-    ? (db.prepare("SELECT DISTINCT work_item_id FROM enrichments").all() as Array<{ work_item_id: string }>)
+    ? (db.prepare(`SELECT DISTINCT ${enrichedKey} AS ticket FROM enrichments`).all() as Array<{ ticket: string }>)
     : [];
-  const trackerPrefixes = [...new Set(enriched.map((r) => r.work_item_id).filter(looksLikeTicketKey).map((id) => id.slice(0, id.lastIndexOf("-") + 1).toUpperCase()))];
+  const trackerPrefixes = [...new Set(enriched.map((r) => r.ticket).filter(looksLikeTicketKey).map((id) => id.slice(0, id.lastIndexOf("-") + 1).toUpperCase()))];
 
   return {
     events: rows.map((r) => ({

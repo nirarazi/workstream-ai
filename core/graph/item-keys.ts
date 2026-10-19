@@ -36,6 +36,18 @@ export function keyKind(key: string): ItemKeyKind | null {
 }
 
 /**
+ * The keys a reference from a message or an agent may mean: a ticket key, a thread key, or an id an agent passed
+ * through MCP. Most specific first.
+ */
+export function keysForRef(ref: string): string[] {
+  const keys: string[] = [];
+  const legacy = legacyKeyOf(ref, "");
+  if (legacy) keys.push(legacy);
+  if (!ref.startsWith("thread:")) keys.push(`mcp:${ref}`);
+  return keys;
+}
+
+/**
  * The key an item's id already was, for items made before ids were opaque, or null when the id names nothing a key
  * can (a title the classifier once returned as an id, say). An id an agent passed through MCP is a ticket key when
  * it's shaped like one, else an mcp: key.

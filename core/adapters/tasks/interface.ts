@@ -24,7 +24,8 @@ export interface TaskAdapter {
   connect(credentials: Credentials, signal?: AbortSignal): Promise<void>;
   /** Return the authenticated user's identity (the operator). Null if not connected or not supported. */
   getAuthenticatedUser?(): { userId: string; userName: string } | null;
-  getWorkItem(id: string): Promise<WorkItemDetail | null>;
+  /** The tracker's item by its own key (a ticket key such as OPS-101, from the item's keys), never a work item id */
+  getWorkItem(key: string): Promise<WorkItemDetail | null>;
   updateWorkItem(id: string, update: Partial<WorkItemDetail>): Promise<void>;
   searchWorkItems(query: string): Promise<WorkItemDetail[]>;
   getComments(id: string): Promise<WorkItemComment[]>;
