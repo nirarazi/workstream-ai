@@ -222,18 +222,18 @@ operator corrections as constraints, asks attached to messages, subject keys, th
 routines and runs, and a done policy before streams. Applying the re-link as first planned would discard operator
 merges and must not ship.
 
-**Grouping results, October 2026** (pairwise F1 on labelled message pairs: the operator's labels, plus model labels
-the operator's labels overrule, with the model's unsure pairs left out, plus pairs drawn where v2's decisions act
-(`npm run eval:targets`); 366 dev pairs, 105 held-out test pairs):
+**Grouping results, October 2026** (pairwise F1 on 673 labelled message pairs: the operator's labels, plus model
+labels the operator's labels overrule, with the model's unsure pairs left out, plus pairs drawn where v2's decisions
+act (`npm run eval:targets`); 528 dev pairs, 145 held-out test pairs):
 
-| Grouping | dev F1 | test F1 | over-merged (dev) | split (dev) |
-|---|---|---|---|---|
-| Current linker | 0.73 | 0.83 | 17 | 31 |
-| Re-link dry run (phase 2 resolver) | 0.72 | 0.80 | 16 | 33 |
-| v2 grouping (`core/grouping/`) | 0.85 | 0.79 | 9 | 18 |
+| Grouping | dev F1 | test F1 |
+|---|---|---|
+| Current linker | 0.79 | 0.84 |
+| Re-link dry run (phase 2 resolver) | 0.77 | 0.85 |
+| v2 grouping (`core/grouping/`) | 0.88 | 0.87 |
 
-- v2 merges much less unrelated work on dev and splits less. On the held-out pairs it isn't better yet; the test
-  half is small (about 60 scored pairs) and its intervals are wide.
+- v2 splits much less and merges less unrelated work on dev, and leads on the held-out pairs too. The test half is
+  small (about 85 scored pairs), so its intervals are wide.
 - Each decision v2 makes is measured where it acts (`npm run eval:targets`): the over-merge detector's cuts were
   judged right in 12 of 12 pairs, and starting a new case after a subject's week of quiet in 7 of 10.
 - Fitting v2's weights to dev (`npm run eval:tune`) raised dev to 0.87 and lowered test to 0.76, so the

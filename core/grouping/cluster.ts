@@ -203,8 +203,9 @@ export function cluster(messages: readonly GroupingMessage[], options: ClusterOp
     const inThread = threadCluster.get(m.threadId);
     if (inThread) {
       const keys = clusters.get(inThread)!.keys;
-      // A subject only named in passing doesn't take a reply out of its thread
-      const otherKey = about !== null && !named && keys.size > 0 && !keys.has(about);
+      // A subject only named in passing doesn't take a reply out of its thread, and nor does a key first named in
+      // it (a sub-task, a duplicate or the PR it spawned): only a key another case already holds does
+      const otherKey = about !== null && !named && keys.size > 0 && !keys.has(about) && byKey.has(about) && byKey.get(about) !== inThread;
       // However long after: on the labelled pairs, a late reply in a thread is still that thread's work
       add(inThread, otherKey ? w.otherKeyInThread : w.thread, otherKey ? "thread, about another key" : "thread", lastInThread.get(m.threadId));
     }

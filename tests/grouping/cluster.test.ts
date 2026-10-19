@@ -107,13 +107,16 @@ describe("cluster", () => {
     expect(g.map((x) => x.length).sort()).toEqual([1, 2]);
   });
 
-  it("joins a reply to its thread, but not when it's about another key", () => {
+  it("joins a reply to its thread, with a key first named there, but not one another case already holds", () => {
+    const elsewhere = msg("OPS-303: separate bug, being fixed");
     const root = msg("OPS-101: can someone look at the export?", { senderKind: "human", senderId: "U0DANA" });
     const reply = msg("Looking now", { threadId: root.threadId });
-    const other = msg("OPS-303: separate bug I found", { threadId: root.threadId, senderId: "U0RELAY" });
-    const placed = cluster([root, reply, other], options);
+    const spawned = msg("Opened OPS-102 for the follow-up", { threadId: root.threadId });
+    const other = msg("OPS-303 is the same root cause, by the way", { threadId: root.threadId, senderId: "U0RELAY" });
+    const placed = cluster([elsewhere, root, reply, spawned, other], options);
     expect(placed.get(reply.key)!.cluster).toBe(placed.get(root.key)!.cluster);
-    expect(placed.get(other.key)!.cluster).not.toBe(placed.get(root.key)!.cluster);
+    expect(placed.get(spawned.key)!.cluster).toBe(placed.get(root.key)!.cluster);
+    expect(placed.get(other.key)!.cluster).toBe(placed.get(elsewhere.key)!.cluster);
   });
 
   it("joins a person's quick follow-up and a top-level answer to them", () => {

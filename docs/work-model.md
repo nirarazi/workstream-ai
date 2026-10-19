@@ -829,8 +829,9 @@ Calls made while the maintainer was away, each easy to change. Newest last.
    message about it within seven days); after that a new case starts in the same stream. The labelled pairs don't
    tell the window apart (none spans weeks); the lab shows what it does to a long-running partner.
 8. **Long threads stay together.** Letting a subject named in passing split a thread that already has another
-   subject cost dev F1 (0.86 to 0.85), so a thread is still one case unless a ticket, a PR or a routine's tagged
-   line says otherwise. Threads that walk several subjects are for the over-merge detector (plan step 6).
+   subject cost dev F1 (0.86 to 0.85). A reply leaves its thread's case only for a ticket, PR or record another
+   case already holds: a key first named in a conversation (a sub-task, a duplicate, the PR it spawned) is that
+   conversation's. That rule raised F1 from 0.84 to 0.88 on dev and from 0.82 to 0.87 on test.
 9. **Hand-set weights stay.** Fitting them to the dev pairs overfit (test F1 0.80 to 0.76); refit when the label
    set has grown.
 10. **The over-merge detector is on.** It cuts a case's weak bridge (a top-level exchange, a continuation or a
