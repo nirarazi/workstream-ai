@@ -1,10 +1,12 @@
 #!/usr/bin/env node
 // core/eval/pairs.ts — Keyboard-driven labeler for message grouping: is this pair the same piece of work?
 //
-// Usage: npm run eval:pairs -- [--grouping current,relink] [--per-stratum 10] [--seed 42] [--db workstream.db]
+// Usage: npm run eval:pairs -- [--grouping current,relink] [--per-stratum 10] [--seed 42] [--db workstream.db] [--only escalate.json]
 // Draws pairs of messages stratified to catch over-merges and splits (core/eval/linking-sample.ts) from the groupings
 // named (by default the current one, and the re-link proposal when npm run relink has written it), skipping pairs
-// already labeled, and asks about each (labels are keyed by the message's platform identity, see linking-labels.ts):
+// already labeled, and asks about each (labels are keyed by the message's platform identity, see linking-labels.ts).
+// --only asks about just the pairs listed in a file in eval-data/linking/ ({ "pairs": [{ "a", "b" }] }), such as the
+// ones another labeler was unsure of, without showing its answers:
 //   s  same work      d  different work      1 / 2  mark message A / B "not work" (again to clear)
 //   u  unsure, skip   n  add note            q  save & quit
 // A dimmed hint under the keys says what each verdict means. A note goes with the next verdict or not-work mark. A
@@ -15,7 +17,7 @@
 // read-only copy; labels go to eval-data/linking/labels.json and are saved after every label, merged with whatever
 // another session saved meanwhile. SIGHUP, SIGINT or SIGTERM saves, restores the terminal and removes the copy.
 
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { emitKeypressEvents } from "node:readline";
 import { resolve } from "node:path";
 import { openReadOnly, type ReadOnlyCopy } from "../graph/relink.js";
@@ -31,8 +33,8 @@ import {
   relinkItemsPath,
   type Observation,
 } from "./linking-data.js";
-import { LabelSession, pairKey } from "./linking-labels.js";
-import { buildQueue } from "./linking-sample.js";
+import { LabelSession, LINKING_DIR, pairKey, projectFile } from "./linking-labels.js";
+import { buildQueue, type Candidate } from "./linking-sample.js";
 import { clean, quoted } from "./terminal.js";
 
 if (!process.stdin.isTTY) {
@@ -75,8 +77,22 @@ function fail(err: unknown): never {
 // Before the copy is opened, so a signal during setup still removes it
 onStopSignals(stop);
 
+/** The pairs listed in a file in eval-data/linking/, in order (a file name, never a path) */
+function loadEscalated(root: string, name: string): Candidate[] {
+  if (!/^[a-z0-9-]{1,32}\.json$/.test(name)) throw new Error(`--only takes a file name in eval-data/linking/, like escalate.json`);
+  const path = projectFile(root, LINKING_DIR, name);
+  if (!path) throw new Error(`--only: eval-data/linking/${name} doesn't exist`);
+  const data = JSON.parse(readFileSync(path, "utf-8")) as { pairs?: unknown };
+  if (!Array.isArray(data.pairs)) throw new Error("escalate.json: pairs must be a list");
+  return data.pairs.map((p, i) => {
+    const { a, b } = (p ?? {}) as { a?: unknown; b?: unknown };
+    if (typeof a !== "string" || typeof b !== "string" || !a || !b) throw new Error(`escalate.json: pair ${i + 1} needs a and b`);
+    return { a, b, stratum: "escalated" };
+  });
+}
+
 function setup() {
-  const flags = parseFlags(process.argv.slice(2), ["grouping", "per-stratum", "seed", "db"] as const);
+  const flags = parseFlags(process.argv.slice(2), ["grouping", "per-stratum", "seed", "db", "only"] as const);
   const root = projectRoot();
   const names = parseGroupingNames(flags.grouping ?? (existsSync(relinkItemsPath(root)) ? "current,relink" : "current"));
   const perStratum = Number(flags["per-stratum"] ?? "10");
@@ -90,12 +106,10 @@ function setup() {
   const index = loadMessageIndex(source.db);
   const { observations } = index;
   const { groupings } = loadGroupings(names, root, source.db, index);
-  const queue = buildQueue(observations, groupings, {
-    perStratum,
-    seed,
-    labeled: new Set(session.labels.pairs.map((p) => pairKey(p.a, p.b))),
-    senderNames: loadSenderNames(source.db),
-  });
+  const labeled = new Set(session.labels.pairs.map((p) => pairKey(p.a, p.b)));
+  const queue = flags.only !== undefined
+    ? loadEscalated(root, flags.only).filter((c) => !labeled.has(pairKey(c.a, c.b)))
+    : buildQueue(observations, groupings, { perStratum, seed, labeled, senderNames: loadSenderNames(source.db) });
   return { session, source, queue, byId: new Map(observations.map((o) => [o.id, o])) };
 }
 
