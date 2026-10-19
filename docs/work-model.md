@@ -75,7 +75,7 @@ the platform, and it ties identity to one language.
 
 ## 2. The core kinds
 
-The model has a closed set of eight kinds. Everything else is an attribute of one of them, or a specialisation that
+The model has a closed set of nine kinds. Everything else is an attribute of one of them, or a specialisation that
 a plugin adds as data.
 
 | Kind | What it is | Notes |
@@ -83,31 +83,126 @@ a plugin adds as data.
 | **Actor** | A person, agent or team. | One identity across channels and platforms, reached through handles (`U0OPERATOR1` in Slack, an email address, a forge login). Has a department, and may be external (a customer, a vendor). |
 | **Subject** | What work is about. | Open subject kinds, registered by packs: partner, customer, repo, service, claim, site. Has names ("Northwind", "Northwind Ltd", "NW"). A subject keys a stream, never a work item. |
 | **Work item** | A deliverable with a done condition: one case. | "Ship the Northwind export fix", "OPS-101". Belongs to streams; has refs and an origin, and has asks through its member observations. |
-| **Ask** | A request or commitment between actors. | After Winograd and Flores' *conversation for action*: request → promise → reported done → accepted or declined, with counter-offers and withdrawal along the way. Carries the **baton**: whose move it is. |
+| **Ask** | A request or commitment between actors. | After Winograd and Flores' *conversation for action*: request → promise → reported done → accepted or rejected, with refusals, counter-offers and withdrawal along the way. Carries the **baton**: whose move it is. |
 | **Routine** (with its runs) | Recurring work; a run is one occurrence. | Grooming, draining a queue, a weekly partner review. A run is done when its sweep is covered. |
 | **Stream** | A long-lived grouping, keyed by a subject, lane or project. | Never done; has health (quiet, stuck, overdue, noisy). The Northwind stream holds every Northwind case. |
 | **Observation** | Evidence. | A message, a tracker event, a forge event, an agent's MCP report (any MCP tool call: status report, approval request or completion). Append-only. |
 | **Ref** | A pointer to an external thing. | Ticket, PR, document, URL, commit, build. Open ref kinds, registered by packs. |
+| **Rule** | A standing instruction: how work is to be done from now on. | "Never state a date that isn't in the change calendar." Has a scope (an actor, a subject, a routine or the whole fleet), an author, a source observation, its confirmed text, the rule it replaces, and optionally when it stops being in force. Has no done condition; it's replaced, retired or runs out. |
 
 Decisions, incidents and milestones are not kinds. A decision is an ask whose request is a choice between options;
 an incident is a work item with a severity and a timeline; a milestone is a work item whose done condition is a set
 of other items. Conversations, claims, assignments, constraints and lineage (sections 3 and 5) aren't kinds either:
 they're the resolver's machinery for deciding membership, not things the operator works with.
 
-**The rule:** if a real need fits none of the eight, the core is wrong and is revisited deliberately, in a design
+A rule is the one kind added after the first draft. A rule isn't an ask: an ask ends when it's done, a rule stays in
+force until it's replaced. Telling an agent about a rule ("please add this to your instructions") is an ordinary ask
+inside a case, done once the rule is applied; the rule itself goes on. Rules matter because they explain what agents
+do, they can conflict, and the operator needs to see what each agent has been told: context is the product.
+
+A rule is not a decision. A decision settles one question once ("go with option B for Northwind's contract"): it's
+the answer that closes an ask, and then it's history. A rule applies every time the situation comes up again ("for
+contracts over $X, always use option B"). The test is whether it would apply next time. One message often holds
+both: "No, don't send the discount" decides; "and never offer one without asking me" proposes a rule. Three alike
+decisions are still three decisions until someone says "from now on". Some rules hold only until something happens
+("don't contact Northwind until the contract is signed"); they carry an *in force until*: a date, or an end
+condition in words.
+
+**The rule:** if a real need fits none of the nine, the core is wrong and is revisited deliberately, in a design
 change like this one. It is never grown silently by adding a table for the case at hand.
 
 **Kinds are data, behaviour lives in plugins.** Subject kinds, ref kinds and routine kinds are rows in registries
 that packs fill, not classes in a hierarchy. Core code handles "a subject" and "a ref"; what makes a claim number
 look like a claim number is a pack's business.
 
+### What a case is
+
+A work item is one case: one piece of work with one intended outcome, which can be finished. Three tests:
+
+1. **One outcome.** "Done when ___" can be finished with one thing: PR #12 merged, Northwind's referral agreement
+   signed, one order decided. A milestone passes too: its one outcome is that a set of other items is done.
+2. **A done condition.** It ends when the outcome is reached or abandoned, and then it stops needing anyone. A
+   partner, a routine and a rule have no done condition (a routine's runs do), so none of them is a case. A rule's
+   *in force until* is when it stops applying, not an outcome anyone works toward.
+3. **One holder at a time.** An agent, a person or the operator holds it; the holder can change. A case nobody
+   holds is still a case: an orphaned one.
+
+Where one case ends and the next begins is decided by the outcome, not by the thread, channel, agent or time:
+
+- **Same case:** steps toward the same outcome, such as reminders, a call, its preparation and status updates, even
+  weeks apart and across channels.
+- **New case:** a different outcome, even with the same partner. "Get Northwind signed" and "fix Northwind's broken
+  link" are two cases in the Northwind stream.
+- **Spin-off:** something found along the way that could be finished on its own by someone else (a bug found
+  during an onboarding) is its own case, with the first case as its `origin`.
+
+A case is not a ticket. A ticket is one way a case gets a key; most cases in a fleet never get one, because they're
+too small or too short to be worth filing. Those are the ones the operator most needs tracked. How a case starts is
+in section 5 ("Starting an item").
+
+### Message acts
+
+What a message *does* is a separate question from what it belongs to. Speech-act theory gives a small fixed set
+that holds in any line of work, plus one bucket for machine output:
+
+| Act | Examples | What it becomes |
+|---|---|---|
+| **Directive** | A request, a question, "please tell Atlas…" | An ask's request |
+| **Commissive** | "On it", "I'll have it by Friday", "I can't take this" | An ask's promise or refusal |
+| **Assertive** | A status line, a fact, an FYI, "done", an alert that names a case | Activity on a case or stream; "done" reports an ask done; a fact about a subject is an attribute claim |
+| **Declarative** | A decision, an approval, "from now on…" | Accepts, rejects or withdraws an ask; a rule proposal |
+| **Expressive** | Thanks, greetings, apologies | Not work |
+| **Telemetry** | Heartbeats, tick logs, health pings: machine output about no case | Not work; evidence for a routine's runs |
+
+An ask claim is an act made specific, on the same span, alongside the act claim:
+
+| Ask move | Act | Made by |
+|---|---|---|
+| `request` | directive | the requester |
+| `promise`, `refuse` | commissive | the performer |
+| `report_done` | assertive; declarative when the request asked for a decision or approval | the performer |
+| `accept`, `reject` (not done yet), `withdraw` | declarative | the requester |
+
+"Thanks" right after a reported done, from the requester, is an `accept`; anywhere else it's expressive. When an
+agent asks the operator to decide or approve, the agent is the requester and the operator the performer: the
+operator's "approved", "no" or "go with B" is the `report_done`, and the ask closes on it; an agent's later
+`reject` reopens it. A counter-offer is a `refuse` followed by a new `request`.
+
+Acts belong to parts of a message, not to the whole: one message can thank, set a rule and give facts at once.
+Example, in one thread: after Atlas emails twelve Contoso users the wrong maintenance window, Dana writes "Atlas,
+never state a date that isn't in the change calendar. The window is Saturday 02:00–04:00 UTC." That's a rule
+proposal scoped to Atlas (declarative) and a fact (assertive). She follows with "Atlas, please write to each of them
+with the right time" (directive, a request to Atlas), Atlas answers "On it" (commissive: the case starts) and later
+"Done: all twelve sent" (assertive, `report_done`). The case is "correct the window for the twelve users". The
+thread is its conversation, so Dana's first message joins the case with the rest (section 5, "Conversations as a
+prior"). The rule is a separate, standing thing whose source is that first message.
+
+A message moves no case when none of its parts does; that message is not work. A report or digest is not an act: it's
+a message whose assertive parts are about several cases or subjects, found by counting them (plan step 5). Each of
+those parts is activity on its own case (a `mention` assignment, not membership), so the report is a member of no
+case, never becomes one item, and never merges them. The pair labeller (section 6) judges whole messages, so it marks
+a report not work as a unit. A notification is a sender kind, not an act.
+
+**Who tags acts.** Every observation gets act claims, cheapest source first: fleet-pack recognizers for the runtime's
+telemetry and report formats, default-pack recognizers for ask moves and short acknowledgements, then the
+classification call, which already runs on every message and adds act tags to its output. Acts from the model are soft
+evidence: a model ask claim can surface an ask, and closes one only as section 7 allows (the operator's own answer),
+and on their own, model acts can't make an observation not work, start a case, close an ask outside that case, or keep
+a part from surfacing (section 7). The model returns the text it tags (each part's opening words), and the engine maps
+it to spans by exact match within `parts.own`, in order, left to right (the first unused occurrence wins); a tag it
+can't place is dropped, never guessed, and the model's returned text is never stored or shown, only the span. With no
+act claims at all, a part is treated as assertive: activity, never not work and never an ask. Where claims overlap, a
+part with any directive, commissive or declarative claim is never not work, whatever telemetry or expressive claims
+also cover it.
+
 ### Routines, runs and origin
 
-A routine declares a cadence (a cron expression) and a sweep: a declarative selector for what a run must cover
-(every partner subject, every open PR older than a day, the triage queue). A run is done when every member of its
-sweep is covered: acted on, or marked reviewed with no action. A run's outputs are work items linked by `origin`,
-which is provenance, not membership: the item lives in its subject's stream. "Reviewed, no action" is recorded on
-the subject's stream. What surfaces is a run that was missed or is stuck, never the routine's normal ticking.
+A routine declares a cadence (a cron expression) and a sweep: a declarative selector for what a run must cover (every
+partner subject, every open PR older than a day, the triage queue). A run is done when every member of its sweep is
+covered: acted on, or marked reviewed with no action. A run's outputs are work items linked by `origin`, which is
+provenance, not membership (a spin-off's `origin` is the case it came from): the item lives in its subject's stream.
+"Reviewed, no action" is recorded on the subject's stream. What surfaces is a run that was missed or is stuck, never
+the routine's normal ticking.
 
 Example: Monday's partner review finds a renewal due for Northwind and yields an engagement item (a new case) in
 the Northwind stream, with `origin` = this run; Contoso is reviewed with no action, one line on its stream; a
@@ -135,8 +230,10 @@ Claims at L2, each with its source and confidence:
 
 - **keys** (ticket, PR, MCP id) the observation names, each with a relation: `about` (what it's about), `dependency`
   ("blocked by"), `mention` (in passing), `closes` ("fixes OPS-101");
-- **message kind:** `work`, `report`, `notification` or `ack`;
-- **asks:** a move in a conversation for action, with who asks whom;
+- **acts:** the message acts of its parts (section 2), each over a span of `parts.own`;
+- **asks:** a move in a conversation for action, with who asks whom, on the same span as its act (section 2);
+- **rules:** a span of `parts.own` that proposes a standing instruction, with the name of its scope; the operator
+  resolves the scope and any rule it replaces when confirming it (section 7);
 - **subject mentions:** "Northwind" as a partner, at some confidence, with the same relations. A subject `about`
   places the observation in that subject's stream;
 - **routine-run membership:** this observation is part of Monday's partner review.
@@ -193,9 +290,13 @@ interface Handle { platform: string; id: string }
 
 type ClaimBody =
   | { type: "key"; key: string; relation: "about" | "dependency" | "mention" | "closes" }
-  | { type: "messageKind"; kind: "work" | "report" | "notification" | "ack" }
-  | { type: "ask"; move: "request" | "promise" | "report_done" | "accept" | "decline" | "withdraw";
-      from: Handle; to?: Handle; askRef?: string }
+  | { type: "act"; act: "directive" | "commissive" | "assertive" | "declarative" | "expressive" | "telemetry";
+      span?: { start: number; end: number } }                 // offsets into parts.own; absent = all of it
+  | { type: "rule"; span: { start: number; end: number };
+      scope: { kind: "fleet" } | { kind: "actor" | "subject" | "routine"; name: string };   // resolved on confirm
+      until?: { span: { start: number; end: number } } }   // "until the contract is signed", "through Friday"
+  | { type: "ask"; move: "request" | "promise" | "refuse" | "report_done" | "accept" | "reject" | "withdraw";
+      from: Handle; to?: Handle; askRef?: string; span?: { start: number; end: number } }
   | { type: "subjectMention"; subjectKind: string; name: string; relation: "about" | "dependency" | "mention" }
   | { type: "runMember"; routine: string; run: string; subject?: string };
 
@@ -203,7 +304,7 @@ type ClaimBody =
 interface ClaimDraft {
   body: ClaimBody;
   confidence: number;            // 0..1
-  evidence?: { rule: string; start?: number; end?: number };    // a rule name and offsets, not copied text
+  evidence?: { pattern: string; start?: number; end?: number }; // a pattern name and offsets, not copied text
 }
 
 interface Recognizer {
@@ -267,6 +368,18 @@ permalink metadata Slack already gives it; an email adapter would use MIME parts
 - **`subjects` and `subject_aliases`** for subjects and their names. `key_alias` says two keys are the same work;
   `subject_aliases` says two names are the same subject. A name is soft evidence until the operator confirms it.
 - **`actors` and `actor_handles`** for actors: one person, many handles. Today's `agents` table migrates into them.
+- **`rules(id, scope_kind, scope_name, scope_id, text, text_hash, source_observation, author, replaces, status,
+  in_force_until_date, in_force_until_condition, decided_by, created_at, retired_at)`.** A proposal keeps the scope
+  name it claimed and a suggested `scope_id`, looked up through subject names and actor handles; the operator confirms
+  the scope. `status` is `proposed`, `confirmed`, `source_changed` or `retired`. `text` is the exact span as
+  confirmed, never a paraphrase. `replaces` points back to the rule this one replaced, which the operator retires when
+  confirming it. An *in force until* is a date or a condition in words, never both, and the operator confirms it with
+  the rule. A date is resolved against the observation's time in the operator's time zone, shown in the confirm view,
+  and runs to the end of that day; when it passes, the rule is retired with `decided_by = until_date`, so the UI says
+  it ran out. A condition is never evaluated by the app: when confirming, the operator may link it to a case or ref,
+  and only that link's done state shows the rule as possibly ended (never a model claim or message text); only the
+  operator retires it. The condition is the exact `until` span as confirmed, stable and tombstoned like `text`.
+  Proposals come only from rule claims; everything else is the operator's.
 
 ### Operator actions and backfill
 
@@ -310,9 +423,10 @@ operator depends on clustering. A work item (a case) starts only from:
 
 A subject never starts an item. A subject `about` places the observation in the subject's stream and is a strong
 signal for which case inside that stream it belongs to; it never makes all of a subject's observations one item.
-Anything else (a report, a notification, an ack, narration, a lone ask nobody has picked up) is activity on its
-stream, conversation or run. Each author has a cap on items started per day; unverified authors share one cap per
-source, and MCP tools count against one cap for the MCP source as a whole, never against a claimed agent name.
+Anything else is activity on its stream, conversation or run: assertive parts, a report, a directive nobody has
+answered, a commissive nobody asked for. Expressive and telemetry parts are not work. Each author has a cap on items
+started per day; unverified authors share one cap per source, and MCP tools count against one cap for the MCP source
+as a whole, never against a claimed agent name.
 
 ### Deciding
 
@@ -328,9 +442,9 @@ source, and MCP tools count against one cap for the MCP source as a whole, never
    uncertain band (below).
 3. **Clustering under constraints**, in the precedence above.
 4. **Incremental re-clustering.** A new observation re-clusters only its neighbourhood (the items its candidates
-   touched). A change has to beat the current assignment by a margin, so items don't flap. A rules version bump runs
-   a full re-cluster offline, with the same margin, and produces a diff for the operator to review, as
-   `npm run relink` does now. A model version bump uses the cached claims unless a re-run is requested explicitly.
+   touched). A change has to beat the current assignment by a margin, so items don't flap. A recognizer or weights
+   version bump runs a full re-cluster offline, with the same margin, and produces a diff for the operator to review,
+   as `npm run relink` does now. A model version bump uses the cached claims unless a re-run is requested explicitly.
 
 **Conversations as a prior.** A message in a platform-structured conversation (a thread reply, an email
 `In-Reply-To`) inherits the conversation's item unless its own claims disagree strongly. Top-level posts are their
@@ -343,7 +457,8 @@ from the model. No single observation can merge or split established items on it
 context, which excludes observations about sensitive subjects. Identity questions for the uncertain band go on a
 separate, small call that sees only the observation's `parts.own`, delimited as untrusted, and the candidate items'
 titles and keys; never quoted, forwarded or signature text, and never other observations. The model may emit
-message-kind and ask claims and a bounded score adjustment; key and subject claims it emits are candidates only,
+act and ask claims (soft evidence, section 2), rule proposals over a span a deterministic recognizer also found,
+and a bounded score adjustment; key and subject claims it emits are candidates only,
 capped below the hard band. Candidate items whose keys or stream subjects are sensitive are excluded or masked in
 any list sent to a remote model, in both calls; where masking can't be guaranteed, a local model or no model is
 used. Cost is bounded: only uncertain-band units, a per-conversation and per-author budget,
@@ -404,56 +519,91 @@ The current eval labels statuses. Identity needs its own labels and its own numb
 Message content, model output, MCP reports and packs are untrusted. Identity decisions change what reaches the
 operator and where their replies go, so they get the same care as the action endpoints.
 
-- **Only the operator writes constraints.** Constraints with `decided_by = operator` come only from operator
-  actions in the UI; the backfill of past operator actions is stamped `backfill`. The endpoints that write
-  constraints get the same host and origin checks as the action endpoints. The engine stamps every claim's source;
-  a recognizer can't set it. Claims, model output, MCP reports and packs never create constraints, aliases or
-  subject names, or confirm them. A structured identifier in message text makes a candidate, never an alias binding.
+- **Only the operator writes constraints.** Constraints with `decided_by = operator` come only from operator actions
+  in the UI; the backfill of past operator actions is stamped `backfill`. The endpoints that write constraints get the
+  same host and origin checks as the action endpoints. The engine stamps every claim's source; a recognizer can't set
+  it. Claims, model output, MCP reports and packs never create constraints, aliases, subject names or confirmed rules,
+  or confirm them. A structured identifier in message text makes a candidate, never an alias binding.
 - **No single observation merges or splits established work.** It can't merge two items that each hold their own
   structural key, or split an item, without clearing the margin and going to the operator for review. Keys
   claimed per observation, and items started per author (per source for MCP), are capped.
 - **Actions name what the operator saw.** A reply goes to the conversation the operator viewed, whatever the
   grouping is now. Actions that depend on membership (create a ticket from an item, say) are refused if that
   membership changed since the view loaded.
-- **The model only adjusts scores**, within the limits in section 5. It can't reach the hard band alone, create
-  keys, names or constraints, or override `cannot_link`.
+- **In identity decisions, the model only adjusts scores**, within the limits in section 5 (its other limits: acts and
+  asks in section 2, rules below). It can't reach the hard band alone, create keys, names or constraints, or override
+  `cannot_link`.
 - **Identity comes from the platform.** A handle links to a person only through an adapter-verified identity (a
-  platform user id) or the operator's confirmation, never a display name or message content. DMARC-aligned DKIM or
-  SPF verifies an email's domain only; tying a specific mailbox to a person needs the operator's confirmation.
-  Quoted and forwarded authors are unverified: never an ask's `from`, never the operator, and unable to close an
-  ask. An MCP report's author is recorded as an unverified agent handle; never a verified
-  requester or responder, never the operator, and can't close an ask. MCP reports are subject to the key cap and
-  the single-observation rule. Closing an ask (accept, decline, withdraw) needs a verified author whose turn it is.
-  `dedupeKey` comes only from the platform's own id, namespaced by platform and workspace (MCP reports use
-  their own `mcp-report:` namespace, distinct from the `mcp:` item key kind); a quote or forward never replaces or
-  dedupes the original.
+  platform user id) or the operator's confirmation, never a display name or message content. DMARC-aligned DKIM or SPF
+  verifies an email's domain only; tying a specific mailbox to a person needs the operator's confirmation. Quoted and
+  forwarded authors are unverified: never an ask's `from`, never the operator, and unable to close an ask. An MCP
+  report's author is recorded as an unverified agent handle; never a verified requester or responder, never the
+  operator, and can't close an ask. MCP reports are subject to the key cap and the single-observation rule. Closing an
+  ask (accept, refuse, withdraw, or a `report_done` answering a decision or approval request), or handing its baton
+  back (reject), needs a verified author whose turn it is. A `report_done` that closes a decision or approval ask
+  needs the verified handle of the ask's performer (the operator, for an approval the operator was asked for); it
+  never comes from quoted or forwarded text or an MCP report. A model ask claim alone closes it only when the message
+  is by that performer's verified handle, in the ask's own conversation, after the request, while it's their turn: the
+  trust is the verified author, and the model only labels the move. The operator answering an agent in free text ("go
+  with B") is the common case. A follow-up request on the same ask (same `askRef`) or a `reject` from the agent
+  reopens it. The model tags such a closing move only on a span of the performer's own `parts.own` (thread context can
+  inform the tag, never be the span). The UI says when an ask was closed this way ("closed by your reply") and lets
+  the operator undo it. An ask closed by a model-labelled move is never reported as approved to an agent, an MCP tool
+  or a task adapter, and never triggers an action. `dedupeKey` comes only from the platform's own id, namespaced by
+  platform and workspace (MCP reports use their own `mcp-report:` namespace, distinct from the `mcp:` item key kind);
+  a quote or forward never replaces or dedupes the original.
 - **Packs are local code.** They run in-process with the same trust as adapters; this is not a sandbox. They are
   explicitly installed, never fetched automatically. A fleet pack reads only config paths the operator chose,
   read-only, takes only cadence, sweep and owner fields, and drops everything else without logging, storing,
   sending or showing it. `routines()` output is schema-validated, and a sweep is a declarative selector, never SQL or
   code. Recognizers are given no adapter, network or credential handles. Pack patterns run on a linear-time regex
   engine, or under an input cap and a timeout.
-- **Sensitive subjects.** A subject kind can be marked sensitive (a patient account, say). Sensitivity is decided
-  by local deterministic recognizers before any remote call. Observations about a sensitive subject never go to a
-  remote model: a local model or no model. Their evidence holds rule names and offsets, never copied text. Pair
-  labels in `eval-data/` follow the same rule. Signatures are never stored or sent. Summaries, model-written titles
-  and eval labels derived from a deleted or purged observation are recomputed or tombstoned with it.
+- **Sensitive subjects.** A subject kind can be marked sensitive (a patient account, say). Sensitivity is decided by
+  local deterministic recognizers before any remote call. Observations about a sensitive subject never go to a remote
+  model: a local model or no model. Their evidence holds pattern names and offsets, never copied text. Pair labels in
+  `eval-data/` follow the same rule. Signatures are never stored or sent. Summaries, model-written titles, rule text
+  (end conditions included) and eval labels derived from a deleted or purged observation are recomputed or tombstoned
+  with it.
 - **No fetching refs.** Core never fetches a ref's URL. Only a task adapter calls its own configured base URL.
+- **Rules are records, not instructions.**
+  - *Who can author one.* A rule claim is a proposal, and only on an observation by a verified handle of the
+    operator or of a person the operator has marked as a fleet member. Only an operator action in the UI marks a
+    fleet member, behind the same host and origin checks, and only on adapter-verified handles; a pack, claim,
+    display name or MCP report can't. Rule-like text from anyone else (an external partner, a guest, an agent, an
+    MCP report) is assertive content, never a proposal; an agent restating a rule ("added it to my instructions")
+    is evidence that it was received. Proposals are capped per author per day.
+  - *Who confirms.* Only the operator confirms, retires or replaces a rule (a confirmed end date running out counts as
+    theirs), and picks between two that conflict; the endpoints that do it get the same host and origin checks as the
+    action endpoints. The confirm view shows the author, whether they're a fleet member, a link to the source, the
+    scope it will apply to (which actor, subject or routine, or the whole fleet), when it stops being in force, if
+    ever, and the exact text that will be stored.
+  - *Stable text.* A confirmed rule keeps the text and hash it was confirmed with, its end condition included. If its
+    source is edited, the rule becomes `source_changed` and keeps the confirmed text until the operator reconfirms; it
+    never takes the new text silently. If the source is deleted or purged, the rule's text is tombstoned with it.
+  - *Display only.* Rules are shown on the actor, subject or routine they apply to. They never change surfacing,
+    membership or suggested actions, never feed a drafted reply, and the app never sends one to an agent: that's
+    the operator's reply. Changing this is a design change. When a model sees rule text (to suggest a conflict, say),
+    it's delimited as untrusted and never placed among the model's instructions; a rule about a sensitive subject, or
+    from an observation about one, is treated as sensitive.
 
 ---
 
 ## 8. Coverage check: five fleets
 
-To test whether eight kinds are enough, a typical week of five dissimilar fictional fleets was walked through the
-kinds: a support desk, an SDR and sales fleet, a software team, healthcare billing, and field-service dispatch
-(appendix). Each gap is either a missing attribute (fine: add it) or a missing kind (an open question).
+To test whether the first eight kinds were enough, a typical week of five dissimilar fictional fleets was walked
+through the kinds: a support desk, an SDR and sales fleet, a software team, healthcare billing, and field-service
+dispatch (appendix). Each gap is either a missing attribute (fine: add it) or a missing kind (an open question).
 
 **Result.** Every fleet mapped onto the eight kinds. The gaps are attributes: external actors, deadlines and
 expected-by dates on asks, time windows, item and subject hierarchies, per-subject routines, rotating owners,
 stages, and a sensitivity class (section 7 sets its default). In every fleet the subject keys a stream and the
 cases inside it are items. An entity that is both an actor and a subject (a
-sales contact) is one entity in two roles, not a new kind; how it's stored is open question 6. Two possible missing
-kinds are flagged below: a standing agreement (SLA, contract terms) and a bookable resource.
+sales contact) is one entity in two roles, not a new kind; how it's stored is open question 6. A bookable resource
+is flagged below as a possible missing kind, and a standing agreement (SLA, contract terms) as possibly a rule.
+
+The check walked work, not instructions, so it missed rules: every one of these fleets has standing instructions
+("never offer a refund over $X", "don't chase a payer before day 30"). Real labelling found them, and Rule was added
+as a ninth kind.
 
 ---
 
@@ -482,16 +632,18 @@ at the end of this plan.
    continues the open request.
 5. **Claims, recognizers, subjects.** L2 claims, the `Recognizer` and `Pack` interfaces, a default pack holding the
    English and `&gt;` parsing that leaves core, `Extractor` and `ContinuationStrategy` wrapped as recognizers, and
-   ask claims. `subjects`, `subject_aliases` and `stream_keys`: subjects from lane-tagged lines (the dry run's
-   `subject-rule-candidates.json` is the starting list) give stream membership and a candidate signal, never an
+   ask, act and rule claims. `subjects`, `subject_aliases` and `stream_keys`: subjects from lane-tagged lines (the dry
+   run's `subject-rule-candidates.json` is the starting list) give stream membership and a candidate signal, never an
    item key. Report detection counts subjects, not only tickets.
 6. **Resolver in shadow mode.** Run the resolver in the pipeline beside the current linker, writing `assignments`
    with scores but not changing what the operator sees; compare the two on the pair labels. Add scored candidates
    and `item_lineage`.
 7. **Cutover.** Switch the pipeline to the resolver once its pair-label precision and recall beat the current
    linker's by an agreed margin; re-run the backfill of constraints first.
-8. **Routines and runs.** Declared by fleet packs where the runtime exposes a schedule, otherwise proposed from
-   recurring report patterns and confirmed by the operator. Missed and stuck runs surface.
+8. **Routines, runs and rules.** Routines are declared by fleet packs where the runtime exposes a schedule,
+   otherwise proposed from recurring report patterns and confirmed by the operator. Missed and stuck runs surface.
+   Add `rules`: proposals from rule claims wait in a low-priority review list, with a count on the actor, subject
+   or routine they'd apply to; confirmed rules are shown there. Rules never appear in Needs me.
 9. **Done policy, the stream view, then re-linking.** A configurable done policy (which source leads, tracker or
    classifier; quiet time alone never closes an item); the stream view and stream health, over the `stream_keys`
    that exist from step 5; and re-linking as continuous, constraint-respecting re-clustering with a reviewable diff
@@ -504,10 +656,13 @@ at the end of this plan.
 1. **Telling cases apart inside a stream.** Decided: a subject is a stream and each case inside it is a work item,
    started by a structural key, a request that gets a response, or a routine run. Open: with no key, which open
    case does a follow-up belong to when the stream has several, and how long does a done case stay a candidate?
+   And should a commitment nobody asked for ("I'll take the flaky CI test") from a verified fleet member start a
+   case? Today it's activity.
 2. **Bookable resources.** Is capacity (technicians, vans, rooms) ever the inbox's concern, and if so, is it a
-   ninth kind or an attribute of actors and subjects?
-3. **Standing agreements.** SLAs, contract terms and filing limits set deadlines for many asks. Are they attributes
-   of a subject or actor, a domain pack's rules, or a kind with its own lifecycle (renewal, breach)?
+   tenth kind or an attribute of actors and subjects?
+3. **Standing agreements.** SLAs, contract terms and filing limits set deadlines for many asks. Are they rules
+   scoped to a subject, with terms a domain pack can read, or do renewal and breach need more than a rule's
+   lifecycle?
 4. **Score weights.** How many pair labels before fitted weights beat hand-set ones, and are weights per fleet or
    shared defaults with per-fleet adjustment?
 5. **Re-clustering in the UI.** When is a change big enough to ask before applying rather than show after?
@@ -516,6 +671,13 @@ at the end of this plan.
    is a skipped run told from a routine that was retired?
 8. **Redacting sensitive subjects.** Section 7 sets the defaults. Open: whether sensitive titles shown in the UI
    need masking too, and how a sensitive subject is marked before its first message arrives.
+9. **Rules.** How is a likely conflict between two rules in one scope found? The model may suggest one; only the
+   operator decides. And should a fleet pack propose the rules an agent already has, from instruction files? If so,
+   only under these limits: paths the operator chose, read-only, no symlinks out of them; each proposal authored as
+   `pack:<name>` from its path and unconfirmed until the operator confirms it; secrets redacted before anything is
+   stored, logged or shown; never sent to a remote model by default; file text not proposed as a rule isn't kept;
+   and a file the agent can write to is marked as a weaker source. Adopting this would amend section 7's authorship
+   bullet with an explicit exception: `source_observation` becomes optional, with the pack as `author`.
 
 ---
 
