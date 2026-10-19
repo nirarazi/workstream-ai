@@ -837,6 +837,11 @@ Calls made while the maintainer was away, each easy to change. Newest last.
 10. **The over-merge detector is on.** It cuts a case's weak bridge (a top-level exchange, a continuation or a
     near-copy joining two parts about different keys). All 12 pairs drawn at and across its cuts were judged
     different work. Cutting thread edges too was tried and dropped: 9 of 16 such pairs were the same work.
+11. **The v2 grouping runs in shadow mode.** After each poll that adds messages, the engine regroups everything
+    with the operator's constraints applied and replaces two tables, `v2_cases` and `v2_assignments`
+    (`core/grouping/shadow.ts`). Nothing shown changes. It takes under half a second on the reference history and
+    is off with `WORKSTREAM_SHADOW_GROUPING=false`. A full regroup each poll is the simple first version; an
+    incremental one (re-clustering only what a new message touches) comes when histories outgrow it.
 
 ## 10. Open questions
 

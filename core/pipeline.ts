@@ -106,6 +106,8 @@ export interface ProcessResult {
 export class Pipeline {
   private catchUpLogged = false;
   private messagingAdapter: MessagingAdapter;
+  /** The events the shadow grouping last ran on (it skips a poll that added none) */
+  private shadowVersion: string | null = null;
   private classifier: Classifier;
   private graph: ContextGraph;
   private linker: WorkItemLinker;
@@ -208,6 +210,7 @@ export class Pipeline {
     // Run once immediately
     const result = await this.processOnce();
     log.info("Initial poll complete", result);
+    this.regroupShadow();
     // stop() during that first poll (a settings save restarts the pipeline) means no polling timer
     if (run !== this.runId) return;
 
@@ -220,6 +223,7 @@ export class Pipeline {
       try {
         const r = await this.processOnce();
         log.info("Poll complete", r);
+        this.regroupShadow();
       } catch (err) {
         log.error("Poll cycle failed", err);
       } finally {
@@ -228,6 +232,21 @@ export class Pipeline {
     }, intervalSeconds * 1000);
 
     log.info(`Polling every ${intervalSeconds}s`);
+  }
+
+  /**
+   * Plan step 6: the v2 grouping, in shadow mode, after each poll that added messages (core/grouping/shadow.ts).
+   * Nothing shown changes. Off with WORKSTREAM_SHADOW_GROUPING=false; a failure is logged and never stops polling.
+   */
+  private regroupShadow(): void {
+    if (process.env.WORKSTREAM_SHADOW_GROUPING === "false") return;
+    try {
+      const { version, run } = this.graph.regroupShadow(this.shadowVersion);
+      this.shadowVersion = version;
+      if (run) log.info(`Shadow grouping: ${run.messages} messages in ${run.cases} cases and ${run.streams} streams (${run.ms} ms)`);
+    } catch (err) {
+      log.warn("Shadow grouping failed", err);
+    }
   }
 
   stop(): void {

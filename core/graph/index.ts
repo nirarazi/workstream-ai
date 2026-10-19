@@ -22,6 +22,7 @@ import { keysForRef, legacyKeyOf, type ItemKey } from "./item-keys.js";
 import type { Observation, ObservationDraft, ObservationRefKind } from "../observations/types.js";
 import { ulid } from "../observations/ulid.js";
 import { ConstraintStore } from "./constraints.js";
+import { runShadowGrouping } from "../grouping/shadow.js";
 import type {
   AgentRow,
   EnrichmentRow,
@@ -1042,6 +1043,14 @@ export class ContextGraph {
       else if (anchor) this.constraints.add({ kind: "must_link", a: obs, b: anchor, decidedBy, origin, createdAt });
     }
     if (sourceKey && anchor) this.constraints.add({ kind: "pin", a: anchor, b: sourceKey, decidedBy, origin, createdAt });
+  }
+
+  /**
+   * Regroups every message with the v2 grouping into the shadow tables (core/grouping/shadow.ts), unless nothing has
+   * been added since `lastVersion`. Changes nothing the operator sees.
+   */
+  regroupShadow(lastVersion: string | null): ReturnType<typeof runShadowGrouping> {
+    return runShadowGrouping(this.db.db, lastVersion);
   }
 
   /** The operator says an item isn't work: none of its observations belongs in any item */
