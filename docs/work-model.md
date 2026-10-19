@@ -288,10 +288,10 @@ The limits, which section 7 relies on:
   count only from `parts.own` of adapter-verified fleet members and agents, or from a fleet pack's telemetry
   recognizers. From anyone else, and from quoted or forwarded text, they're recorded as assertive content and never
   interrupt. Health about a human is dropped: it's health data about a person. MCP reports have unverified authors
-  (section 7), so their mined claims are recorded and never interrupt. A claim about someone other than its author
-  ("Alex will reply by Friday", "Atlas is down") is evidence only, never an interrupt on its own. Contradictions are
-  also capped per author per day. Interrupts from mined claims are grouped per agent or tool and capped per author and
-  per observation per day.
+  (section 7), so their mined claims are recorded and never interrupt. An agent's own tools and resources count as
+  about itself; a claim about someone other than its author ("Alex will reply by Friday", "Atlas is down") is evidence
+  only, never an interrupt on its own. Contradictions are also capped per author per day. Interrupts from mined claims
+  are grouped per agent or tool and capped per author and per observation per day.
 - **Never authority.** Holder hints, health and expectations never move an ask's baton, which moves only by ask moves
   under section 7. A report's line about an ask is never a follow-up on it, so it never reopens or closes it.
 - **Contradictions only surface.** The engine finds them by comparing claims and state; the model never asserts one.
@@ -718,11 +718,11 @@ at the end of this plan.
    and `item_lineage`.
 7. **Cutover.** Switch the pipeline to the resolver once its pair-label precision and recall beat the current
    linker's by an agreed margin; re-run the backfill of constraints first.
-8. **Routines, runs and rules.** Routines, and on-demand runs of them or of the built-in `review` routine, are
-   declared by fleet packs where the runtime exposes a schedule, otherwise proposed from recurring report patterns and
-   confirmed by the operator. Missed and stuck runs surface. Add `rules`: proposals from rule claims wait in a
-   low-priority review list, with a count on the actor, subject or routine they'd apply to; confirmed rules are shown
-   there. Rules never appear in Needs me.
+8. **Routines, runs and rules.** Routines are declared by fleet packs where the runtime exposes a schedule, otherwise
+   proposed from recurring report patterns and confirmed by the operator. On-demand runs, of a routine or of the
+   built-in `review` routine, start from a verified request (section 2). Missed and stuck runs surface. Add `rules`:
+   proposals from rule claims wait in a low-priority review list, with a count on the actor, subject or routine they'd
+   apply to; confirmed rules are shown there. Rules never appear in Needs me.
 9. **Done policy, the stream view, then re-linking.** A configurable done policy (which source leads, tracker or
    classifier; quiet time alone never closes an item); the stream view and stream health, over the `stream_keys` that
    exist from step 5; the surfacing policies for mined claims (missed expectations, health that blocks work,
