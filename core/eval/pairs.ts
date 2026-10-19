@@ -143,8 +143,8 @@ const isNotWork = (id: string) => session.labels.notWork.some((n) => n.message =
 const HINT = [
   "Same work: both move or discuss one case (one ticket, one PR, one order, or one goal with one partner), updates too.",
   "Different work: different cases, even with the same partner, agent, channel, routine or routine run.",
-      "Not work: about no single case: heartbeats, health checks, empty tick logs, chatter, many-case digests or briefings.",
-  "A digest answering a question about one case is that case's work; skip (u) if you can't see the question.",
+  "Not work: about no single case: heartbeats, health checks, empty tick logs, chatter, many-case digests or briefings.",
+  "A question about one case and its answer: same work. A \"one by one\" walk: not work. Can't see the question: u.",
 ];
 
 function renderMessage(tag: string, o: Observation | undefined, id: string): void {

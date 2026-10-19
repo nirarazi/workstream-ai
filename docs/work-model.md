@@ -212,9 +212,14 @@ Example: Monday's partner review finds a renewal due for Northwind and yields an
 the Northwind stream, with `origin` = this run; Contoso is reviewed with no action, one line on its stream; a
 partner with an open item gets an update on it, not a duplicate.
 
-A run can also start on demand, when a verified fleet member asks for a sweep ("go over our partners one by one") under
-the same conditions as a request that starts a case (section 5). It covers the routine's sweep or the one the request
-names, has no cadence, and the reports that walk it are its progress.
+A run can also start on demand, when a verified fleet member asks for a sweep ("go over our partners one by one")
+under the same conditions as a request that starts a case (section 5). It's a run of a declared routine, or of a
+built-in `review` routine with no cadence. Its sweep comes from that routine, or from a deterministic recognizer over
+subject kinds and stream keys ("our partners" is every partner subject), confirmed by the operator the first time;
+never from the model. Either way it's a schema-validated declarative selector over known subjects, never free text
+turned into a query. Items a run yields count against the requester's cap on items started, and each run has a cap of
+its own. The reports that walk it are its progress. Until on-demand runs exist (plan step 8), such a walk is a report
+that's a member of no case.
 
 ---
 
@@ -263,12 +268,14 @@ rarely.
 | Health | "message tool still down, posted through the API", "the build agent's disk is full", "no access to #ops" | the agent, its tool or the fleet | it lasts or blocks a case; otherwise it's shown in the fleet view |
 | Expectation | "checking again tomorrow at 9" | the ask it's about, or else the observation's case | the time passes with nothing posted |
 | Holder hint | "Alex still hasn't answered Relay" | shown beside the case's holder | never on its own; it's evidence that a case is stuck |
-| Fact | "twelve accounts had mistyped addresses" | the subject | never; it's shown when the subject is opened |
+| Fact | "Northwind's renewal date is 1 March" | the subject | never; it's shown when the subject is opened |
 | Contradiction (derived by the engine) | Relay lists the Northwind draft as awaiting approval three days after Dana approved it | the case | it may mean the case is stuck: shown as possibly stuck |
 
 Interrupting is surfacing, not an action. Core sets each claim type's surfacing policy, and it combines with the
 classifier's status: a mined claim can add surfacing the status didn't, never remove it. Everything else waits on the
-page of what it's about; until the fleet and stream views exist (plan step 9), that's the case's page. Packs add
+page of what it's about. Until the fleet and stream views exist (plan step 9), mined claims are recorded, and those
+about a case are shown on its page. A claim inside one line of a report attaches to the case that line's key or
+subject claims point to; an expectation with neither an ask nor a case is dropped. Packs add
 recognizers for these core claim types. A claim type a pack defines is namespaced (`<pack>/<type>`),
 schema-validated, never reuses a core name, and is display-only.
 
@@ -277,19 +284,24 @@ The limits, which section 7 relies on:
 - **Add, never hide.** An expectation never pushes back a stuck-case or held-too-long check; a later "ok" never clears
   a "down" from another source; wording an ask as a fact or a report never keeps it from surfacing, since ask claims
   decide that.
-- **Who can author.** Health and expectation claims count only from `parts.own` of adapter-verified fleet members and
-  agents, or from a fleet pack's telemetry recognizers. From anyone else, and from quoted or forwarded text, they're
-  recorded as assertive content and never interrupt. Health about a human is dropped: it's health data about a person.
-  Interrupts from mined claims are grouped per agent or tool and capped per author and per observation per day.
+- **Who can author.** Health, expectation and holder-hint claims, and the claims a contradiction is derived from,
+  count only from `parts.own` of adapter-verified fleet members and agents, or from a fleet pack's telemetry
+  recognizers. From anyone else, and from quoted or forwarded text, they're recorded as assertive content and never
+  interrupt. Health about a human is dropped: it's health data about a person. MCP reports have unverified authors
+  (section 7), so their mined claims are recorded and never interrupt. A claim about someone other than its author
+  ("Alex will reply by Friday", "Atlas is down") is evidence only, never an interrupt on its own. Contradictions are
+  also capped per author per day. Interrupts from mined claims are grouped per agent or tool and capped per author and
+  per observation per day.
 - **Never authority.** Holder hints, health and expectations never move an ask's baton, which moves only by ask moves
   under section 7. A report's line about an ask is never a follow-up on it, so it never reopens or closes it.
 - **Contradictions only surface.** The engine finds them by comparing claims and state; the model never asserts one.
   They never change state, reopen or close an ask, or produce a pre-filled reply or approval: the operator writes any
   resend. Each shows the contradicting claim with its source, and they're capped per observation.
 - **Facts are spans.** A fact's subject is a resolved subject id or an unconfirmed candidate, its attribute comes from
-  a closed list a pack declares, and its value is its span, tombstoned with its source. Facts are about subjects, never
-  about people. A fact from an observation about a sensitive subject is sensitive wherever it's shown, and a model sees
-  fact text only delimited as untrusted.
+  a closed list a pack declares, and its value is its span, tombstoned with its source. Facts are about subjects,
+  never about people; subjects that are also contacts get no facts until open question 6 is settled. A fact from an
+  observation about a sensitive subject is sensitive wherever it's shown, and a model sees fact text only delimited as
+  untrusted.
 - **Times are spans.** An expectation's time is a span resolved against the observation's time in the operator's time
   zone, like a rule's end date; a time before the observation or beyond a set horizon is dropped.
 
@@ -349,7 +361,7 @@ type ClaimBody =
   | { type: "ask"; move: "request" | "promise" | "refuse" | "report_done" | "accept" | "reject" | "withdraw";
       from: Handle; to?: Handle; askRef?: string; span?: { start: number; end: number } }
   | { type: "subjectMention"; subjectKind: string; name: string; relation: "about" | "dependency" | "mention" }
-      | { type: "runMember"; routine: string; run: string; subject?: string }
+  | { type: "runMember"; routine: string; run: string; subject?: string }
   // Mined claims (section 3): names are resolved by the engine, as a rule's scope is
   | { type: "health"; about: { kind: "agent" | "tool" | "resource" | "fleet"; name?: string };
       state: "ok" | "degraded" | "down"; span: { start: number; end: number } }
@@ -482,7 +494,9 @@ operator depends on clustering. A work item (a case) starts only from:
 
 A subject never starts an item. A subject `about` places the observation in the subject's stream and is a strong
 signal for which case inside that stream it belongs to; it never makes all of a subject's observations one item.
-A question about existing work ("where are we with X?") never starts a case: its answer is activity on X's case or
+A question about existing work ("where are we with X?", told apart by the default pack's request recognizer: a
+question naming a key or an open case's subject) never starts a case, and when the recognizer is unsure, nothing
+starts: its answer is activity on X's case or
 stream. A request to go through many starts an on-demand run, not a case.
 Anything else is activity on its stream, conversation or run: assertive parts, a report, a directive nobody has
 answered, a commissive nobody asked for. Expressive and telemetry parts are not work. Each author has a cap on items
@@ -580,6 +594,9 @@ The current eval labels statuses. Identity needs its own labels and its own numb
 Message content, model output, MCP reports and packs are untrusted. Identity decisions change what reaches the
 operator and where their replies go, so they get the same care as the action endpoints.
 
+- **Mined claims only add surfacing.** Health, expectations, holder hints, facts and contradictions follow the limits
+  in section 3 ("What else a message tells us"): they never hide an interrupt, move a baton, change state or trigger
+  an action.
 - **Only the operator writes constraints.** Constraints with `decided_by = operator` come only from operator actions
   in the UI; the backfill of past operator actions is stamped `backfill`. The endpoints that write constraints get the
   same host and origin checks as the action endpoints. The engine stamps every claim's source; a recognizer can't set
@@ -702,10 +719,11 @@ at the end of this plan.
    and `item_lineage`.
 7. **Cutover.** Switch the pipeline to the resolver once its pair-label precision and recall beat the current
    linker's by an agreed margin; re-run the backfill of constraints first.
-8. **Routines, runs and rules.** Routines are declared by fleet packs where the runtime exposes a schedule,
-   otherwise proposed from recurring report patterns and confirmed by the operator. Missed and stuck runs surface.
-   Add `rules`: proposals from rule claims wait in a low-priority review list, with a count on the actor, subject
-   or routine they'd apply to; confirmed rules are shown there. Rules never appear in Needs me.
+8. **Routines, runs and rules.** Routines, and on-demand runs of them or of the built-in `review` routine, are
+   declared by fleet packs where the runtime exposes a schedule, otherwise proposed from recurring report patterns and
+   confirmed by the operator. Missed and stuck runs surface. Add `rules`: proposals from rule claims wait in a
+   low-priority review list, with a count on the actor, subject or routine they'd apply to; confirmed rules are shown
+   there. Rules never appear in Needs me.
 9. **Done policy, the stream view, then re-linking.** A configurable done policy (which source leads, tracker or
    classifier; quiet time alone never closes an item); the stream view and stream health, over the `stream_keys` that
    exist from step 5; the surfacing policies for mined claims (missed expectations, health that blocks work,
