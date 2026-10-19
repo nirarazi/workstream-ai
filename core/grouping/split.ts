@@ -22,7 +22,10 @@ function evidence(p: Placement): string {
   return (p.reasons[0] ?? "").split(/[ ,]/)[0];
 }
 
-/** The splits to propose: per case, the weak bridge with the most balanced cut, if any */
+/**
+ * The splits to propose: per case, the weak bridge with the most balanced cut, if any. Thread edges are never cut:
+ * pairs drawn across cuts of long threads walking several subjects were judged the same work as often as not.
+ */
 export function proposeSplits(placements: ReadonlyMap<string, Placement>, minPart = 2): Split[] {
   const byCluster = new Map<string, string[]>();
   for (const [key, p] of placements) if (p.cluster) byCluster.set(p.cluster, [...(byCluster.get(p.cluster) ?? []), key]);

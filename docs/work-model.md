@@ -833,6 +833,9 @@ Calls made while the maintainer was away, each easy to change. Newest last.
    line says otherwise. Threads that walk several subjects are for the over-merge detector (plan step 6).
 9. **Hand-set weights stay.** Fitting them to the dev pairs overfit (test F1 0.80 to 0.76); refit when the label
    set has grown.
+10. **The over-merge detector is on.** It cuts a case's weak bridge (a top-level exchange, a continuation or a
+    near-copy joining two parts about different keys). All 12 pairs drawn at and across its cuts were judged
+    different work. Cutting thread edges too was tried and dropped: 9 of 16 such pairs were the same work.
 
 ## 10. Open questions
 
