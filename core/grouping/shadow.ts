@@ -11,7 +11,8 @@ import type BetterSqlite3 from "better-sqlite3";
 import { DefaultExtractor } from "../graph/extractors/default.js";
 import type { ClusterOptions } from "./cluster.js";
 import { groupMessages } from "./index.js";
-import { loadGroupingMessages } from "./load.js";
+import { loadActorNames, loadGroupingMessages } from "./load.js";
+import { findAsks } from "./asks.js";
 import { casesFrom } from "./streams.js";
 
 export const SHADOW_SQL = `
@@ -35,6 +36,18 @@ CREATE TABLE IF NOT EXISTS v2_assignments (
   computed_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_v2_assignments_case ON v2_assignments(case_id);
+-- What the recognizers say about each message: the graph's edges from a message to a key, a subject or an actor
+-- (docs/work-model.md §3, "The graph"). claim: kind (work, report, telemetry, chatter), about, mention, ask.
+-- relation: for about, how it's known (key, tagged, named); for ask, its strength (blocks, asks).
+CREATE TABLE IF NOT EXISTS v2_claims (
+  message_key TEXT NOT NULL,
+  claim       TEXT NOT NULL,
+  value       TEXT NOT NULL,
+  relation    TEXT,
+  computed_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_v2_claims_value ON v2_claims(value, claim);
+CREATE INDEX IF NOT EXISTS idx_v2_claims_message ON v2_claims(message_key);
 `;
 
 /** A case id that holds while the case's first message does */
@@ -89,8 +102,17 @@ export function runShadowGrouping(db: BetterSqlite3.Database, lastVersion: strin
   const byKey = new Map(messages.map((m) => [m.key, m]));
   const { cases, streams } = casesFrom(placements, new Map(messages.map((m) => [m.key, { at: m.at, channelId: m.channelId }])));
   const now = new Date().toISOString();
+  const actors = loadActorNames(db);
+  const asks = findAsks(messages, placements, new Map([...actors].map(([id, name]) => [name.trim().toLowerCase(), id])));
   const write = db.transaction(() => {
-    db.exec("DELETE FROM v2_cases; DELETE FROM v2_assignments;");
+    db.exec("DELETE FROM v2_cases; DELETE FROM v2_assignments; DELETE FROM v2_claims;");
+    const insertClaim = db.prepare("INSERT INTO v2_claims (message_key, claim, value, relation, computed_at) VALUES (?, ?, ?, ?, ?)");
+    for (const [key, p] of placements) {
+      insertClaim.run(key, "kind", p.recognized.kind, null, now);
+      if (p.recognized.about) insertClaim.run(key, "about", p.recognized.about, p.recognized.aboutBy, now);
+      for (const mention of p.recognized.mentions) insertClaim.run(key, "mention", mention, null, now);
+    }
+    for (const a of asks) insertClaim.run(a.message, "ask", a.to, a.strength, now);
     const insertCase = db.prepare(`
       INSERT OR REPLACE INTO v2_cases (id, stream, keys, first_at, last_at, size, status, waiting, computed_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)

@@ -32,6 +32,9 @@ describe("runShadowGrouping", () => {
     expect(kase).toMatchObject({ id: stableCaseId("slack:C0OPS:1700000001.000100"), stream: "project:OPS", status: "blocked_on_human", waiting: 1, size: 2 });
     expect((db.db.prepare("SELECT COUNT(*) AS n FROM v2_assignments").get() as { n: number }).n).toBe(2);
     expect(runShadowGrouping(db.db, first.version).run).toBeNull();
+    // What each message says, as edges: its kind, and the key it's about
+    const claims = db.db.prepare("SELECT claim, value, relation FROM v2_claims WHERE message_key = ? ORDER BY claim").all("slack:C0OPS:1700000001.000100");
+    expect(claims).toEqual([{ claim: "about", value: "ticket:OPS-101", relation: "key" }, { claim: "kind", value: "work", relation: null }]);
     db.close();
   });
 
