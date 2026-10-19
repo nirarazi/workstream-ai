@@ -61,6 +61,16 @@ describe("GroupingLab", () => {
     const lab = new GroupingLab(db.db);
     expect(lab.streams(undefined, 200, "needsYou").streams.map((s) => [s.key, s.needsYou])).toEqual([["project:OPS", 1]]);
   });
+
+  it("connects a case to the cases about the keys its messages mention", () => {
+    graph.upsertThread({ id: "1700000011.000100", channelId: "C0OPS", channelName: "ops", platform: "slack", workItemId: null });
+    graph.insertEvent({ threadId: "1700000011.000100", messageId: "1700000011.000100", agentId: "U0ATLAS", status: "blocked_on_human",
+      confidence: 0.9, rawText: "OPS-404: blocked by OPS-101", timestamp: new Date(Date.UTC(2026, 9, 19, 12, 0)).toISOString() });
+    const lab = new GroupingLab(db.db);
+    const blocked = lab.stream("project:OPS")!.cases.find((c) => c.keys.includes("ticket:OPS-404"))!;
+    const connections = lab.case(blocked.id)!.connections;
+    expect(connections.map((c) => [c.key, c.cases.length])).toEqual([["ticket:OPS-101", 1]]);
+  });
 });
 
 describe("lab routes", () => {

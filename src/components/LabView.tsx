@@ -264,6 +264,29 @@ export default function LabView(): JSX.Element {
               <CaseGraph data={graph} selected={selected} onSelect={setSelected} />
             </div>
             {node && <NodeDetail node={node} />}
+            {graph.connections.length > 0 && (
+              <div className="mt-4">
+                <h3 className="text-xs font-medium uppercase tracking-wide text-gray-500">Connected</h3>
+                <ul className="mt-2 space-y-2">
+                  {graph.connections.map((c) => (
+                    <li key={c.key} className="text-sm">
+                      <span className="text-cyan-400">{c.key}</span>
+                      {c.cases.length === 0 && <span className="ml-2 text-xs text-gray-500">mentioned, no case of its own</span>}
+                      <ul className="mt-1 ml-3 space-y-1">
+                        {c.cases.map((k) => (
+                          <li key={k.id}>
+                            <button onClick={() => setCaseId(k.id)} className="cursor-pointer text-left text-gray-300 hover:text-gray-100">
+                              {k.status && <span className={`mr-2 rounded px-1.5 text-xs ${STATUS_CLASSES[k.status] ?? "bg-gray-800 text-gray-400"}`}>{STATUS_LABELS[k.status] ?? k.status}</span>}
+                              {k.title || "(no text)"} <span className="text-xs text-gray-500">· {plural(k.size, "message")}</span>
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
           </>
         )}
       </section>

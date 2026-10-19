@@ -724,6 +724,8 @@ export interface LabCase {
   case: { id: string; keys: string[]; stream: string; streamLabel: string };
   nodes: LabNode[];
   edges: LabEdge[];
+  /** Keys the case's messages mention without being about, and the cases about them */
+  connections: Array<{ key: string; cases: Array<{ id: string; title: string; size: number; status: string | null }> }>;
 }
 
 export function fetchLabStreams(q?: string, only: "all" | "waiting" | "needsYou" = "all"): Promise<{ streams: LabStream[]; total: number }> {

@@ -128,8 +128,38 @@ export class GroupingLab {
     return { stream, cases };
   }
 
-  /** One case as a graph: its messages, and the edges that drew them in */
-  case(id: string): { case: { id: string; keys: string[]; stream: string; streamLabel: string }; nodes: LabNode[]; edges: LabEdge[] } | null {
+  /**
+   * The cases a case touches: keys its messages mention without being about (a ticket it waits on, another partner),
+   * each with the cases about it. The neighbourhood of a case in the graph (docs/work-model.md §3).
+   */
+  private connections(c: Case): Array<{ key: string; cases: Array<{ id: string; title: string; size: number; status: string | null }> }> {
+    const snap = this.current();
+    const own = new Set(c.keys);
+    const mentioned = new Set<string>();
+    for (const m of c.members) for (const k of snap.placements.get(m.key)?.recognized.mentions ?? []) if (!own.has(k)) mentioned.add(k);
+    const out: Array<{ key: string; cases: Array<{ id: string; title: string; size: number; status: string | null }> }> = [];
+    for (const key of mentioned) {
+      const holders = [...snap.cases.values()].filter((o) => o.id !== c.id && o.keys.includes(key));
+      out.push({
+        key,
+        cases: holders.slice(0, 5).map((o) => ({
+          id: o.id,
+          title: (snap.messages.get(o.members[0].key)?.text ?? "").replace(/\s+/g, " ").slice(0, 100),
+          size: o.members.length,
+          status: this.statusOf(o).status,
+        })),
+      });
+    }
+    return out.sort((a, b) => b.cases.length - a.cases.length || (a.key < b.key ? -1 : 1)).slice(0, 20);
+  }
+
+  /** One case as a graph: its messages, the edges that drew them in, and the cases it touches */
+  case(id: string): {
+    case: { id: string; keys: string[]; stream: string; streamLabel: string };
+    nodes: LabNode[];
+    edges: LabEdge[];
+    connections: ReturnType<GroupingLab["connections"]>;
+  } | null {
     const snap = this.current();
     const c = snap.cases.get(id);
     if (!c) return null;
@@ -152,6 +182,6 @@ export class GroupingLab {
     const edges: LabEdge[] = c.members
       .filter((m) => m.via && inCase.has(m.via) && m.via !== m.key)
       .map((m) => ({ from: m.via!, to: m.key, reason: reasonKind(m.reasons) }));
-    return { case: { id: c.id, keys: c.keys, stream: c.stream, streamLabel: this.label(c.stream) }, nodes, edges };
+    return { case: { id: c.id, keys: c.keys, stream: c.stream, streamLabel: this.label(c.stream) }, nodes, edges, connections: this.connections(c) };
   }
 }
