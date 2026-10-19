@@ -43,6 +43,8 @@ export function groupingMessages(db: BetterSqlite3.Database, index: Pick<Message
       text: o.text,
       status: r?.status ?? null,
       digest: r?.digest === 1,
+      // A thread is keyed by its first message's id: a message that is its thread's first is top-level
+      topLevel: o.id.endsWith(`:${o.threadId}`),
     };
   });
 }

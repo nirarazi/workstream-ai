@@ -14,7 +14,7 @@ function msg(text: string, over: Partial<GroupingMessage> = {}): GroupingMessage
   const ts = `17000000${String(n).padStart(2, "0")}.000100`;
   return {
     key: `slack:C0OPS:${ts}`, threadId: ts, channelId: "C0OPS", senderId: "U0ATLAS", senderKind: "agent",
-    at: new Date(Date.UTC(2026, 9, 19, 9, n)).toISOString(), text, ...over,
+    at: new Date(Date.UTC(2026, 9, 19, 9, n)).toISOString(), text, topLevel: over.threadId === undefined, ...over,
   };
 }
 
@@ -40,6 +40,20 @@ describe("recognizers", () => {
     expect(stripEmphasis("_OPS-101 nudge_ and *bold*")).toBe(" OPS-101 nudge  and  bold ");
     expect(stripEmphasis("https://forge.example/my_repo/pull/7")).toBe("https://forge.example/my_repo/pull/7");
     expect(recognize(msg(":wave: _OPS-101 nudge_ — still in progress"), options).about).toBe("ticket:OPS-101");
+  });
+
+  it("reads crafted long text in linear time", () => {
+    const n = 40_000;
+    const started = Date.now();
+    stripEmphasis("a" + "_".repeat(n) + "a");
+    taggedSubject("[ab] Northwind" + " ".repeat(n) + "x");
+    taggedSubject("[ab]" + "_".repeat(n) + "x\ry");
+    expect(Date.now() - started).toBeLessThan(100);
+  });
+
+  it("never sets aside a message that asks for someone as telemetry or a report", () => {
+    expect(recognize(msg("TICK_DONE cases=3", { status: "blocked_on_human" }), options).kind).toBe("work");
+    expect(recognize(msg("Daily digest\n- OPS-1 done\n- OPS-2 blocked\n- OPS-3 open", { status: "needs_decision" }), options).kind).toBe("work");
   });
 
   it("keys a pipeline's release notes by version, never a person's message", () => {
@@ -92,6 +106,18 @@ describe("cluster", () => {
     const untagged = msg("I took the overdue task: Northwind Traders, the January start", { senderId: "U0RELAY", channelId: "C0OTHER" });
     const placed = cluster([untagged, tagged], options);
     expect(placed.get(untagged.key)!.cluster).toBe(placed.get(tagged.key)!.cluster);
+  });
+
+  it("keeps a sender's templated notes about different keys apart", () => {
+    const g = groups([msg("OPS-101 status: in progress, PR opened for review"), msg("OPS-102 status: in progress, PR opened for review")]);
+    expect(g).toHaveLength(2);
+  });
+
+  it("places a message the operator tied to a case even when it reads as a report", () => {
+    const a = msg("OPS-101: started");
+    const digest = msg("Daily digest\n- OPS-1 done\n- OPS-2 blocked\n- OPS-3 open");
+    const placed = cluster([a, digest], { ...options, constraints: [{ kind: "must_link", a: digest.key, b: a.key }] });
+    expect(placed.get(digest.key)!.cluster).toBe(placed.get(a.key)!.cluster);
   });
 
   it("leaves reports and telemetry out, and obeys the operator's constraints", () => {

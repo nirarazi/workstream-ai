@@ -71,6 +71,37 @@ describe("foldIntoTrackerItem", () => {
     expect(parent.reopenedAt).toBe("2026-10-19T10:00:00.000Z");
   });
 
+  it("never lets a sub-task's or a duplicate's done close the case, or replace its open ask", () => {
+    for (const reason of ["hierarchy", "duplicate"] as const) {
+      const db2 = new Database(":memory:");
+      const g = new ContextGraph(db2);
+      g.upsertWorkItem({ id: "OPS-101", source: "jira", currentAtcStatus: "blocked_on_human", statusAt: "2026-10-19T09:00:00.000Z" });
+      g.upsertWorkItem({ id: "OPS-102", source: "extracted", currentAtcStatus: "completed", statusAt: "2026-10-19T10:00:00.000Z" });
+      g.foldIntoTrackerItem("OPS-102", "OPS-101", reason, "jira");
+      expect(g.getWorkItemById("OPS-101")!.currentAtcStatus).toBe("blocked_on_human");
+      db2.close();
+    }
+    // With no ask open, a step's newer done says the case is in progress
+    graph.upsertWorkItem({ id: "OPS-101", source: "jira", currentAtcStatus: "completed", statusAt: "2026-10-19T09:00:00.000Z" });
+    graph.upsertWorkItem({ id: "OPS-102", source: "extracted", currentAtcStatus: "completed", statusAt: "2026-10-19T10:00:00.000Z" });
+    graph.foldIntoTrackerItem("OPS-102", "OPS-101", "hierarchy", "jira");
+    expect(graph.getWorkItemById("OPS-101")!.currentAtcStatus).toBe("in_progress");
+  });
+
+  it("puts the parent's status back when the operator undoes the fold, and never carries noise", () => {
+    graph.upsertWorkItem({ id: "OPS-101", source: "jira", currentAtcStatus: "in_progress", statusAt: "2026-10-19T09:00:00.000Z" });
+    graph.upsertWorkItem({ id: "OPS-102", source: "extracted", currentAtcStatus: "blocked_on_human", statusAt: "2026-10-19T10:00:00.000Z" });
+    graph.foldIntoTrackerItem("OPS-102", "OPS-101", "hierarchy", "jira");
+    expect(graph.getWorkItemById("OPS-101")!.currentAtcStatus).toBe("blocked_on_human");
+    graph.unmergeWorkItem("OPS-102");
+    expect(graph.getWorkItemById("OPS-101")).toMatchObject({ currentAtcStatus: "in_progress", statusAt: "2026-10-19T09:00:00.000Z" });
+
+    graph.upsertWorkItem({ id: "OPS-103", source: "extracted", currentAtcStatus: "noise", statusAt: "2026-10-19T11:00:00.000Z" });
+    graph.upsertWorkItem({ id: "OPS-101", source: "jira", currentAtcStatus: "blocked_on_human", statusAt: "2026-10-19T10:30:00.000Z" });
+    graph.foldIntoTrackerItem("OPS-103", "OPS-101", "hierarchy", "jira");
+    expect(graph.getWorkItemById("OPS-101")!.currentAtcStatus).toBe("blocked_on_human");
+  });
+
   it("doesn't let an older update from a sub-task overwrite its parent's newer ask", () => {
     graph.upsertWorkItem({ id: "OPS-102", source: "extracted", currentAtcStatus: "in_progress", statusAt: "2026-10-19T09:00:00.000Z" });
     graph.upsertWorkItem({ id: "OPS-101", source: "jira", currentAtcStatus: "needs_decision", statusAt: "2026-10-19T10:00:00.000Z" });

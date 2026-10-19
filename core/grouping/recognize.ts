@@ -22,9 +22,11 @@ export interface GroupingMessage {
   status?: StatusCategory | null;
   /** Flagged as a digest upstream */
   digest?: boolean;
+  /** Posted on its own, not as a reply in a platform thread */
+  topLevel?: boolean;
 }
 
-export type MessageKind = "work" | "report" | "telemetry" | "noise";
+export type MessageKind = "work" | "report" | "telemetry";
 
 export interface Recognized {
   kind: MessageKind;
@@ -34,18 +36,19 @@ export interface Recognized {
   mentions: string[];
   /** The routine lane a tagged line names ("drain"), if any */
   lane: string | null;
-  question: boolean;
 }
 
 /** "[lane] Subject (detail): …" or "[lane] *Subject* — …": a routine's note about one subject */
-const TAGGED_LINE = /^[\s*_]*\[([a-z][a-z0-9-]{1,30})\][\s*_]*(.+)$/i;
+const TAGGED_LINE = /^[\s*_]*\[([a-z][a-z0-9-]{1,30})\](.+)$/i;
 /** Where a tagged line's subject ends */
-const SUBJECT_END = /\s*(?:\(|:|\s[—–-]\s|,|\.\s|;)/;
+const SUBJECT_END = /\(|:|\s[—–-]\s|,|\.\s|;/;
+/** Only the start of a first line is read for a tag and a subject */
+const MAX_FIRST_LINE = 500;
 const MAX_SUBJECT_WORDS = 6;
 
 /** The subject a routine's tagged first line names, as a key: "subject:northwind", whatever its lane */
 export function taggedSubject(firstLine: string): { lane: string; subject: string } | null {
-  const m = TAGGED_LINE.exec(firstLine);
+  const m = TAGGED_LINE.exec(firstLine.slice(0, MAX_FIRST_LINE));
   if (!m) return null;
   const rest = m[2].replace(/[*_`]/g, "").trim();
   const name = rest.split(SUBJECT_END)[0].trim().replace(/\s+/g, " ");
@@ -79,13 +82,24 @@ const TELEMETRY = [
  * inside a word or a URL (repo_name) are kept.
  */
 export function stripEmphasis(text: string): string {
-  return text.replace(/(?<![\w/])[_*~]+|[_*~]+(?![\w/])/g, " ");
+  // Linear: a run of marks is matched once, from its start, whatever follows it
+  return text.replace(/(?<![\w/_*~])[_*~]+|(?<![_*~])[_*~]+(?![\w/_*~])/g, " ");
+}
+
+const subjectPatterns = new Map<string, RegExp>();
+function subjectPattern(subject: string): RegExp {
+  let re = subjectPatterns.get(subject);
+  if (!re) {
+    re = new RegExp(`(?<![\\p{L}\\p{N}])${subject.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\p{L}\\p{N}])`, "u");
+    subjectPatterns.set(subject, re);
+  }
+  return re;
 }
 
 /** The one known subject a message names near its start, as a whole phrase, or null for none or several */
 function namedSubject(text: string, subjects: readonly string[]): string | null {
   const head = stripEmphasis(text.slice(0, 300)).toLowerCase().replace(/\s+/g, " ");
-  const found = subjects.filter((s) => new RegExp(`(?<![\\p{L}\\p{N}])${s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\p{L}\\p{N}])`, "u").test(head));
+  const found = subjects.filter((s) => subjectPattern(s).test(head));
   // A longer name containing a shorter one ("dana lee" and "lee") is one subject
   const distinct = found.filter((s) => !found.some((o) => o !== s && o.includes(s)));
   return distinct.length === 1 ? distinct[0] : null;
@@ -98,21 +112,20 @@ export function recognize(message: GroupingMessage, options: ResolverOptions & {
   const refs = [...new Set(lines.flatMap((l) => l.refs))];
   const firstLine = own.split("\n").find((l) => l.trim())?.trim() ?? "";
   const tagged = message.senderKind !== "human" ? taggedSubject(firstLine) : null;
-  const question = /\?\s*$/.test(own.trim()) || /\?\s*\n/.test(own);
-
   // The classifier's "noise" decides what surfaces, never what a message belongs to (docs/work-model.md, §3): a short
-  // "yes" or "you merge" it calls noise is still a step in a case
-  const noise = false;
-  const telemetry = message.senderKind !== "human" && TELEMETRY.some((re) => re.test(firstLine));
-  const report = !tagged && isReport(
+  // "yes" or "you merge" it calls noise is still a step in a case, so status isn't read here except for asks
+  // A message that asks for someone is never set aside as telemetry or a report: the ask must not be lost
+  const asks = message.status === "blocked_on_human" || message.status === "needs_decision";
+  const telemetry = message.senderKind !== "human" && !asks && TELEMETRY.some((re) => re.test(firstLine.slice(0, MAX_FIRST_LINE)));
+  const report = !tagged && !asks && isReport(
     { threadId: message.threadId, senderKind: message.senderKind, text: own, status: message.status ?? null, priorInThread: 0, digest: message.digest },
     lines, [], about.subject,
   );
-  const kind: MessageKind = telemetry ? "telemetry" : report ? "report" : noise ? "noise" : "work";
+  const kind: MessageKind = telemetry ? "telemetry" : report ? "report" : "work";
 
   const named = !tagged && options.subjects?.length ? namedSubject(own, options.subjects) : null;
   const subjectKey = tagged ? `subject:${tagged.subject}` : named ? `subject:${named}` : null;
   const aboutKey = about.subject ?? subjectKey ?? releaseKey(own, message.senderKind);
   const mentions = refs.filter((r) => r !== aboutKey && keyKind(r) !== "subject");
-  return { kind, about: kind === "work" ? aboutKey : null, mentions, lane: tagged?.lane ?? null, question };
+  return { kind, about: kind === "work" ? aboutKey : null, mentions, lane: tagged?.lane ?? null };
 }

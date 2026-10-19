@@ -205,6 +205,8 @@ interface MergeRecord {
   links: Array<{ row: ThreadWorkItemRow; targetRelation: string | null }>;
   /** The source's per-message rows; moved: re-pointed at the target, else dropped in favour of the target's own */
   rows: Array<{ table: string; row: Record<string, unknown>; moved: boolean }>;
+  /** A tracker fold that carried the source's status to the target: the target's state before, to put back on unmerge */
+  carried?: { statusAt: string; before: Pick<WorkItemRow, "current_atc_status" | "current_confidence" | "status_at" | "dismissed_at" | "dismiss_reason" | "reopened_at"> };
 }
 
 /** A digest check the app and the digest disagree on, not yet settled or judged */
@@ -556,14 +558,11 @@ export class ContextGraph {
    */
   isStepRef(ref: string): boolean {
     const holder = this.resolveItemRef(ref);
-    for (const key of keysForRef(ref)) {
-      const row = this.db.db.prepare(`
-        SELECT k.evidence FROM item_keys k JOIN work_item_merges m ON m.source_id = k.evidence
-        WHERE k.key = ? AND k.item_id = ? AND k.retired_at IS NULL AND k.decided_by = 'merge' AND m.decided_by = 'hierarchy'
-      `).get(key, holder) as { evidence: string } | undefined;
-      if (row) return true;
-    }
-    return false;
+    const folded = this.db.db.prepare(`
+      SELECT 1 FROM item_keys k JOIN work_item_merges m ON m.source_id = k.evidence
+      WHERE k.key = ? AND k.item_id = ? AND k.retired_at IS NULL AND k.decided_by = 'merge' AND m.decided_by = 'hierarchy'
+    `);
+    return keysForRef(ref).some((key) => folded.get(key, holder) !== undefined);
   }
 
   /** An operator action's write to an item: that very item, never another its id or key resolves to */
@@ -711,19 +710,32 @@ export class ContextGraph {
     }));
   }
 
-  private carryStatusOnFold(source: WorkItem, target: WorkItem, at: string): void {
+  /**
+   * What a fold carries from the source to the target. A part's or a duplicate's "done" isn't the case's, so at most
+   * it says the case is in progress; noise says nothing; and an open ask on the target stays until an ask replaces it.
+   */
+  private carryStatusOnFold(source: WorkItem, target: WorkItem, at: string): MergeRecord["carried"] {
     const asks = (st: StatusCategory | null) => st === "blocked_on_human" || st === "needs_decision";
-    if (!source.currentAtcStatus) return;
+    const status = source.currentAtcStatus === "completed" ? "in_progress" : source.currentAtcStatus;
+    if (!status || status === "noise") return undefined;
+    if (asks(target.currentAtcStatus) && !asks(status)) return undefined;
     const newer = !target.statusAt || (source.statusAt !== null && source.statusAt > target.statusAt);
-    const carry = newer || (asks(source.currentAtcStatus) && !asks(target.currentAtcStatus));
-    if (!carry) return;
+    const carry = newer || (asks(status) && !asks(target.currentAtcStatus));
+    if (!carry) return undefined;
+    const before = this.db.db.prepare(`
+      SELECT current_atc_status, current_confidence, status_at, dismissed_at, dismiss_reason, reopened_at FROM work_items WHERE id = ?
+    `).get(target.id) as NonNullable<MergeRecord["carried"]>["before"];
+    // Never back in time: an older ask carried over a newer status is stamped with the fold, so a backlog message
+    // from between the two can't overwrite it
+    const statusAt = newer ? (source.statusAt ?? at) : at;
     this.db.db.prepare(`
       UPDATE work_items SET current_atc_status = ?, current_confidence = ?, status_at = ?, updated_at = ?,
         dismissed_at = CASE WHEN dismissed_at IS NOT NULL AND dismissed_at < COALESCE(?, '') THEN NULL ELSE dismissed_at END,
         dismiss_reason = CASE WHEN dismissed_at IS NOT NULL AND dismissed_at < COALESCE(?, '') THEN NULL ELSE dismiss_reason END
       WHERE id = ?
-    `).run(source.currentAtcStatus, source.currentConfidence, source.statusAt ?? at, at, source.statusAt, source.statusAt, target.id);
-    if (target.currentAtcStatus === "completed" && source.currentAtcStatus !== "completed") this.setReopened(target.id, source.statusAt ?? at);
+    `).run(status, source.currentConfidence, statusAt, at, source.statusAt, source.statusAt, target.id);
+    if (target.currentAtcStatus === "completed") this.setReopened(target.id, statusAt);
+    return { statusAt, before };
   }
 
   /** Moves the source's live keys to the target (a key the target holds already stays the target's alone) */
@@ -2391,16 +2403,15 @@ export class ContextGraph {
         db.prepare(`DELETE FROM ${table} WHERE work_item_id = ?`).run(sourceId);
       }
 
-      const record: MergeRecord = { threads, events, links, rows };
+      // The tracker's fold is the engine's doing, not the operator's: what the source was waiting on stays in front of
+      // them (carryStatusOnFold), and what it changed on the target is kept, so an unmerge puts it back
+      const carried = decidedBy !== "operator" ? this.carryStatusOnFold(source, target, mergedAt) : undefined;
+      const record: MergeRecord = { threads, events, links, rows, ...(carried ? { carried } : {}) };
       db.prepare("INSERT OR REPLACE INTO work_item_merges (source_id, target_id, merged_at, moved, decided_by) VALUES (?, ?, ?, ?, ?)")
         .run(sourceId, targetId, mergedAt, JSON.stringify(record), decidedBy);
 
       this.moveKeysOnMerge(sourceId, targetId, mergedAt);
-      // The tracker's fold is the engine's doing, not the operator's: what the source was waiting on stays in front of
-      // them. An ask on the source (blocked, a decision) carries over unless the target's status is newer and an ask
-      // too, and a newer status carries over anyway; a dismissal older than what carries over is lifted.
-      if (decidedBy !== "operator") this.carryStatusOnFold(source, target, mergedAt);
-      else this.settleConstraints();
+      if (decidedBy === "operator") this.settleConstraints();
 
       // Soft-delete source, touch target
       db.prepare("UPDATE work_items SET merged_into = ?, updated_at = ? WHERE id = ?").run(targetId, mergedAt, sourceId);
@@ -2442,6 +2453,14 @@ export class ContextGraph {
 
       if (saved && saved.target_id === targetId) {
         const record = JSON.parse(saved.moved) as MergeRecord;
+        // What a fold carried to the target goes back, unless a newer message has set the target's status since
+        if (record.carried && this.getWorkItemById(targetId)?.statusAt === record.carried.statusAt) {
+          const b = record.carried.before;
+          db.prepare(`
+            UPDATE work_items SET current_atc_status = ?, current_confidence = ?, status_at = ?, dismissed_at = ?,
+              dismiss_reason = ?, reopened_at = ? WHERE id = ?
+          `).run(b.current_atc_status, b.current_confidence, b.status_at, b.dismissed_at, b.dismiss_reason, b.reopened_at, targetId);
+        }
         const threadBack = db.prepare("UPDATE threads SET work_item_id = ? WHERE id = ? AND work_item_id = ?");
         // Messages in the thread since the merge took its item then: they're the source's again
         const laterEventsBack = db.prepare(

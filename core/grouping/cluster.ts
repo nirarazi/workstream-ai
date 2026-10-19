@@ -118,7 +118,9 @@ export function cluster(messages: readonly GroupingMessage[], options: ClusterOp
   const nearCopyMs = options.nearCopyMs ?? 3 * MINUTE;
   const continuationMs = options.continuationMs ?? 30 * MINUTE;
   const exchangeMs = options.exchangeMs ?? 10 * MINUTE;
-  const sorted = [...messages].sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : a.key < b.key ? -1 : 1));
+  // Time order, ties by key; a message given twice counts once
+  const unique = [...new Map(messages.map((m) => [m.key, m])).values()];
+  const sorted = unique.sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
   // The subjects routines name in their tagged lines, so a message naming one untagged is about it too
   const subjects = subjectLexicon(sorted, options);
 
@@ -148,7 +150,9 @@ export function cluster(messages: readonly GroupingMessage[], options: ClusterOp
 
   for (const m of sorted) {
     const recognized = recognize(m, { ...options, subjects });
-    if (notAnItem.has(m.key) || recognized.kind !== "work") {
+    // The operator's pin or link says it's work, whatever the recognizers make of it
+    const tied = pins.has(m.key) || must.has(m.key);
+    if (notAnItem.has(m.key) || (recognized.kind !== "work" && !tied)) {
       out.set(m.key, { cluster: null, recognized, reasons: [notAnItem.has(m.key) ? "operator: not an item" : recognized.kind] });
       continue;
     }
@@ -176,11 +180,13 @@ export function cluster(messages: readonly GroupingMessage[], options: ClusterOp
       const keyless = !about && recognized.mentions.length === 0;
       if (m.senderKind === "human" && keyless && gap <= followUpMs) add(before.cluster, w.followUp, "followUp");
       else if (keyless && !before.about && gap <= continuationMs) add(before.cluster, w.continuation, "continuation");
-      if (gap <= nearCopyMs && overlap(m.text, before.message.text) >= 0.6) add(before.cluster, w.nearCopy, "nearCopy");
+      // A near-copy about another key is a template ("OPS-1 status: …", then "OPS-2 status: …"), not the same post
+      const sameSubject = !about || !before.about || about === before.about;
+      if (sameSubject && gap <= nearCopyMs && overlap(m.text, before.message.text) >= 0.6) add(before.cluster, w.nearCopy, "nearCopy");
     }
     // A top-level post answering someone else's just before it in the channel, where a person is one of the two
     const lastHere = m.channelId ? lastInChannel.get(m.channelId) : undefined;
-    if (lastHere && m.threadId === m.key.slice(m.key.lastIndexOf(":") + 1) && !about
+    if (lastHere && m.topLevel && !about
       && lastHere.message.senderId !== m.senderId
       && (m.senderKind === "human" || lastHere.message.senderKind === "human")
       && Date.parse(m.at) - Date.parse(lastHere.message.at) <= exchangeMs) {

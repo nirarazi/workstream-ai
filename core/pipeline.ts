@@ -1067,8 +1067,9 @@ export class Pipeline {
       // From here on, the items the IDs name now: an ID whose item was merged into another is that one
       const resolve = (id: string) => this.graph.resolveItemRef(id);
       // Items named here only by a step of theirs (a sub-task folded into its parent): a step's "done" isn't the case's
-      const stepOnly = new Set([...allWorkItemIds].filter((id) => this.graph.isStepRef(id)).map(resolve));
-      for (const id of allWorkItemIds) if (!this.graph.isStepRef(id)) stepOnly.delete(resolve(id));
+      const steps = new Map([...allWorkItemIds].map((id) => [id, this.graph.isStepRef(id)]));
+      const stepOnly = new Set([...steps].filter(([, step]) => step).map(([id]) => resolve(id)));
+      for (const [id, step] of steps) if (!step) stepOnly.delete(resolve(id));
       const named = [...allWorkItemIds].map(resolve);
       allWorkItemIds.clear();
       for (const id of named) allWorkItemIds.add(id);

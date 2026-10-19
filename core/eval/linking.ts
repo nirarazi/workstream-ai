@@ -81,6 +81,7 @@ function main(): void {
   const scores = new Map<GroupingName, GroupingScore>([...groupings].map(([name, g]) => [name, scoreGrouping(labels, g, known)]));
   const same = labels.pairs.filter((p) => p.verdict === "same").length;
   console.log(`Labels: ${labels.pairs.length} pairs (${same} same work, ${labels.pairs.length - same} different), ${labels.notWork.length} messages marked not work, ${labels.mixed.length} mixed`);
+  if (split !== "all") console.log(`Pairs from the ${split} split only; the not-work rate, unplaced count and B-cubed scores use every labelled message`);
   const first = [...scores.values()][0];
   if (first.unknownMessages) {
     console.log(`${first.unknownMessages} labeled messages aren't in this database (another or older --db?): ${first.pairsWithUnknown} pairs with them are left out`);
