@@ -7,6 +7,8 @@
 //   split-edge     the weak edge each proposed split cuts (the split is right if these are different work)
 //   split-across   a message on each side of a proposed split
 //   subject-window the last message of a subject's case and the first of the next case in the same stream
+//   join:<rule>    a message and the one that drew it in, where that rule decided the join (exchange, continuation,
+//                  followUp, nearCopy, namedSubject): the join is right if these are the same work
 // and writes them to eval-data/linking/targets.json ({ pairs: [{ a, b }] }, for npm run eval:pairs -- --only
 // targets.json) with targets-why.json, which says which decision each pair tests. --report tallies the verdicts a
 // label set gives those pairs, per decision: the share judged different is the decision's precision.
@@ -23,7 +25,12 @@ import { onStopSignals, parseFlags, projectRoot } from "./linking-data.js";
 import { LINKING_DIR, loadLabels, pairKey, projectFile } from "./linking-labels.js";
 import type { Placement } from "../grouping/cluster.js";
 
-export type Decision = "split-edge" | "split-across" | "subject-window";
+export type Decision =
+  | "split-edge" | "split-across" | "subject-window"
+  | "join:exchange" | "join:continuation" | "join:followUp" | "join:nearCopy" | "join:namedSubject";
+
+/** The join rules measured: a message and the one that drew it in, where that rule decided the join */
+const JOINS = ["exchange", "continuation", "followUp", "nearCopy", "namedSubject"] as const;
 
 export interface Target {
   a: string;
@@ -65,6 +72,13 @@ export function drawTargets(
     out.push({ a: cs[0].members[cs[0].members.length - 1].key, b: cs[1].members[0].key, decision: "subject-window" });
     if (++windows >= perDecision) break;
   }
+  for (const rule of JOINS) {
+    const joined = [...placed].filter(([, p]) => p.via && (p.reasons[0] ?? "").startsWith(rule)).map(([k, p]) => ({ a: p.via!, b: k }));
+    for (let i = 0; i < perDecision && joined.length > 0; i++) {
+      const [j] = joined.splice(Math.floor(rnd() * joined.length), 1);
+      out.push({ ...j, decision: `join:${rule}` });
+    }
+  }
   return out;
 }
 
@@ -89,7 +103,9 @@ function report(root: string, labelsFile: string): void {
   }
   for (const [decision, r] of tally) {
     const judged = r.different + r.same;
-    const precision = judged ? `${Math.round((100 * r.different) / judged)}% judged different` : "none judged yet";
+    // A split or a window break is right when the pair is different work; a join when it's the same
+    const right = decision.startsWith("join:") ? r.same : r.different;
+    const precision = judged ? `${Math.round((100 * right) / judged)}% right` : "none judged yet";
     console.log(`${decision.padEnd(15)} ${precision} (${r.different} different, ${r.same} same, ${r.notWork} not work, ${r.unlabelled} unlabelled)`);
   }
 }
