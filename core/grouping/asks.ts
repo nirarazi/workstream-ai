@@ -2,8 +2,11 @@
 //
 // An ask is a message that asks someone for something:
 //   - the classifier says it's blocked on someone or waiting on a decision, and names who (events.action_required_from);
-//   - or it mentions someone (<@U…>) and asks: a question, or a request word ("please", "can you", "approve", …).
+//   - or it mentions someone (<@U…>) and asks: it opens by addressing them, or the sentence naming them asks.
 // It's answered when the one asked posts later in the same case (or, for a message in no case, the same thread).
+// Measured on a judged sample: the classifier's were all asks of that person (15 of 15), but only about half really
+// held the asker up, so they read as "waiting on", not "blocked by"; mentions were asks about half the time, so the
+// lab counts them apart and doesn't draw them.
 // Open asks are edges of the wait-for graph, from the one waiting to the one waited on. On it: who is waited on most
 // (a bottleneck), cycles (A waits on B, who waits on A: a deadlock), and each actor's root blocker (follow who they
 // wait on until someone waits on nobody). Read-only analysis: nothing here surfaces anything or changes a case.
@@ -29,6 +32,22 @@ export interface Ask {
 
 const MENTION = /<@([A-Z0-9]+)(?:\|[^<>]*)?>/g;
 const REQUEST = /\b(?:please|pls|can you|could you|would you|need you to|approve|review|check|confirm|send|fix|merge|decide|let me know)\b/i;
+
+/** The actors a message's mentions ask something of: the one it opens by addressing, or one named in a sentence that asks */
+export function mentionsAsked(text: string): string[] {
+  const out = new Set<string>();
+  const opening = /^\s*(?:<@([A-Z0-9]+)(?:\|[^<>]*)?>[\s,]*)+/.exec(text);
+  const addressed = opening ? [...opening[0].matchAll(MENTION)].map((m) => m[1]) : [];
+  const rest = text.slice(opening?.[0].length ?? 0);
+  const asking = addressed.length > 0 && (rest.includes("?") || REQUEST.test(rest));
+  if (asking) for (const id of addressed) out.add(id);
+  // Sentences: split at a full stop, question or exclamation mark followed by a space, or a line break
+  for (const sentence of text.split(/(?<=[.!?])\s+|\n+/)) {
+    if (!sentence.includes("?") && !REQUEST.test(sentence)) continue;
+    for (const m of sentence.matchAll(MENTION)) out.add(m[1]);
+  }
+  return [...out];
+}
 
 /** Actor ids a message's "action required from" names: ids as they are, names looked up (case-insensitive) */
 function resolveActors(names: readonly string[], byName: ReadonlyMap<string, string>, known: ReadonlySet<string>): string[] {
@@ -68,10 +87,9 @@ export function findAsks(
     if (!m.senderId) continue;
     const targets = new Map<string, Ask["strength"]>();
     const text = stripSignature(m.text);
-    const mentioned = [...text.matchAll(MENTION)].map((x) => x[1]);
-    // A mention asks only someone the fleet knows (a person or agent who posts, or is in the directory): a tool's
-    // handle in a sign-off or a link isn't someone to wait on
-    if (mentioned.length > 0 && (text.includes("?") || REQUEST.test(text))) for (const id of mentioned) if (known.has(id)) targets.set(id, "asks");
+    // A mention asks someone the fleet knows (not a tool's handle) when the message opens by addressing them, or the
+    // sentence naming them asks something: a mention in passing ("as Dana said") isn't waiting on anyone
+    for (const id of mentionsAsked(text)) if (known.has(id)) targets.set(id, "asks");
     if ((m.status === "blocked_on_human" || m.status === "needs_decision") && m.actionRequiredFrom?.length) {
       for (const id of resolveActors(m.actionRequiredFrom, byName, known)) targets.set(id, "blocks");
     }

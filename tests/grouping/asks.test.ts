@@ -1,7 +1,7 @@
 // tests/grouping/asks.test.ts — who is waiting on whom
 
 import { describe, it, expect } from "vitest";
-import { findAsks, waitFor, type Ask } from "../../core/grouping/asks.js";
+import { findAsks, mentionsAsked, waitFor, type Ask } from "../../core/grouping/asks.js";
 import type { Placement } from "../../core/grouping/cluster.js";
 import type { LoadedMessage } from "../../core/grouping/load.js";
 
@@ -47,5 +47,13 @@ describe("waitFor", () => {
     const old = { ...ask("A", "B"), at: "2026-09-01T00:00:00.000Z" };
     const answered = { ...ask("C", "B"), answeredAt: "2026-10-19T10:00:00.000Z" };
     expect(waitFor([old, answered], "2026-10-01T00:00:00.000Z").waitedOn).toEqual([]);
+  });
+});
+
+describe("mentionsAsked", () => {
+  it("counts a mention that opens the message or sits in an asking sentence, not one in passing", () => {
+    expect(mentionsAsked("<@U0DANA> can you approve the export?")).toEqual(["U0DANA"]);
+    expect(mentionsAsked("Shipped. As <@U0DANA> said, it's done.")).toEqual([]);
+    expect(mentionsAsked("Shipped. Could <@U0RELAY> check the logs?")).toEqual(["U0RELAY"]);
   });
 });

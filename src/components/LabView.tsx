@@ -161,7 +161,8 @@ function Legend(): JSX.Element {
 
 /** The wait-for graph: actors on a circle, an arrow from each one waiting to the one they wait on */
 function WaitGraph({ data, selected, onSelect }: { data: LabWaiting; selected: string | null; onSelect: (name: string) => void }): JSX.Element {
-  const names = [...new Set(data.edges.flatMap((e) => [e.from, e.to]))];
+  // Only what the classifier reads as waiting on someone: mentions with a question are too often not asks to draw
+  const names = [...new Set(data.edges.filter((e) => e.blocking > 0).flatMap((e) => [e.from, e.to]))];
   const size = 360;
   const r = size / 2 - 50;
   const at = new Map(names.map((n, i) => {
@@ -175,13 +176,13 @@ function WaitGraph({ data, selected, onSelect }: { data: LabWaiting; selected: s
           <path d="M 0 0 L 10 5 L 0 10 z" className="fill-gray-500" />
         </marker>
       </defs>
-      {data.edges.map((e) => {
+      {data.edges.filter((e) => e.blocking > 0).map((e) => {
         const a = at.get(e.from)!;
         const b = at.get(e.to)!;
         return (
           <line key={`${e.from}>${e.to}`} x1={a.x} y1={a.y} x2={b.x} y2={b.y} markerEnd="url(#lab-arrow)"
             className={e.blocking > 0 ? "stroke-red-500" : "stroke-gray-600"} strokeWidth={e.blocking > 0 ? 1 + Math.min(4, e.blocking / 10) : 1} opacity={0.8}>
-            <title>{`${e.from} → ${e.to}: ${e.blocking} blocking, ${e.open} open`}</title>
+            <title>{`${e.from} waits on ${e.to}: ${e.blocking} open`}</title>
           </line>
         );
       })}
@@ -221,8 +222,8 @@ function WaitingPanel({ onOpenCase }: { onOpenCase: (id: string) => void }): JSX
             className={`cursor-pointer w-full text-left px-3 py-2 text-sm border-b border-gray-900 ${selected === w.name ? "bg-gray-800 text-gray-100" : "text-gray-300 hover:bg-gray-900"}`}>
             <div className="flex items-center gap-2">
               <span className="truncate">{w.name}</span>
-              {w.blocking > 0 && <span className="shrink-0 rounded bg-red-900/60 px-1.5 text-xs text-red-200">{w.blocking} blocking</span>}
-              {w.open > w.blocking && <span className="shrink-0 rounded bg-gray-800 px-1.5 text-xs text-gray-400">{w.open - w.blocking} asks</span>}
+              {w.blocking > 0 && <span className="shrink-0 rounded bg-red-900/60 px-1.5 text-xs text-red-200">{w.blocking} waiting</span>}
+              {w.open > w.blocking && <span className="shrink-0 rounded bg-gray-800 px-1.5 text-xs text-gray-400">{w.open - w.blocking} mentions</span>}
             </div>
             <div className="text-xs text-gray-500 truncate">by {w.by.join(", ")} · since {when(w.oldest)}</div>
           </button>
@@ -234,7 +235,7 @@ function WaitingPanel({ onOpenCase }: { onOpenCase: (id: string) => void }): JSX
           <div className="min-w-64 flex-1 text-sm">
             {data.cycles.length > 0 && (
               <div className="mb-3 rounded border border-red-900/60 bg-red-900/20 p-2 text-red-200">
-                Deadlock: {data.cycles.map((c) => c.join(" → ")).join("; ")} each blocked on the next.
+                A loop of waiting: {data.cycles.map((c) => c.join(" → ")).join("; ")}, each waiting on the next.
               </div>
             )}
             {actor && (
@@ -243,7 +244,7 @@ function WaitingPanel({ onOpenCase }: { onOpenCase: (id: string) => void }): JSX
                 <ul className="mt-2 space-y-2">
                   {actor.asks.map((a, i) => (
                     <li key={i} className="text-gray-300">
-                      <span className={`mr-2 rounded px-1.5 text-xs ${a.strength === "blocks" ? "bg-red-900/60 text-red-200" : "bg-gray-800 text-gray-400"}`}>{a.strength === "blocks" ? "blocks" : "asks"}</span>
+                      <span className={`mr-2 rounded px-1.5 text-xs ${a.strength === "blocks" ? "bg-red-900/60 text-red-200" : "bg-gray-800 text-gray-400"}`}>{a.strength === "blocks" ? "waiting" : "mention"}</span>
                       <span className="text-xs text-gray-500">{a.from} · {when(a.at)}</span>
                       {a.caseId ? (
                         <button onClick={() => onOpenCase(a.caseId!)} className="cursor-pointer block text-left hover:text-gray-100">{unescape(a.text)}</button>
