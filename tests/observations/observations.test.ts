@@ -1,6 +1,9 @@
 // tests/observations/observations.test.ts — recording observations, linking events to them, and the backfill
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { Database } from "../../core/graph/db.js";
 import { ContextGraph } from "../../core/graph/index.js";
 import { backfillObservations } from "../../core/observations/backfill.js";
@@ -71,5 +74,65 @@ describe("observations in the graph", () => {
     expect(graph.getObservationIdForEvent(own.id)).toBe(id);
     expect(graph.getObservation(id)!.refs.repliesTo).toBe("slack:T0NORTHWND/C0OPS/1700000000.000100");
     expect(backfillObservations(db, graph, adapter)).toBe(0);
+  });
+});
+
+describe("observation refs", () => {
+  let db: Database;
+  let graph: ContextGraph;
+
+  beforeEach(() => {
+    db = new Database(":memory:");
+    graph = new ContextGraph(db);
+  });
+
+  afterEach(() => db.close());
+
+  it("stores replies and quotes as edges, findable from the other end before it's seen", () => {
+    const root = "slack:T0NORTHWND/C0OPS/1700000000.000100";
+    const quoting = graph.recordObservation(observeSlackMessage(message("1700000300.000400", {
+      threadId: "1700000300.000400",
+      text: "<https://northwind.slack.com/archives/C0OPS/p1700000000000100>",
+    }), workspace)!);
+    const reply = graph.recordObservation(observeSlackMessage(message("1700000100.000200"), workspace)!);
+    // The root itself hasn't been seen
+    expect(graph.getObservationsReferring(root)).toEqual([
+      { id: reply, kind: "replies_to" },
+      { id: quoting, kind: "quotes" },
+    ].sort((a, b) => (a.id < b.id ? -1 : 1)));
+    expect(graph.getObservationsReferring(root, "quotes")).toEqual([{ id: quoting, kind: "quotes" }]);
+  });
+
+  it("walks a reply chain through the observations seen", () => {
+    const a = graph.recordObservation(observeSlackMessage(message("1700000000.000100", { threadId: "1700000000.000100" }), workspace)!);
+    const b = graph.recordObservation(observeSlackMessage(message("1700000100.000200"), workspace)!);
+    expect(graph.getReplyChain(b)).toEqual([a]);
+    expect(graph.getReplyChain(a)).toEqual([]);
+  });
+});
+
+describe("the observation refs backfill", () => {
+  it("adds edges for observations recorded before observation_refs existed, once", () => {
+    const dir = mkdtempSync(join(tmpdir(), "obs-refs-"));
+    try {
+      const path = join(dir, "workstream.db");
+      const first = new Database(path);
+      const graph = new ContextGraph(first);
+      const id = graph.recordObservation(observeSlackMessage(message("1700000100.000200"), workspace)!);
+      // As a database from before the table: no edges, and the backfill not yet run
+      first.db.exec("DELETE FROM observation_refs; DELETE FROM meta WHERE key = 'observation_refs_backfill'");
+      first.close();
+
+      const second = new Database(path);
+      expect(new ContextGraph(second).getObservationsReferring("slack:T0NORTHWND/C0OPS/1700000000.000100")).toEqual([{ id, kind: "replies_to" }]);
+      second.db.exec("DELETE FROM observation_refs");
+      second.close();
+
+      const third = new Database(path);
+      expect((third.db.prepare("SELECT COUNT(*) AS n FROM observation_refs").get() as { n: number }).n).toBe(0);
+      third.close();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

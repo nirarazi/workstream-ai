@@ -40,6 +40,9 @@ export interface ObservationDraft {
   externalRefs: Array<{ kind: string; value: string; url?: string }>;
 }
 
+/** How one observation refers to another (an edge in observation_refs) */
+export type ObservationRefKind = "replies_to" | "quotes" | "forwards";
+
 export interface Observation extends ObservationDraft {
   /** Assigned by the engine (a ULID) */
   id: string;

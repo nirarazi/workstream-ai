@@ -330,6 +330,37 @@ The limits, which section 7 relies on:
 - **Times are spans.** An expectation's time is a span resolved against the observation's time in the operator's time
   zone, like a rule's end date; a time before the observation or beyond a set horizon is dropped.
 
+### The graph
+
+The layers form one graph. Its nodes are observations, actors, subjects, keys, cases, streams, routines, runs and
+rules. Its edges are stored as rows, so they can be walked with indexed queries (recursive SQL for chains), in the
+same local SQLite file; no graph database:
+
+- between observations: replies to, quotes, forwards (`observation_refs`);
+- from an observation to what it's about: claims (key, subject, actor, ask, act; section 4);
+- from an observation to its case: assignments (section 5);
+- between cases: origin, dependency, and parent and child from the tracker (section 2);
+- identity: handles of one actor, names of one subject, keys that name the same work.
+
+Graph tools answer questions the inbox already asks. Each is measured on the pair labels, like the grouping itself,
+before anything relies on it:
+
+| Question | Tool |
+|---|---|
+| Is this item two cases joined by one weak link? | Bridges and minimum cuts inside an item: the cut is the split to propose |
+| Are these two items one case? | Edge density between them |
+| Which observations are worth scoring together? | Link prediction (shared neighbours) for the resolver's candidates |
+| Who waits on whom? | A directed graph from open asks: a cycle is a deadlock, a long chain shows the root blocker |
+| Who is everything waiting on? | Betweenness over actors: an overload signal |
+| What has no one, or nothing? | Degree: a case with no holder, an observation attached to nothing |
+| What gates a goal? | Critical path and cycles over dependency links |
+
+What these find are clues, and clues follow the rule for mined claims: they reach the operator only when they need
+them (section 3). The graph is seen in two places, never as one picture of everything. In the lab, the neighbourhood
+of a case (its observations, keys and subjects, and which edge drew each one in) explains a grouping and makes
+labelling faster. In the app, small views answer one question: why these observations are one case, and the chain of
+asks behind one that's stuck.
+
 ---
 
 ## 4. Recognizers
@@ -720,12 +751,12 @@ at the end of this plan.
    without a number.
 2. **Observations, keys and opaque ids.** L0 observations with `dedupeKey` and the adapter's observation method.
    Historical events are backfilled into L0; the database stores no workspace, so it's taken from the connected
-   adapter. MCP reports get `mcp-report:<engine-assigned id>` as their `dedupeKey`, a deliberate exception, since
-   the MCP server assigns message ids itself (`core/mcp/server.ts:53`). Slack's reply, quote and permalink refs are
-   stored (the resolver's rule 4 needs them). Add `item_keys` and a key column on `enrichments`; new items get ULIDs,
-   existing ids stay as opaque ids; migrate the id-equals-key contracts (section 5). Task adapters report their item
-   types' hierarchy, and each type gets a role (container, case or step, section 2) with the operator's overrides:
-   a step's key points at its parent's item, a duplicate's at the original's.
+   adapter. MCP reports get `mcp-report:<engine-assigned id>` as their `dedupeKey`, a deliberate exception, since the
+   MCP server assigns message ids itself (`core/mcp/server.ts:53`). Slack's reply, quote and permalink refs are stored
+   (the resolver's rule 4 needs them), as `observation_refs` edges. Add `item_keys` and a key column on `enrichments`;
+   new items get ULIDs, existing ids stay as opaque ids; migrate the id-equals-key contracts (section 5). Task
+   adapters report their item types' hierarchy, and each type gets a role (container, case or step, section 2) with
+   the operator's overrides: a step's key points at its parent's item, a duplicate's at the original's.
 3. **Constraints.** Add `constraints`; merge, unmerge, link, unlink and "Not work" write or retire them from here
    on; backfill earlier actions from `work_item_merges` and `threads.manually_linked`.
 4. **Asks on observations, and actors.** Attach asks to observations, not items. Here asks still come from the
@@ -739,10 +770,12 @@ at the end of this plan.
    ask, act and rule claims. `subjects`, `subject_aliases` and `stream_keys`: subjects from lane-tagged lines (the dry
    run's `subject-rule-candidates.json` is the starting list) give stream membership and a candidate signal, never an
    item key. Report detection counts subjects, not only tickets. Health, expectation, holder-hint and fact claims are
-   recorded from here and shown on the case's page; they don't yet interrupt.
-6. **Resolver in shadow mode.** Run the resolver in the pipeline beside the current linker, writing `assignments`
-   with scores but not changing what the operator sees; compare the two on the pair labels. Add scored candidates
-   and `item_lineage`.
+   recorded from here and shown on the case's page; they don't yet interrupt. The lab gets a case-neighbourhood view
+   over observations, refs and claims (section 3, "The graph").
+6. **Resolver in shadow mode.** Run the resolver in the pipeline beside the current linker, writing `assignments` with
+   scores but not changing what the operator sees; compare the two on the pair labels. Add scored candidates and
+   `item_lineage`, link prediction for candidates, and a bridge and minimum-cut over-merge detector scored on the pair
+   labels.
 7. **Cutover.** Switch the pipeline to the resolver once its pair-label precision and recall beat the current
    linker's by an agreed margin; re-run the backfill of constraints first.
 8. **Routines, runs and rules.** Routines are declared by fleet packs where the runtime exposes a schedule, otherwise
@@ -753,8 +786,8 @@ at the end of this plan.
 9. **Done policy, the stream view, then re-linking.** A configurable done policy (which source leads, tracker or
    classifier; quiet time alone never closes an item); the stream view and stream health, over the `stream_keys` that
    exist from step 5; the surfacing policies for mined claims (missed expectations, health that blocks work,
-   contradictions) and the fleet view; and re-linking as continuous, constraint-respecting re-clustering with a
-   reviewable diff on version bumps.
+   contradictions) and the wait-for graph over open asks (deadlocks and root blockers) and the fleet view; and
+   re-linking as continuous, constraint-respecting re-clustering with a reviewable diff on version bumps.
 
 ---
 

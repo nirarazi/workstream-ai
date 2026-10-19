@@ -197,6 +197,16 @@ CREATE TABLE IF NOT EXISTS observations (
 );
 CREATE INDEX IF NOT EXISTS idx_observations_message ON observations(platform, container_id, message_id);
 
+-- Edges between observations (docs/work-model.md, section 3, "The graph"): from an observation to the dedupeKey of one
+-- it replies to, quotes or forwards. By key, not id: the other may not have been seen yet.
+CREATE TABLE IF NOT EXISTS observation_refs (
+  from_id TEXT NOT NULL REFERENCES observations(id),
+  to_key  TEXT NOT NULL,
+  kind    TEXT NOT NULL,
+  PRIMARY KEY (from_id, to_key, kind)
+);
+CREATE INDEX IF NOT EXISTS idx_observation_refs_to ON observation_refs(to_key, kind);
+
 CREATE INDEX IF NOT EXISTS idx_events_thread_id ON events(thread_id);
 CREATE INDEX IF NOT EXISTS idx_events_work_item_id ON events(work_item_id);
 CREATE INDEX IF NOT EXISTS idx_threads_work_item_id ON threads(work_item_id);
@@ -460,6 +470,22 @@ export class Database {
       log.info("Migration: added observation_id column to events");
     }
     this.db.exec("CREATE INDEX IF NOT EXISTS idx_events_observation ON events(observation_id)");
+
+    // Edges for observations recorded before observation_refs existed, from their refs column (once)
+    if (!this.db.prepare("SELECT 1 FROM meta WHERE key = 'observation_refs_backfill'").get()) {
+      this.db.transaction(() => {
+        this.db.exec(`
+          INSERT OR IGNORE INTO observation_refs (from_id, to_key, kind)
+          SELECT id, json_extract(refs, '$.repliesTo'), 'replies_to' FROM observations
+          WHERE json_extract(refs, '$.repliesTo') IS NOT NULL;
+          INSERT OR IGNORE INTO observation_refs (from_id, to_key, kind)
+          SELECT o.id, q.value, 'quotes' FROM observations o, json_each(o.refs, '$.quotes') q;
+          INSERT OR IGNORE INTO observation_refs (from_id, to_key, kind)
+          SELECT o.id, f.value, 'forwards' FROM observations o, json_each(o.refs, '$.forwards') f;
+        `);
+        this.db.prepare("INSERT INTO meta (key, value) VALUES ('observation_refs_backfill', 'done')").run();
+      })();
+    }
 
     // Backfill thread_work_items junction table from existing data
     const twiCount = (this.db.prepare("SELECT COUNT(*) AS n FROM thread_work_items").get() as { n: number }).n;

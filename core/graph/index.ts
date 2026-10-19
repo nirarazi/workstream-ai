@@ -19,7 +19,7 @@ import type {
 import type { Database } from "./db.js";
 import type { Extractor } from "./extractors/interface.js";
 import { legacyKeyOf, type ItemKey } from "./item-keys.js";
-import type { Observation, ObservationDraft } from "../observations/types.js";
+import type { Observation, ObservationDraft, ObservationRefKind } from "../observations/types.js";
 import { ulid } from "../observations/ulid.js";
 import type {
   AgentRow,
@@ -506,6 +506,10 @@ export class ContextGraph {
       new Date().toISOString(),
     );
     const stored = (db.prepare("SELECT id FROM observations WHERE dedupe_key = ?").get(draft.dedupeKey) as { id: string }).id;
+    const edge = db.prepare("INSERT OR IGNORE INTO observation_refs (from_id, to_key, kind) VALUES (?, ?, ?)");
+    if (draft.refs.repliesTo) edge.run(stored, draft.refs.repliesTo, "replies_to");
+    for (const key of draft.refs.quotes) edge.run(stored, key, "quotes");
+    for (const key of draft.refs.forwards) edge.run(stored, key, "forwards");
     db.prepare(`
       UPDATE events SET observation_id = ?
       WHERE observation_id IS NULL AND message_id = ?
@@ -540,6 +544,34 @@ export class ContextGraph {
       refs: json(row.refs, { quotes: [], forwards: [] }),
       externalRefs: json(row.external_refs, []),
     };
+  }
+
+  /** Observations that reply to, quote or forward the one with this dedupeKey (seen or not), oldest first */
+  getObservationsReferring(dedupeKey: string, kind?: ObservationRefKind): Array<{ id: string; kind: ObservationRefKind }> {
+    return this.db.db.prepare(`
+      SELECT r.from_id AS id, r.kind FROM observation_refs r JOIN observations o ON o.id = r.from_id
+      WHERE r.to_key = ? ${kind ? "AND r.kind = ?" : ""} ORDER BY o.occurred_at, o.id
+    `).all(...(kind ? [dedupeKey, kind] : [dedupeKey])) as Array<{ id: string; kind: ObservationRefKind }>;
+  }
+
+  /**
+   * The chain of observations a reply hangs from, nearest first, as far as they've been seen: what it replies to,
+   * what that replies to, and so on (bounded, in case of a cycle).
+   */
+  getReplyChain(observationId: string, maxDepth = 50): string[] {
+    const rows = this.db.db.prepare(`
+      WITH RECURSIVE chain(id, depth) AS (
+        SELECT o.id, 1 FROM observation_refs r JOIN observations o ON o.dedupe_key = r.to_key
+        WHERE r.from_id = ? AND r.kind = 'replies_to'
+        UNION
+        SELECT o.id, c.depth + 1 FROM chain c
+        JOIN observation_refs r ON r.from_id = c.id AND r.kind = 'replies_to'
+        JOIN observations o ON o.dedupe_key = r.to_key
+        WHERE c.depth < ?
+      )
+      SELECT id FROM chain ORDER BY depth
+    `).all(observationId, maxDepth) as Array<{ id: string }>;
+    return [...new Set(rows.map((r) => r.id))].filter((id) => id !== observationId);
   }
 
   /** The observation an event classified, or null (an event stored before observations, not yet backfilled) */
