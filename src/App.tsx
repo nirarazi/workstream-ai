@@ -37,11 +37,12 @@ import { fetchSetupStatus, fetchStatus, fetchAgents, agentsToMentionables, type 
 import { useTheme, useTextSize, type ThemeMode } from "./lib/theme";
 import StreamView from "./components/StreamView";
 import WorkItemsView from "./components/WorkItemsView";
+import LabView from "./components/LabView";
 import Sidekick from "./components/Sidekick";
 import Setup from "./components/Setup";
 import { getSerializeMention } from "./messaging/registry";
 
-type View = "loading" | "setup" | "stream" | "work-items" | "settings";
+type View = "loading" | "setup" | "stream" | "work-items" | "lab" | "settings";
 type DotStatus = "ok" | "degraded" | "disconnected";
 
 const DEFAULT_SERVICES: ServiceStatuses = {};
@@ -98,6 +99,8 @@ function App(): JSX.Element {
   const [mentionables, setMentionables] = useState<Mentionable[]>([]);
   const [agentPlatform, setAgentPlatform] = useState("slack");
   const [syncState, setSyncState] = useState<{ lastSyncAt: Date | null; error: boolean }>({ lastSyncAt: null, error: false });
+  // The engine serves the grouping lab (WORKSTREAM_LAB=true): a development view, so its tab shows only then
+  const [labEnabled, setLabEnabled] = useState(false);
   const { mode: themeMode, cycle: cycleTheme } = useTheme();
   const { size: textSize, cycle: cycleTextSize, zoom: textZoom } = useTextSize();
   const statusInterval = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -108,6 +111,7 @@ function App(): JSX.Element {
       const status = await fetchStatus();
       setConnected(true);
       setServices(status.services);
+      setLabEnabled(Boolean(status.lab));
     } catch {
       setConnected(false);
       setServices(DEFAULT_SERVICES);
@@ -269,7 +273,7 @@ function App(): JSX.Element {
         </header>
 
         {/* Tab bar */}
-        {(view === "stream" || view === "work-items") && (
+        {(view === "stream" || view === "work-items" || view === "lab") && (
           <nav className="border-b border-gray-800 px-6 flex items-center gap-6">
             <button
               onClick={() => setView("stream")}
@@ -291,12 +295,24 @@ function App(): JSX.Element {
             >
               Work items
             </button>
+            {labEnabled && (
+              <button
+                onClick={() => setView("lab")}
+                className={`cursor-pointer py-2.5 text-sm font-medium border-b-2 transition-colors ${
+                  view === "lab"
+                    ? "border-cyan-500 text-gray-200"
+                    : "border-transparent text-gray-500 hover:text-gray-300"
+                }`}
+              >
+                Lab
+              </button>
+            )}
           </nav>
         )}
       </div>
 
       {/* Main content */}
-      <main className={view === "stream" ? "flex-1 overflow-hidden" : "flex-1 overflow-y-auto p-6"}>
+      <main className={view === "stream" || view === "lab" ? "flex-1 overflow-hidden" : "flex-1 overflow-y-auto p-6"}>
         {view === "loading" && (
           <div className="flex flex-col items-center justify-center py-32 gap-6">
             <div className="text-center">
@@ -322,6 +338,7 @@ function App(): JSX.Element {
           <StreamView mentionables={mentionables} serializeMention={serializeMention} platform={agentPlatform} platformMeta={platformMeta} onSyncStateChange={setSyncState} />
         )}
         {view === "work-items" && <WorkItemsView platformMeta={platformMeta} />}
+        {view === "lab" && labEnabled && <LabView />}
         {view === "settings" && (
           <Setup onComplete={() => { init(); setView("stream"); }} />
         )}

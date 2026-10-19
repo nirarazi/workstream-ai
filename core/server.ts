@@ -26,6 +26,7 @@ import { Sidekick, type SidekickMessage } from "./sidekick/index.js";
 import { buildUnifiedStatus, buildTimeline, usableName } from "./stream.js";
 import type { OperatorIdentityMap, StatusCategory } from "./types.js";
 import { backfillObservations } from "./observations/backfill.js";
+import { GroupingLab } from "./grouping/lab.js";
 
 const log = createLogger("server");
 
@@ -266,6 +267,20 @@ export function createApp(
   );
 
   // --- GET /api/status ---
+  // The grouping lab: read-only views of the v2 grouping, only when WORKSTREAM_LAB=true (core/grouping/lab.ts)
+  const lab = process.env.WORKSTREAM_LAB === "true" ? new GroupingLab(state.db.db) : null;
+  if (lab) {
+    app.get("/api/lab/streams", (c) => c.json(lab.streams(c.req.query("q") ?? undefined)));
+    app.get("/api/lab/stream", (c) => {
+      const out = lab.stream(c.req.query("key") ?? "");
+      return out ? c.json(out) : c.json({ error: "No such stream" }, 404);
+    });
+    app.get("/api/lab/case/:id", (c) => {
+      const out = lab.case(c.req.param("id"));
+      return out ? c.json(out) : c.json({ error: "No such case" }, 404);
+    });
+  }
+
   app.get("/api/status", (c) => {
     const uptime = Math.floor((Date.now() - state.startedAt.getTime()) / 1000);
     const llmBackoff = state.classifier.getBackoffState();
@@ -318,6 +333,8 @@ export function createApp(
           ? [state.config.taskAdapter.defaultProject]
           : state.taskAdapter?.getValidIdPrefixes?.() ?? []
       ).map((p: string) => p.replace(/-$/, "")),
+      // The grouping lab (WORKSTREAM_LAB=true): a development view of the v2 grouping
+      lab: Boolean(lab),
     });
   });
 

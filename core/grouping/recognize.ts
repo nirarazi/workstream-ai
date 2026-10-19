@@ -63,7 +63,9 @@ export function taggedSubject(firstLine: string): { lane: string; subject: strin
   const m = TAGGED_LINE.exec(firstLine.slice(0, MAX_FIRST_LINE));
   if (!m) return null;
   const rest = m[2].replace(/[*_`]/g, "").trim();
-  const name = rest.split(SUBJECT_END)[0].trim().replace(/\s+/g, " ");
+  // Trailing punctuation isn't part of a name ("Tom Roupas Jr." is "Tom Roupas Jr")
+  const name = rest.split(SUBJECT_END)[0].trim().replace(/\s+/g, " ").replace(/[.,;:!?]+$/, "");
+  if (name.replace(/[^\p{L}\p{N}]/gu, "").length < 3) return null;
   const words = name.split(" ").filter(Boolean);
   if (words.length === 0 || words.length > MAX_SUBJECT_WORDS || !/^[\p{Lu}\d$]/u.test(name) || COUNTED.test(name)) return null;
   // A name: capitalised words (and joining words), as "Northwind Traders" or "Rick Lee and Dana Ross"; or a short

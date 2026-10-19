@@ -195,6 +195,8 @@ export interface EngineStatus {
   llmBackoff: LlmBackoff | null;
   llmUsage: LlmUsage | null;
   projectKeys?: string[];
+  /** The engine serves the grouping lab (WORKSTREAM_LAB=true) */
+  lab?: boolean;
 }
 
 export interface WorkItemDetail {
@@ -668,4 +670,63 @@ export function searchWorkItems(
   query: string,
 ): Promise<{ items: Array<{ id: string; title: string; currentAtcStatus: string | null }> }> {
   return apiFetch(`/api/work-items/search?q=${encodeURIComponent(query)}`);
+}
+
+// ---------------------------------------------------------------------------
+// Grouping lab (only when the engine runs with WORKSTREAM_LAB=true)
+// ---------------------------------------------------------------------------
+
+export interface LabStream {
+  key: string;
+  /** A channel stream's name ("#ops"); others are their key */
+  label: string;
+  caseCount: number;
+  messages: number;
+  last: string;
+}
+
+export interface LabCaseSummary {
+  id: string;
+  keys: string[];
+  size: number;
+  first: string;
+  last: string;
+  title: string;
+}
+
+export interface LabNode {
+  key: string;
+  sender: string;
+  senderKind: string;
+  channel: string;
+  at: string;
+  threadId: string;
+  topLevel: boolean;
+  text: string;
+  about: string | null;
+  reasons: string[];
+}
+
+export interface LabEdge {
+  from: string;
+  to: string;
+  reason: string;
+}
+
+export interface LabCase {
+  case: { id: string; keys: string[]; stream: string; streamLabel: string };
+  nodes: LabNode[];
+  edges: LabEdge[];
+}
+
+export function fetchLabStreams(q?: string): Promise<{ streams: LabStream[]; total: number }> {
+  return apiFetch(`/api/lab/streams${q ? `?q=${encodeURIComponent(q)}` : ""}`);
+}
+
+export function fetchLabStream(key: string): Promise<{ stream: LabStream; cases: LabCaseSummary[] }> {
+  return apiFetch(`/api/lab/stream?key=${encodeURIComponent(key)}`);
+}
+
+export function fetchLabCase(id: string): Promise<LabCase> {
+  return apiFetch(`/api/lab/case/${encodeURIComponent(id)}`);
 }

@@ -54,6 +54,12 @@ export interface ClusterOptions extends ResolverOptions {
   continuationMs?: number;
   /** A top-level reply to someone else joins within this long */
   exchangeMs?: number;
+  /**
+   * A subject (a partner, a customer) is a stream's key, not a case's: a message about one joins that subject's
+   * latest case only while it's active (a message about the subject within this long); after, a new case starts in
+   * the same stream
+   */
+  subjectWindowMs?: number;
   /** Live, applied constraints, by message key (observations' dedupeKeys or the eval's message keys) */
   constraints?: Array<{ kind: "must_link" | "cannot_link" | "pin" | "not_an_item"; a: string; b: string | null }>;
 }
@@ -95,16 +101,16 @@ function subjectLexicon(messages: readonly GroupingMessage[], options: ClusterOp
  * The cluster of a subject named a little differently: one name the other's first words ("spring26 offer" and "spring26
  * offer check"), at least two words or one of six letters or more in common, so "Dana" alone doesn't match "Dana Lee".
  */
-function similarSubject(byKey: ReadonlyMap<string, string>, key: string): string | undefined {
+function similarSubjectKey(byKey: ReadonlyMap<string, string>, key: string): string | undefined {
   if (!key.startsWith("subject:")) return undefined;
   const words = key.slice("subject:".length).split(" ");
-  for (const [other, id] of byKey) {
+  for (const other of byKey.keys()) {
     if (!other.startsWith("subject:")) continue;
     const theirs = other.slice("subject:".length).split(" ");
     const [short, long] = words.length <= theirs.length ? [words, theirs] : [theirs, words];
     if (short.length === long.length) continue;
     if (!short.every((w, i) => long[i] === w)) continue;
-    if (short.length >= 2 || short[0].length >= 6) return id;
+    if (short.length >= 2 || short[0].length >= 6) return other;
   }
   return undefined;
 }
@@ -126,6 +132,7 @@ export function cluster(messages: readonly GroupingMessage[], options: ClusterOp
   const nearCopyMs = options.nearCopyMs ?? 3 * MINUTE;
   const continuationMs = options.continuationMs ?? 30 * MINUTE;
   const exchangeMs = options.exchangeMs ?? 10 * MINUTE;
+  const subjectWindowMs = options.subjectWindowMs ?? 7 * 24 * 60 * MINUTE;
   // Time order, ties by key; a message given twice counts once
   const unique = [...new Map(messages.map((m) => [m.key, m])).values()];
   const sorted = unique.sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
@@ -152,8 +159,8 @@ export function cluster(messages: readonly GroupingMessage[], options: ClusterOp
   const ofMessage = new Map<string, string>();
   const threadCluster = new Map<string, string>();
   const threadOf = new Map<string, string>();
-  /** For the graph's edges: a cluster's first message with its key, and each thread's last placed message */
-  const firstWithKey = new Map<string, string>();
+  /** For the graph's edges and a subject's window: the latest message with each key, and each thread's last */
+  const lastWithKey = new Map<string, { key: string; at: string }>();
   const lastInThread = new Map<string, string>();
   /** Whether the operator kept a message apart from anything in a cluster */
   const cannotWith = (key: string, clusterId: string) =>
@@ -187,8 +194,11 @@ export function cluster(messages: readonly GroupingMessage[], options: ClusterOp
 
     const named = recognized.aboutBy === "named" && !pins.has(m.key);
     if (about) {
-      const holder = byKey.get(about) ?? similarSubject(byKey, about);
-      add(holder, named ? w.namedSubject : w.sameKey, `${named ? "namedSubject" : "sameKey"} ${about}`, holder ? firstWithKey.get(holder) : null);
+      const holderKey = byKey.has(about) ? about : similarSubjectKey(byKey, about);
+      const holder = holderKey ? byKey.get(holderKey) : undefined;
+      const last = holderKey ? lastWithKey.get(holderKey) : undefined;
+      const lapsed = about.startsWith("subject:") && last !== undefined && Date.parse(m.at) - Date.parse(last.at) > subjectWindowMs;
+      if (!lapsed) add(holder, named ? w.namedSubject : w.sameKey, `${named ? "namedSubject" : "sameKey"} ${about}`, last?.key);
     }
     const inThread = threadCluster.get(m.threadId);
     if (inThread) {
@@ -260,11 +270,14 @@ export function cluster(messages: readonly GroupingMessage[], options: ClusterOp
     const c = clusters.get(id)!;
     c.members.push(m.key);
     threadOf.set(m.key, m.threadId);
-    if (about && !byKey.has(about)) {
-      c.keys.add(about);
-      byKey.set(about, id);
-      firstWithKey.set(id, m.key);
+    // A ticket, PR or release names one case for good; a subject names its latest case (a new one takes it over)
+    if (about && (!byKey.has(about) || (about.startsWith("subject:") && byKey.get(about) !== id))) {
+      if (!byKey.has(about) || about.startsWith("subject:")) {
+        c.keys.add(about);
+        byKey.set(about, id);
+      }
     }
+    if (about && byKey.get(about) === id) lastWithKey.set(about, { key: m.key, at: m.at });
     ofMessage.set(m.key, id);
     if (!threadCluster.has(m.threadId)) threadCluster.set(m.threadId, id);
     lastBySender.set(senderSlot, { message: m, cluster: id, about });
