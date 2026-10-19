@@ -122,7 +122,8 @@ A work item is one case: one piece of work with one intended outcome, which can 
 1. **One outcome.** "Done when ___" can be finished with one thing: PR #12 merged, Northwind's referral agreement
    signed, one order decided. A milestone passes too: its one outcome is that a set of other items is done.
 2. **A done condition.** It ends when the outcome is reached or abandoned, and then it stops needing anyone. A
-   partner, a routine and a rule have no done condition (a routine's runs do), so none of them is a case.
+   partner, a routine and a rule have no done condition (a routine's runs do), so none of them is a case. A rule's
+   *in force until* is when it stops applying, not an outcome anyone works toward.
 3. **One holder at a time.** An agent, a person or the operator holds it; the holder can change. A case nobody
    holds is still a case: an orphaned one.
 
@@ -185,13 +186,13 @@ a report not work as a unit. A notification is a sender kind, not an act.
 **Who tags acts.** Every observation gets act claims, cheapest source first: fleet-pack recognizers for the runtime's
 telemetry and report formats, default-pack recognizers for ask moves and short acknowledgements, then the
 classification call, which already runs on every message and adds act tags to its output. Acts from the model are soft
-evidence: a model ask claim can surface an ask but never close one, and on their own, model acts can't make an
-observation not work, start a case, close an ask, or keep a part from surfacing (section 7). The model returns the
-text it tags (each part's opening words), and the engine maps it to spans by exact match within `parts.own`, in order,
-left to right (the first unused occurrence wins); a tag it can't place is dropped, never guessed, and the model's
-returned text is never stored or shown, only the span. With no act claims at all, a part is treated as assertive:
-activity, never not work and never an ask. Where claims overlap, a part with any directive, commissive or declarative
-claim is never not work, whatever telemetry or expressive claims also cover it.
+evidence: a model ask claim can surface an ask, and closes one only as section 7 allows (the operator's own answer),
+and on their own, model acts can't make an observation not work, start a case, close an ask, or keep a part from
+surfacing (section 7). The model returns the text it tags (each part's opening words), and the engine maps it to spans
+by exact match within `parts.own`, in order, left to right (the first unused occurrence wins); a tag it can't place is
+dropped, never guessed, and the model's returned text is never stored or shown, only the span. With no act claims at
+all, a part is treated as assertive: activity, never not work and never an ask. Where claims overlap, a part with any
+directive, commissive or declarative claim is never not work, whatever telemetry or expressive claims also cover it.
 
 ### Routines, runs and origin
 
@@ -372,10 +373,12 @@ permalink metadata Slack already gives it; an email adapter would use MIME parts
   the scope. `status` is `proposed`, `confirmed`, `source_changed` or `retired`. `text` is the exact span as
   confirmed, never a paraphrase. `replaces` points back to the rule this one replaced, which the operator retires when
   confirming it. An *in force until* is a date or a condition in words, never both, and the operator confirms it with
-  the rule. A date retires the rule when it passes. A condition is never evaluated by the app: when a deterministic
-  source suggests it may be met (the case it names is done, say; never a model claim or message text alone), the rule
-  is shown as possibly ended, and only the operator retires it. Proposals come only from rule claims; everything else
-  is the operator's.
+  the rule. A date is resolved against the observation's time in the operator's time zone, shown in the confirm view,
+  and runs to the end of that day; when it passes, the rule is retired with `decided_by = until_date`, so the UI says
+  it ran out. A condition is never evaluated by the app: when confirming, the operator may link it to a case or ref,
+  and only that link's done state shows the rule as possibly ended (never a model claim or message text); only the
+  operator retires it. The condition is the exact `until` span as confirmed, stable and tombstoned like `text`.
+  Proposals come only from rule claims; everything else is the operator's.
 
 ### Operator actions and backfill
 
@@ -538,7 +541,10 @@ operator and where their replies go, so they get the same care as the action end
   ask (accept, refuse, withdraw, or a `report_done` answering a decision or approval request), or handing its baton
   back (reject), needs a verified author whose turn it is. A `report_done` that closes a decision or approval ask
   needs the verified handle of the ask's performer (the operator, for an approval the operator was asked for); it
-  never comes from a model ask claim alone, quoted or forwarded text, or an MCP report. `dedupeKey` comes only from
+  never comes from quoted or forwarded text or an MCP report. A model ask claim alone closes it only when the message
+  is by that performer's verified handle, in the ask's own conversation, after the request, while it's their turn: the
+  trust is the verified author, and the model only labels the move. The operator answering an agent in free text ("go
+  with B") is the common case. A later request or `reject` from the agent reopens the ask. `dedupeKey` comes only from
   the platform's own id, namespaced by platform and workspace (MCP reports use their own `mcp-report:` namespace,
   distinct from the `mcp:` item key kind); a quote or forward never replaces or dedupes the original.
 - **Packs are local code.** They run in-process with the same trust as adapters; this is not a sandbox. They are
@@ -550,8 +556,8 @@ operator and where their replies go, so they get the same care as the action end
 - **Sensitive subjects.** A subject kind can be marked sensitive (a patient account, say). Sensitivity is decided by
   local deterministic recognizers before any remote call. Observations about a sensitive subject never go to a remote
   model: a local model or no model. Their evidence holds pattern names and offsets, never copied text. Pair labels in
-  `eval-data/` follow the same rule. Signatures are never stored or sent. Summaries, model-written titles,
-  rule text (end conditions included) and eval labels derived from a deleted or purged observation are recomputed or tombstoned
+  `eval-data/` follow the same rule. Signatures are never stored or sent. Summaries, model-written titles, rule text
+  (end conditions included) and eval labels derived from a deleted or purged observation are recomputed or tombstoned
   with it.
 - **No fetching refs.** Core never fetches a ref's URL. Only a task adapter calls its own configured base URL.
 - **Rules are records, not instructions.**
