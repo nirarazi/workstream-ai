@@ -181,7 +181,9 @@ A message moves no case when none of its parts does; that message is not work. A
 a message whose assertive parts are about several cases or subjects, found by counting them (plan step 5). Each of
 those parts is activity on its own case (a `mention` assignment, not membership), so the report is a member of no
 case, never becomes one item, and never merges them. The pair labeller (section 6) judges whole messages, so it marks
-a report not work as a unit. A notification is a sender kind, not an act.
+a report not work as a unit, unless the report answers a request ("where are we with the outreach?"): then it's
+progress on that request's case, and its lines are still only mentions of the cases they name. A notification is a
+sender kind, not an act.
 
 **Who tags acts.** Every observation gets act claims, cheapest source first: fleet-pack recognizers for the runtime's
 telemetry and report formats, default-pack recognizers for ask moves and short acknowledgements, then the
@@ -242,6 +244,30 @@ Claims at L2, each with its source and confidence:
 whether something needs the operator. It is never consulted to decide what an observation belongs to. A noise
 message can still be evidence for an item, and an ask surfaces as an ask whatever the grouping (section 5).
 
+### What else a message tells us, and when to show it
+
+A message carries more than its case. A digest hides an ask to the operator; a status update says an agent's tool is
+down; a promise names a time. Claims can be about any entity, not only the case the message belongs to, so the aim
+is to mine every message widely and interrupt rarely. Each claim type has a surfacing policy that core sets; packs add
+claim types and recognizers, never surfacing.
+
+| Claim | Example | Lands on | Interrupts the operator when |
+|---|---|---|---|
+| An ask inside a report | "The restart decision is still waiting on Dana" | an ask | at once (it's an ask to the operator) |
+| Health | "message tool still down, posted through the API", "disk at 77%", "no access to #ops" | the actor, its tools, the fleet | it persists or blocks a case; otherwise it's in the fleet view |
+| Expectation | "checking again tomorrow at 9" | the ask, as an expected-by time | the time passes with nothing posted |
+| Holder | "Alex still hasn't answered Relay" | the case's baton | the case is held too long |
+| Fact | "twelve accounts had mistyped addresses" | the subject or case | never; it's there when the case or subject is opened |
+| Contradiction | Relay lists the Northwind draft as awaiting approval three days after Dana approved it | the case | it changes what needs the operator: here the case may be stuck because the approval wasn't picked up |
+
+Everything else waits on the page of the actor, case, subject or stream it's about. What interrupts is short: an ask
+to the operator, a promise or deadline missed, a case stuck, and a health problem blocking work.
+
+Mined claims are soft evidence. Health and expectations an agent reports about itself are unverified: they inform the
+fleet view and the baton, never trigger an action, and never close anything. Contradictions are found by the engine
+comparing claims and state (a done ask against a later "awaiting approval"), never asserted by the model. Facts are
+attribute claims with provenance, shown with their source, and follow the sensitive-subject rules (section 7).
+
 ---
 
 ## 4. Recognizers
@@ -298,7 +324,11 @@ type ClaimBody =
   | { type: "ask"; move: "request" | "promise" | "refuse" | "report_done" | "accept" | "reject" | "withdraw";
       from: Handle; to?: Handle; askRef?: string; span?: { start: number; end: number } }
   | { type: "subjectMention"; subjectKind: string; name: string; relation: "about" | "dependency" | "mention" }
-  | { type: "runMember"; routine: string; run: string; subject?: string };
+    | { type: "runMember"; routine: string; run: string; subject?: string }
+  | { type: "health"; about: { kind: "actor" | "tool" | "resource"; name: string };
+      state: "ok" | "degraded" | "down" }
+  | { type: "expectation"; who: Handle; by: string; askRef?: string }   // by: ISO 8601, resolved by the engine
+  | { type: "fact"; subject: string; attribute?: string; span: { start: number; end: number } };
 
 /** What a recognizer returns; the engine adds the source ("<recognizer>@<version>", "model:<name>@<prompt>") */
 interface ClaimDraft {
@@ -634,7 +664,8 @@ at the end of this plan.
    English and `&gt;` parsing that leaves core, `Extractor` and `ContinuationStrategy` wrapped as recognizers, and
    ask, act and rule claims. `subjects`, `subject_aliases` and `stream_keys`: subjects from lane-tagged lines (the dry
    run's `subject-rule-candidates.json` is the starting list) give stream membership and a candidate signal, never an
-   item key. Report detection counts subjects, not only tickets.
+   item key. Report detection counts subjects, not only tickets. Health, expectation and fact claims are recorded from
+   here, shown on their entities' pages, and don't yet interrupt.
 6. **Resolver in shadow mode.** Run the resolver in the pipeline beside the current linker, writing `assignments`
    with scores but not changing what the operator sees; compare the two on the pair labels. Add scored candidates
    and `item_lineage`.
@@ -645,9 +676,10 @@ at the end of this plan.
    Add `rules`: proposals from rule claims wait in a low-priority review list, with a count on the actor, subject
    or routine they'd apply to; confirmed rules are shown there. Rules never appear in Needs me.
 9. **Done policy, the stream view, then re-linking.** A configurable done policy (which source leads, tracker or
-   classifier; quiet time alone never closes an item); the stream view and stream health, over the `stream_keys`
-   that exist from step 5; and re-linking as continuous, constraint-respecting re-clustering with a reviewable diff
-   on version bumps.
+   classifier; quiet time alone never closes an item); the stream view and stream health, over the `stream_keys` that
+   exist from step 5; the surfacing policies for mined claims (missed expectations, health that blocks work,
+   contradictions) and the fleet view; and re-linking as continuous, constraint-respecting re-clustering with a
+   reviewable diff on version bumps.
 
 ---
 
@@ -678,6 +710,8 @@ at the end of this plan.
    stored, logged or shown; never sent to a remote model by default; file text not proposed as a rule isn't kept;
    and a file the agent can write to is marked as a weaker source. Adopting this would amend section 7's authorship
    bullet with an explicit exception: `source_observation` becomes optional, with the pack as `author`.
+10. **Mined claims.** How long must a health problem last, or how many cases must it block, before it interrupts?
+    Which contradictions are worth surfacing, and how is a pack's health format checked before it's trusted?
 
 ---
 
