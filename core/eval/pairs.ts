@@ -157,7 +157,8 @@ const isMixed = (id: string) => session.labels.mixed.some((n) => n.message === i
 
 /** What the verdicts mean, shown under the keys (docs/streams-and-message-linking.md has the full definitions) */
 const HINT = [
-  "Same work: both move or discuss one case (one ticket, one PR, one order, or one goal with one partner), updates too.",
+  "Same work: both move or discuss one case (one ticket with its sub-tasks, one PR, one order, one goal with one partner).",
+  "Updates count. Two tickets in one epic, or linked as related or blocking: different. A duplicate: same.",
   "Different work: different cases, even with the same partner, agent, channel, routine or routine run.",
   "Not work: about no single case: heartbeats, health checks, empty tick logs, chatter, many-case digests or briefings.",
   "A question about one case and its answer: same work. A \"one by one\" walk: not work. Can't see the question: u.",

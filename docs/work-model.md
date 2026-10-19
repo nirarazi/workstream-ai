@@ -140,6 +140,31 @@ A case is not a ticket. A ticket is one way a case gets a key; most cases in a f
 too small or too short to be worth filing. Those are the ones the operator most needs tracked. How a case starts is
 in section 5 ("Starting an item").
 
+**Tracker hierarchy.** Trackers nest their items, and where a case sits in that nesting differs by tracker and by
+org. Each level gets one of three roles:
+
+- **Container:** holds many cases that each finish on their own, often over weeks (an epic, an initiative, a project).
+  Like a partner, it's a stream key, never an item key. Two tasks in one epic are two cases.
+- **Case:** a story, task or bug: one outcome, its own done condition, one holder. This is the default.
+- **Step:** a sub-task. It's a step toward its parent's outcome, so it's part of the parent's case, not a case of its
+  own: a message about OPS-102, a sub-task of OPS-101, is work on OPS-101's case, and both keys point at it. A step
+  may have its own holder, shown inside the case.
+
+Links between tickets don't merge cases, with one exception. A duplicate is the same case, so both keys point at it.
+"Relates to", "blocks" and "cloned from" link separate cases, as an `origin` or a dependency.
+
+The default comes from the tracker's structure, not from type names, so an org that renamed "story" or added its own
+types still gets it right. Each task adapter reports where each item type sits in its tracker's hierarchy, read again
+on every sync so a renamed or new type follows. In Jira that's the type's hierarchy level: above the standard level
+is a container, the standard level is a case, below it is a step. A tracker without levels gets its adapter's
+default, such as parent and child issues mapped to case and step.
+
+The operator can correct the default: a role per item type, per tracker and optionally per project, set in Settings
+or `config/local.yaml`. An override is keyed by the type's id, not its name, so it survives a rename. It wins over the
+default, and changing it re-groups the items with those keys, with the operator's own merges and splits still
+winning (section 5, "Precedence"). The app never changes a role by itself; when the operator keeps merging items of
+one type into their parents, it can suggest making that type a step.
+
 ### Message acts
 
 What a message *does* is a separate question from what it belongs to. Speech-act theory gives a small fixed set
@@ -698,7 +723,9 @@ at the end of this plan.
    adapter. MCP reports get `mcp-report:<engine-assigned id>` as their `dedupeKey`, a deliberate exception, since
    the MCP server assigns message ids itself (`core/mcp/server.ts:53`). Slack's reply, quote and permalink refs are
    stored (the resolver's rule 4 needs them). Add `item_keys` and a key column on `enrichments`; new items get ULIDs,
-   existing ids stay as opaque ids; migrate the id-equals-key contracts (section 5).
+   existing ids stay as opaque ids; migrate the id-equals-key contracts (section 5). Task adapters report their item
+   types' hierarchy, and each type gets a role (container, case or step, section 2) with the operator's overrides:
+   a step's key points at its parent's item, a duplicate's at the original's.
 3. **Constraints.** Add `constraints`; merge, unmerge, link, unlink and "Not work" write or retire them from here
    on; backfill earlier actions from `work_item_merges` and `threads.manually_linked`.
 4. **Asks on observations, and actors.** Attach asks to observations, not items. Here asks still come from the
