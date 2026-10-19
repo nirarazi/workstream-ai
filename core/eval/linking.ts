@@ -10,11 +10,12 @@
 // By default it scores the current grouping, and the re-link proposal when npm run relink has written it. --labels
 // scores against another label set in eval-data/linking/ instead of the operator's. --split dev or test scores one
 // half of the pairs (linking-labels.ts, splitOf): tune on dev, report test. --errors <grouping> lists the dev pairs
-// that grouping gets wrong, with a few words of each message (never test pairs, which stay unseen).
+// that grouping gets wrong, with a few words of each message (never test pairs, which stay unseen). --record <note>
+// appends the scores, with the commit and the note, to eval-data/linking/history.jsonl.
 
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { openReadOnly, type ReadOnlyCopy } from "../graph/relink.js";
+import { openReadOnly, prepareOutDir, type ReadOnlyCopy } from "../graph/relink.js";
 import { clean } from "./terminal.js";
 import {
   loadGroupings,
@@ -29,7 +30,28 @@ import {
   type LoadedGroupings,
   type Observation,
 } from "./linking-data.js";
-import { loadLabels, splitOf } from "./linking-labels.js";
+import { LINKING_DIR, loadLabels, splitOf } from "./linking-labels.js";
+import { appendFileSync, chmodSync, existsSync as fileExists, lstatSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { join } from "node:path";
+
+const HISTORY_FILE = "history.jsonl";
+
+function currentCommit(root: string): string | null {
+  try {
+    return execFileSync("git", ["rev-parse", "--short", "HEAD"], { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+function appendHistory(root: string, line: unknown): void {
+  const dir = prepareOutDir(root, LINKING_DIR);
+  const path = join(dir, HISTORY_FILE);
+  if (fileExists(path) && lstatSync(path).isSymbolicLink()) throw new Error(`Refusing to write: ${path} is a symlink`);
+  appendFileSync(path, JSON.stringify(line) + "\n", { mode: 0o600 });
+  chmodSync(path, 0o600);
+}
 import { bcubed, scoreGrouping, together, type GroupingScore, type Rate } from "./linking-metrics.js";
 
 const LABEL_WIDTH = 22;
@@ -45,7 +67,7 @@ function row(label: string, cells: string[]): string {
 }
 
 function main(): void {
-  const flags = parseFlags(process.argv.slice(2), ["grouping", "db", "gold", "labels", "split", "errors"] as const);
+  const flags = parseFlags(process.argv.slice(2), ["grouping", "db", "gold", "labels", "split", "errors", "record"] as const);
   const root = projectRoot();
   const names = parseGroupingNames(flags.grouping ?? (existsSync(relinkItemsPath(root)) ? "current,relink" : "current"));
   const all = loadLabels(root, flags.labels);
@@ -106,6 +128,24 @@ function main(): void {
   for (const stratum of strata) {
     const first = cols[0].strata[stratum];
     console.log(row(clean(stratum), [`${first.pairs} · ${first.same}`, ...cols.map((s) => `${s.strata[stratum].agree}/${s.strata[stratum].pairs}`)]));
+  }
+
+  if (flags.record) {
+    // A line per run in a private history, so a change to a grouping is read against the last run's numbers
+    const line = {
+      at: new Date().toISOString(),
+      commit: currentCommit(root),
+      note: clean(flags.record).slice(0, 120),
+      labels: flags.labels ?? "labels.json",
+      split,
+      pairs: labels.pairs.length,
+      groupings: Object.fromEntries([...scores].map(([name, sc]) => [name, {
+        precision: sc.pairwise.precision.p, recall: sc.pairwise.recall.p, f1: sc.pairwise.f1,
+        overMerged: sc.pairwise.fp, split: sc.pairwise.fn, notWorkRate: sc.notWork.p,
+      }])),
+    };
+    appendHistory(root, line);
+    console.log(`\nRecorded in eval-data/linking/${HISTORY_FILE}`);
   }
 
   if (flags.errors) {
