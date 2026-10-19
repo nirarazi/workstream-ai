@@ -275,9 +275,9 @@ Interrupting is surfacing, not an action. Core sets each claim type's surfacing 
 classifier's status: a mined claim can add surfacing the status didn't, never remove it. Everything else waits on the
 page of what it's about. Until the fleet and stream views exist (plan step 9), mined claims are recorded, and those
 about a case are shown on its page. A claim inside one line of a report attaches to the case that line's key or
-subject claims point to; an expectation with neither an ask nor a case is dropped. Packs add
-recognizers for these core claim types. A claim type a pack defines is namespaced (`<pack>/<type>`),
-schema-validated, never reuses a core name, and is display-only.
+subject claims point to; an expectation with neither an ask nor a case is dropped. Packs add recognizers for these
+core claim types. A claim type a pack defines is namespaced (`<pack>/<type>`), schema-validated, never reuses a core
+name, and is display-only.
 
 The limits, which section 7 relies on:
 
@@ -493,15 +493,14 @@ operator depends on clustering. A work item (a case) starts only from:
 - a routine run yielding it.
 
 A subject never starts an item. A subject `about` places the observation in the subject's stream and is a strong
-signal for which case inside that stream it belongs to; it never makes all of a subject's observations one item.
-A question about existing work ("where are we with X?", told apart by the default pack's request recognizer: a
-question naming a key or an open case's subject) never starts a case, and when the recognizer is unsure, nothing
-starts: its answer is activity on X's case or
-stream. A request to go through many starts an on-demand run, not a case.
-Anything else is activity on its stream, conversation or run: assertive parts, a report, a directive nobody has
-answered, a commissive nobody asked for. Expressive and telemetry parts are not work. Each author has a cap on items
-started per day; unverified authors share one cap per source, and MCP tools count against one cap for the MCP source
-as a whole, never against a claimed agent name.
+signal for which case inside that stream it belongs to; it never makes all of a subject's observations one item. A
+question about existing work ("where are we with X?", told apart by the default pack's request recognizer: a question
+naming a key or an open case's subject) never starts a case, and when the recognizer is unsure, nothing starts: its
+answer is activity on X's case or stream. A request to go through many starts an on-demand run, not a case. Anything
+else is activity on its stream, conversation or run: assertive parts, a report, a directive nobody has answered, a
+commissive nobody asked for. Expressive and telemetry parts are not work. Each author has a cap on items started per
+day; unverified authors share one cap per source, and MCP tools count against one cap for the MCP source as a whole,
+never against a claimed agent name.
 
 ### Deciding
 
