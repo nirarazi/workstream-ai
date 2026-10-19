@@ -116,7 +116,7 @@ A work item is one case: one piece of work with one intended outcome, which can 
 2. **A done condition.** It ends when the outcome is reached or abandoned, and then it stops needing anyone. A
    partner, a routine and a rule have no done condition (a routine's runs do), so none of them is a case.
 3. **One holder at a time.** An agent, a person or the operator holds it; the holder can change. A case nobody
-   holds is still a case: that's what stuck looks like.
+   holds is still a case: an orphaned one.
 
 Where one case ends and the next begins is decided by the outcome, not by the thread, channel, agent or time:
 
@@ -151,10 +151,13 @@ An ask claim is an act made specific, on the same span, alongside the act claim:
 |---|---|---|
 | `request` | directive | the requester |
 | `promise`, `refuse` | commissive | the performer |
-| `report_done` | assertive | the performer |
+| `report_done` | assertive; declarative when the request asked for a decision or approval | the performer |
 | `accept`, `reject` (not done yet), `withdraw` | declarative | the requester |
 
-"Thanks" right after a reported done, from the requester, is an `accept`; anywhere else it's expressive.
+"Thanks" right after a reported done, from the requester, is an `accept`; anywhere else it's expressive. When an
+agent asks the operator to decide or approve, the agent is the requester and the operator the performer: the
+operator's "approved", "no" or "go with B" is the `report_done`, and the ask closes on it unless the agent rejects
+it. A counter-offer is a `refuse` followed by a new `request`.
 
 Acts belong to parts of a message, not to the whole: one message can thank, set a rule and give facts at once.
 Example, in one thread: after Atlas emails twelve Contoso users the wrong maintenance window, Dana writes "Atlas,
@@ -165,18 +168,20 @@ with the right time" (directive, a request to Atlas), Atlas answers "On it" (com
 thread is its conversation, so Dana's first message joins the case with the rest (section 5, "Conversations as a
 prior"). The rule is a separate, standing thing whose source is that first message.
 
-A message moves no case when none of its parts does; that message is not work. A report or digest is not an act:
-it's a message whose assertive parts are about several cases or subjects, found by counting them (plan step 5).
-Each of those parts is activity on its own case, and the report never becomes one item or merges them. The pair
-labeller (section 6) judges whole messages, so it marks a report not work as a unit. A notification is a sender
-kind, not an act.
+A message moves no case when none of its parts does; that message is not work. A report or digest is not an act: it's
+a message whose assertive parts are about several cases or subjects, found by counting them (plan step 5). Each of
+those parts is activity on its own case (a `mention` assignment, not membership), so the report is a member of no
+case, never becomes one item, and never merges them. The pair labeller (section 6) judges whole messages, so it marks
+a report not work as a unit. A notification is a sender kind, not an act.
 
-**Who tags acts.** Every observation gets act claims, cheapest source first: fleet-pack recognizers for the
-runtime's telemetry and report formats, default-pack recognizers for ask moves and short acknowledgements, then the
-classification call, which already runs on every message and adds act tags to its output. Acts from the model are
-soft evidence: on their own they can't make an observation not work, start or close an ask, or keep it from
-surfacing (section 7). With no act claims at all, a part is treated as assertive: activity, never not work and never
-an ask.
+**Who tags acts.** Every observation gets act claims, cheapest source first: fleet-pack recognizers for the runtime's
+telemetry and report formats, default-pack recognizers for ask moves and short acknowledgements, then the
+classification call, which already runs on every message and adds act tags to its output. Acts from the model are soft
+evidence: a model ask claim can surface an ask, but on their own, model acts can't make an observation not work, start
+a case, close an ask, or keep a part from surfacing (section 7). The model returns the text it tags (each part's
+opening words), and the engine maps it to spans of `parts.own`. With no act claims at all, a part is treated as
+assertive: activity, never not work and never an ask. Where claims overlap, a part with any directive, commissive or
+declarative claim is never not work, whatever telemetry or expressive claims also cover it.
 
 ### Routines, runs and origin
 
@@ -350,10 +355,12 @@ permalink metadata Slack already gives it; an email adapter would use MIME parts
 - **`subjects` and `subject_aliases`** for subjects and their names. `key_alias` says two keys are the same work;
   `subject_aliases` says two names are the same subject. A name is soft evidence until the operator confirms it.
 - **`actors` and `actor_handles`** for actors: one person, many handles. Today's `agents` table migrates into them.
-- **`rules(id, scope_kind, scope_id, text, text_hash, source_observation, author, replaces, status, decided_by,
-  created_at, retired_at)`.** `status` is `proposed`, `confirmed`, `source_changed` or `retired`. `text` is the
-  exact span as confirmed, never a paraphrase. `replaces` points back to the rule this one replaced, which the
-  operator retires when confirming it. Proposals come only from rule claims; everything else is the operator's.
+- **`rules(id, scope_kind, scope_name, scope_id, text, text_hash, source_observation, author, replaces, status,
+  decided_by, created_at, retired_at)`.** A proposal keeps the scope name it claimed and a suggested `scope_id`,
+  looked up through subject names and actor handles; the operator confirms the scope. `status` is `proposed`,
+  `confirmed`, `source_changed` or `retired`. `text` is the exact span as confirmed, never a paraphrase. `replaces`
+  points back to the rule this one replaced, which the operator retires when confirming it. Proposals come only from
+  rule claims; everything else is the operator's.
 
 ### Operator actions and backfill
 
@@ -507,15 +514,15 @@ operator and where their replies go, so they get the same care as the action end
 - **The model only adjusts scores**, within the limits in section 5. It can't reach the hard band alone, create
   keys, names or constraints, or override `cannot_link`.
 - **Identity comes from the platform.** A handle links to a person only through an adapter-verified identity (a
-  platform user id) or the operator's confirmation, never a display name or message content. DMARC-aligned DKIM or
-  SPF verifies an email's domain only; tying a specific mailbox to a person needs the operator's confirmation.
-  Quoted and forwarded authors are unverified: never an ask's `from`, never the operator, and unable to close an
-  ask. An MCP report's author is recorded as an unverified agent handle; never a verified
-  requester or responder, never the operator, and can't close an ask. MCP reports are subject to the key cap and
-  the single-observation rule. Closing an ask (accept, reject, withdraw) needs a verified author whose turn it is.
-  `dedupeKey` comes only from the platform's own id, namespaced by platform and workspace (MCP reports use
-  their own `mcp-report:` namespace, distinct from the `mcp:` item key kind); a quote or forward never replaces or
-  dedupes the original.
+  platform user id) or the operator's confirmation, never a display name or message content. DMARC-aligned DKIM or SPF
+  verifies an email's domain only; tying a specific mailbox to a person needs the operator's confirmation. Quoted and
+  forwarded authors are unverified: never an ask's `from`, never the operator, and unable to close an ask. An MCP
+  report's author is recorded as an unverified agent handle; never a verified requester or responder, never the
+  operator, and can't close an ask. MCP reports are subject to the key cap and the single-observation rule. Closing an
+  ask (accept, refuse, withdraw), or handing its baton back (reject), needs a verified author whose turn it is.
+  `dedupeKey` comes only from the platform's own id, namespaced by platform and workspace (MCP reports use their own
+  `mcp-report:` namespace, distinct from the `mcp:` item key kind); a quote or forward never replaces or dedupes the
+  original.
 - **Packs are local code.** They run in-process with the same trust as adapters; this is not a sandbox. They are
   explicitly installed, never fetched automatically. A fleet pack reads only config paths the operator chose,
   read-only, takes only cadence, sweep and owner fields, and drops everything else without logging, storing,
@@ -530,9 +537,11 @@ operator and where their replies go, so they get the same care as the action end
 - **No fetching refs.** Core never fetches a ref's URL. Only a task adapter calls its own configured base URL.
 - **Rules are records, not instructions.**
   - *Who can author one.* A rule claim is a proposal, and only on an observation by a verified handle of the
-    operator or of a person the operator has marked as a fleet member. Rule-like text from anyone else (an external
-    partner, a guest, an agent, an MCP report) is assertive content, never a proposal; an agent restating a rule
-    ("added it to my instructions") is evidence that it was received. Proposals are capped per author per day.
+    operator or of a person the operator has marked as a fleet member. Only an operator action in the UI marks a
+    fleet member, behind the same host and origin checks, and only on adapter-verified handles; a pack, claim,
+    display name or MCP report can't. Rule-like text from anyone else (an external partner, a guest, an agent, an
+    MCP report) is assertive content, never a proposal; an agent restating a rule ("added it to my instructions")
+    is evidence that it was received. Proposals are capped per author per day.
   - *Who confirms.* Only the operator confirms, retires or replaces a rule, and picks between two that conflict; the
     endpoints that do it get the same host and origin checks as the action endpoints. The confirm view shows the
     author, whether they're a fleet member, a link to the source, and the exact text that will be stored.
@@ -634,8 +643,9 @@ at the end of this plan.
    operator decides. And should a fleet pack propose the rules an agent already has, from instruction files? If so,
    only under these limits: paths the operator chose, read-only, no symlinks out of them; each proposal authored as
    `pack:<name>` from its path and unconfirmed until the operator confirms it; secrets redacted before anything is
-   stored; never sent to a remote model by default; file text not proposed as a rule isn't kept; and a file the
-   agent can write to is marked as a weaker source.
+   stored, logged or shown; never sent to a remote model by default; file text not proposed as a rule isn't kept;
+   and a file the agent can write to is marked as a weaker source. Adopting this would amend section 7's authorship
+   bullet with an explicit exception: `source_observation` becomes optional, with the pack as `author`.
 
 ---
 
