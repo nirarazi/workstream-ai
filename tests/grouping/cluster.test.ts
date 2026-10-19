@@ -63,6 +63,13 @@ describe("recognizers", () => {
     expect(recognize(msg("No change needed on OPS-1, merging now"), options).kind).toBe("work");
   });
 
+  it("reads a bare signature as chatter, and drops it from a message's text", () => {
+    expect(recognize(msg("*Sent using* <@U0TOOL|Composer>"), options).kind).toBe("chatter");
+    expect(recognize(msg("OPS-101 is merged\n*Sent using* <@U0TOOL|Composer>"), options).about).toBe("ticket:OPS-101");
+    expect(recognize(msg("TICK_DONE shadow=on cases=26 skipped=13 not_pending=1 (Q-1:Pending)"), options).kind).toBe("telemetry");
+    expect(recognize(msg("Quiet cycle. All pending items unchanged."), options).kind).toBe("telemetry");
+  });
+
   it("tells briefings, health checks and chatter from work", () => {
     expect(recognize(msg("*Mission status, Mon Oct 12, 07:15 UTC* • Atlas: blocked on review"), options).kind).toBe("report");
     expect(recognize(msg("_Daily tracker sync — Oct 12_ — 30 open tickets checked"), options).kind).toBe("report");

@@ -112,7 +112,8 @@ const CHATTER = /^[\W_]*(?:(?:ok|so|hey|hi)[,!]?\s+)?(?:are (?:we|you|they)(?: a
 const TELEMETRY = [
   /^[\W_]*(?:\d{1,2}:\d{2}\s*(?:UTC|[AP]M)?[^.\n]{0,40}\.\s*)?(?:no (?:new )?changes?|nothing (?:has )?changed|nothing new)(?:\s+since\b|\s*[.!:]|\s*$)/i,
   /^[A-Z][A-Z0-9_]*=\S+(?:\s+[a-z_]+=\S+)*\s*$/,
-  /^[A-Z][A-Z0-9_]{2,}(?:\s+[a-z_]+=\S+)+\s*$/,
+  /^[A-Z][A-Z0-9_]{2,}(?:\s+[a-z_]+=\S+){2,}/,
+  /^[\W_]*(?:quiet cycle|all (?:pending )?items (?:are )?unchanged)\b/i,
   /\bheartbeat tick\b/i,
   /^[\s:\w]*\bIdle since\b/i,
 ];
@@ -163,8 +164,12 @@ function namedSubject(text: string, subjects: SubjectLexicon): string | null {
   return distinct.length === 1 ? distinct[0] : null;
 }
 
+/** A sign-off a tool adds ("*Sent using* @Composer"): never stored or read as content (docs/work-model.md §4) */
+const SIGNATURE = /^\s*[*_]*sent (?:using|from|with)[*_]*\s+(?:<@[^<>\s]+>|\S+)\s*$/gim;
+
 export function recognize(message: GroupingMessage, options: ResolverOptions & { subjects?: SubjectLexicon }): Recognized {
-  const own = message.text;
+  const own = message.text.replace(SIGNATURE, "").trim();
+  if (!own) return { kind: "chatter", about: null, aboutBy: null, mentions: [], lane: null, asks: false };
   const lines = refsByLine(stripEmphasis(own), options);
   const about = aboutRef(lines);
   const refs = [...new Set(lines.flatMap((l) => l.refs))];
