@@ -1119,6 +1119,8 @@ export function createApp(
         }
 
         case "noise": {
+          // The operator's word that this isn't work: kept as a constraint, so no regrouping makes it an item again
+          state.graph.markNotAnItem(body.workItemId);
           state.graph.upsertWorkItem({
             id: body.workItemId,
             source: workItem.source,
@@ -1936,8 +1938,11 @@ async function main(): Promise<void> {
       try {
         const observed = backfillObservations(db, graph, adapter);
         if (observed > 0) log.info(`Recorded observations for ${observed} earlier messages`);
+        // The operator's earlier merges and links, as constraints (they name observations, so after those)
+        const constrained = graph.backfillConstraints();
+        if (constrained > 0) log.info(`Recorded constraints for ${constrained} earlier operator actions`);
       } catch (err) {
-        log.warn("Failed to backfill observations", err);
+        log.warn("Failed to backfill observations or constraints", err);
       }
     } catch (err) {
       log.error("Failed to connect messaging adapter", err);

@@ -485,7 +485,7 @@ permalink metadata Slack already gives it; an email adapter would use MIME parts
   projects. Subject keys live only here.
 - **`assignments(observation, item, role, score, decided_by, evidence, superseded_at)`.** `role` is `member`,
   `mention` or `target` (it puts the item in front of the operator). Superseded rows stay.
-- **`constraints(id, kind, a, b, decided_by, created_at, retired_at, superseded_by)`.** Kinds: `must_link`,
+- **`constraints(id, kind, a, b, decided_by, origin, created_at, retired_at, suspended_at, superseded_by)`.** Kinds: `must_link`,
   `cannot_link`, `pin` (observation to key), `not_an_item`, `key_alias` (two keys name the same work), and for
   streams `in_stream` and `not_in_stream`. They name observations (by `dedupeKey`) or keys, never item ids, so they
   survive every recompute. An action on a whole conversation is stored against its root observation and expanded at
@@ -511,8 +511,17 @@ permalink metadata Slack already gives it; an email adapter would use MIME parts
 ### Operator actions and backfill
 
 From step 3 of the plan on, the app's merge, unmerge, link, unlink and "Not work" actions write or retire
-constraints as they happen. Unmerge keeps deleting its `work_item_merges` row (`core/graph/index.ts:2017`) and also
-retires the matching constraint. "Not work" is a dismissal with that reason, and writes `not_an_item`.
+constraints as they happen (`core/graph/constraints.ts`). Each records the action it came from (`origin`, such as
+`merge:<item>`), so undoing the action retires exactly what it wrote, and two actions that mean the same thing keep a
+constraint each. Unmerge keeps deleting its `work_item_merges` row and also retires the merge's constraints. Unlinking
+a thread retires the link and writes a `cannot_link` between the thread's root and the item's anchor: the operator
+has said it isn't that item's. "Not work" (the app's Noise action) writes `not_an_item` for the item's observations.
+Merges the tracker's structure made (section 2, "Tracker hierarchy") aren't corrections and write none; undoing one
+writes a `cannot_link`. Dismissing an item is not one of these: it says "not for me", not "not work".
+
+Every live constraint is also a label: `npm run eval:constraint-labels` writes them as a label set (must_link: same
+work; cannot_link: different; not_an_item: not work; observations pinned to one key: same), so the grouping is
+scored against the operator's own corrections, and the evaluation grows as the app is used.
 
 The backfill of earlier actions is idempotent and re-run at cutover, so actions taken in between aren't lost. It
 skips any source row that already has a constraint, live or retired, so a re-run never revives an undone merge. Its
@@ -795,6 +804,20 @@ at the end of this plan.
    re-linking as continuous, constraint-respecting re-clustering with a reviewable diff on version bumps.
 
 ---
+
+## Decisions to review
+
+Calls made while the maintainer was away, each easy to change. Newest last.
+
+1. **Step 2: ULIDs wait for the resolver.** The current linker keeps making key-shaped ids; references resolve
+   through `item_keys` instead. Minting ULIDs, and the UI reading display keys, move to step 6 (section 5,
+   "Contracts").
+2. **Step 3: unlinking writes a `cannot_link`.** The plan said unlink writes or retires constraints; it now does
+   both: the link's pin is retired and the thread is kept apart from the item it was unlinked from.
+3. **Step 3: Noise is "not work", Dismiss isn't.** The app has no "Not work" action; its Noise action is the closest
+   and writes `not_an_item`. Dismiss writes nothing.
+4. **Step 3: tracker merges aren't corrections.** A sub-task folded into its parent writes no constraint (the tracker
+   can change); undoing the fold does.
 
 ## 10. Open questions
 

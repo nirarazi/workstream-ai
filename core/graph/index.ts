@@ -21,6 +21,7 @@ import type { Extractor } from "./extractors/interface.js";
 import { keysForRef, legacyKeyOf, type ItemKey } from "./item-keys.js";
 import type { Observation, ObservationDraft, ObservationRefKind } from "../observations/types.js";
 import { ulid } from "../observations/ulid.js";
+import { ConstraintStore } from "./constraints.js";
 import type {
   AgentRow,
   EnrichmentRow,
@@ -260,8 +261,12 @@ const COMPLETED_ITEM = `
 export class ContextGraph {
   private db: Database;
 
+  /** The operator's corrections (core/graph/constraints.ts) */
+  readonly constraints: ConstraintStore;
+
   constructor(db: Database) {
     this.db = db;
+    this.constraints = new ConstraintStore(db.db);
   }
 
   // --- Agents ---
@@ -852,6 +857,7 @@ export class ContextGraph {
   }
 
   /** Makes a thread the given item's own; its other items become mentions, since a thread's messages count for its own */
+  /** The operator links a thread to an item: kept as a constraint, so a regrouping keeps it there */
   linkThread(threadId: string, workItemId: string): void {
     this.transaction(() => {
       this.db.db.prepare(
@@ -861,19 +867,175 @@ export class ContextGraph {
         "UPDATE thread_work_items SET relation = 'mentioned' WHERE thread_id = ? AND work_item_id <> ?"
       ).run(threadId, workItemId);
       this.linkThreadWorkItem(threadId, workItemId, "primary");
+      // A new link replaces an earlier one, and an earlier unlink from the same item no longer applies
+      this.constraints.retireByOrigin(`link:${threadId}`);
+      this.writeLinkConstraint(threadId, workItemId, "operator");
+      this.settleConstraints();
     });
     log.debug("Manually linked thread", threadId, "to", workItemId);
   }
 
-  /** The thread stops being any item's own: its items stay linked as mentions */
+  /**
+   * The thread stops being any item's own: its items stay linked as mentions. The operator has said it isn't that
+   * item's, so it's kept apart from it (a cannot_link), and any link they made is retired.
+   */
   unlinkThread(threadId: string): void {
     this.transaction(() => {
+      const itemId = this.getThreadById(threadId)?.workItemId ?? null;
       this.db.db.prepare(
         "UPDATE threads SET work_item_id = NULL, manually_linked = 0 WHERE id = ?"
       ).run(threadId);
       this.db.db.prepare("UPDATE thread_work_items SET relation = 'mentioned' WHERE thread_id = ?").run(threadId);
+      this.constraints.retireByOrigin(`link:${threadId}`);
+      const root = this.rootObservationKey(threadId);
+      const anchor = itemId ? this.anchorObservationKey(itemId, threadId) : null;
+      if (root && anchor) {
+        this.constraints.add({ kind: "cannot_link", a: root, b: anchor, decidedBy: "operator", origin: `unlink:${threadId}` });
+      }
+      this.settleConstraints();
     });
     log.debug("Unlinked thread", threadId);
+  }
+
+  // --- Constraints: what an operator action means for regrouping (core/graph/constraints.ts) ---
+
+  /**
+   * The observation an item is anchored on: its earliest, outside `exceptThread` (the thread being linked or
+   * unlinked, which mustn't anchor itself). Null when none of its messages has been observed.
+   */
+  anchorObservationKey(itemId: string, exceptThread?: string): string | null {
+    const row = this.db.db.prepare(`
+      SELECT o.dedupe_key FROM events e JOIN observations o ON o.id = e.observation_id
+      WHERE e.work_item_id = ? AND e.thread_id IS NOT ?
+      ORDER BY o.occurred_at, o.id LIMIT 1
+    `).get(itemId, exceptThread ?? null) as { dedupe_key: string } | undefined;
+    return row?.dedupe_key ?? null;
+  }
+
+  /** A thread's root observation: its first message's, or the earliest observed in it */
+  rootObservationKey(threadId: string): string | null {
+    const row = this.db.db.prepare(`
+      SELECT o.dedupe_key FROM events e JOIN observations o ON o.id = e.observation_id
+      WHERE e.thread_id = ?
+      ORDER BY (e.message_id = e.thread_id) DESC, o.occurred_at, o.id LIMIT 1
+    `).get(threadId) as { dedupe_key: string } | undefined;
+    return row?.dedupe_key ?? null;
+  }
+
+  /** An item's structural key: a ticket, PR or MCP-id key it holds as its own (not one a merge gave it) */
+  structuralKey(itemId: string): string | null {
+    return this.getItemKeys(itemId).find((k) => /^(ticket|pr|mcp):/.test(k.key) && k.decidedBy !== "merge")?.key ?? null;
+  }
+
+  /** The observations of an item's messages */
+  observationKeysOf(itemId: string): string[] {
+    return (this.db.db.prepare(`
+      SELECT DISTINCT o.dedupe_key FROM events e JOIN observations o ON o.id = e.observation_id
+      WHERE e.work_item_id = ? ORDER BY o.dedupe_key
+    `).all(itemId) as Array<{ dedupe_key: string }>).map((r) => r.dedupe_key);
+  }
+
+  /** A manual link as a constraint: the thread's root pinned to the item's key, or else tied to its anchor */
+  private writeLinkConstraint(threadId: string, itemId: string, decidedBy: string, createdAt?: string): void {
+    const root = this.rootObservationKey(threadId);
+    if (!root) return;
+    const key = this.structuralKey(itemId);
+    const anchor = key ? null : this.anchorObservationKey(itemId, threadId);
+    if (key) this.constraints.add({ kind: "pin", a: root, b: key, decidedBy, origin: `link:${threadId}`, createdAt });
+    else if (anchor) this.constraints.add({ kind: "must_link", a: root, b: anchor, decidedBy, origin: `link:${threadId}`, createdAt });
+  }
+
+  /**
+   * A merge as constraints, written before the merge moves anything: the two items' keys are aliases when both have
+   * one; otherwise the source's observations are pinned to the target's key or tied to its anchor.
+   */
+  private writeMergeConstraints(sourceId: string, targetId: string, decidedBy: string, createdAt?: string): void {
+    const origin = `merge:${sourceId}`;
+    const sourceKey = this.structuralKey(sourceId);
+    const targetKey = this.structuralKey(targetId);
+    if (sourceKey && targetKey) {
+      this.constraints.add({ kind: "key_alias", a: sourceKey, b: targetKey, decidedBy, origin, createdAt });
+      return;
+    }
+    const observed = this.observationKeysOf(sourceId);
+    const anchor = this.anchorObservationKey(targetId);
+    for (const obs of observed) {
+      if (targetKey) this.constraints.add({ kind: "pin", a: obs, b: targetKey, decidedBy, origin, createdAt });
+      else if (anchor) this.constraints.add({ kind: "must_link", a: obs, b: anchor, decidedBy, origin, createdAt });
+    }
+    if (sourceKey && anchor) this.constraints.add({ kind: "pin", a: anchor, b: sourceKey, decidedBy, origin, createdAt });
+  }
+
+  /** The operator says an item isn't work: none of its observations belongs in any item */
+  markNotAnItem(itemId: string): void {
+    this.transaction(() => {
+      for (const obs of this.observationKeysOf(itemId)) {
+        this.constraints.add({ kind: "not_an_item", a: obs, decidedBy: "operator", origin: `noise:${itemId}` });
+      }
+    });
+  }
+
+  /** Suspends the older side of any contradiction among the live constraints */
+  settleConstraints(): void {
+    const suspended = this.constraints.settle();
+    if (suspended.length > 0) log.info(`Constraints: ${suspended.length} suspended by newer ones that contradict them`);
+  }
+
+  /**
+   * Constraints for the operator's actions from before constraints existed: merges (not those the tracker decided)
+   * and manual links. Idempotent: an action that has a constraint, live or retired, is skipped, so a re-run never
+   * revives one that was undone. Stamped decided_by = backfill, with the action's own time (a manual link has none,
+   * and counts as oldest). Run once the observations are in, since constraints name them.
+   */
+  backfillConstraints(): number {
+    let written = 0;
+    this.transaction(() => {
+      const merges = this.db.db.prepare(`
+        SELECT source_id, target_id, merged_at FROM work_item_merges WHERE decided_by = 'operator' ORDER BY merged_at
+      `).all() as Array<{ source_id: string; target_id: string; merged_at: string }>;
+      for (const m of merges) {
+        if (this.constraints.hasOrigin(`merge:${m.source_id}`)) continue;
+        // Its observations moved to the target with the merge: what it moved is in the merge record
+        this.writeBackfilledMerge(m.source_id, m.target_id, m.merged_at);
+        if (this.constraints.hasOrigin(`merge:${m.source_id}`)) written++;
+      }
+      const links = this.db.db.prepare("SELECT id, work_item_id FROM threads WHERE manually_linked = 1 AND work_item_id IS NOT NULL")
+        .all() as Array<{ id: string; work_item_id: string }>;
+      for (const l of links) {
+        if (this.constraints.hasOrigin(`link:${l.id}`)) continue;
+        this.writeLinkConstraint(l.id, l.work_item_id, "backfill", "1970-01-01T00:00:00.000Z");
+        if (this.constraints.hasOrigin(`link:${l.id}`)) written++;
+      }
+      if (written > 0) this.settleConstraints();
+    });
+    return written;
+  }
+
+  /** A recorded merge as constraints: the source's own observations are the events the merge record says it moved */
+  private writeBackfilledMerge(sourceId: string, targetId: string, mergedAt: string): void {
+    const origin = `merge:${sourceId}`;
+    const sourceKey = this.getItemKeys(sourceId, { all: true }).find((k) => /^(ticket|pr|mcp):/.test(k.key) && k.decidedBy !== "merge")?.key ?? null;
+    const targetKey = this.structuralKey(targetId);
+    if (sourceKey && targetKey) {
+      this.constraints.add({ kind: "key_alias", a: sourceKey, b: targetKey, decidedBy: "backfill", origin, createdAt: mergedAt });
+      return;
+    }
+    const record = this.db.db.prepare("SELECT moved FROM work_item_merges WHERE source_id = ?").get(sourceId) as { moved: string } | undefined;
+    const eventIds = record ? ((JSON.parse(record.moved) as { events?: string[] }).events ?? []) : [];
+    const observed = eventIds.length === 0 ? [] : (this.db.db.prepare(`
+      SELECT DISTINCT o.dedupe_key FROM events e JOIN observations o ON o.id = e.observation_id
+      WHERE e.id IN (${eventIds.map(() => "?").join(", ")})
+    `).all(...eventIds) as Array<{ dedupe_key: string }>).map((r) => r.dedupe_key);
+    const movedSet = new Set(observed);
+    const anchor = (this.db.db.prepare(`
+      SELECT o.dedupe_key FROM events e JOIN observations o ON o.id = e.observation_id
+      WHERE e.work_item_id = ? ORDER BY o.occurred_at, o.id
+    `).all(targetId) as Array<{ dedupe_key: string }>).map((r) => r.dedupe_key).find((k) => !movedSet.has(k)) ?? null;
+    for (const obs of observed) {
+      if (targetKey) this.constraints.add({ kind: "pin", a: obs, b: targetKey, decidedBy: "backfill", origin, createdAt: mergedAt });
+      else if (anchor) this.constraints.add({ kind: "must_link", a: obs, b: anchor, decidedBy: "backfill", origin, createdAt: mergedAt });
+    }
+    if (sourceKey && anchor) this.constraints.add({ kind: "pin", a: anchor, b: sourceKey, decidedBy: "backfill", origin, createdAt: mergedAt });
   }
 
   /**
@@ -2123,7 +2285,13 @@ export class ContextGraph {
 
     const db = this.db.db;
     const mergedAt = new Date().toISOString();
+    const decidedBy = opts.decidedBy ?? "operator";
     const movedThreadIds = this.transaction(() => {
+      // The operator's merge is a constraint (the tracker's structure is a key, not a correction)
+      if (decidedBy === "operator") {
+        this.constraints.retireByOrigin(`merge:${sourceId}`, mergedAt);
+        this.writeMergeConstraints(sourceId, targetId, "operator", mergedAt);
+      }
       // Collect what's being moved (for the undo record)
       const threads = (db.prepare("SELECT id FROM threads WHERE work_item_id = ?").all(sourceId) as Array<{ id: string }>)
         .map((t) => t.id);
@@ -2264,6 +2432,14 @@ export class ContextGraph {
       db.prepare("DELETE FROM work_item_merges WHERE source_id = ?").run(sourceId);
       const unmergedAt = new Date().toISOString();
       this.returnKeysOnUnmerge(sourceId, targetId, unmergedAt);
+      this.constraints.retireByOrigin(`merge:${sourceId}`, unmergedAt);
+      // Undoing what the tracker's structure decided keeps the two apart from now on
+      if (saved && saved.decided_by !== "operator") {
+        const a = this.anchorObservationKey(sourceId);
+        const b = this.anchorObservationKey(targetId);
+        if (a && b) this.constraints.add({ kind: "cannot_link", a, b, decidedBy: "operator", origin: `unmerge:${sourceId}`, createdAt: unmergedAt });
+      }
+      this.settleConstraints();
       // Clear merged_into
       db.prepare("UPDATE work_items SET merged_into = NULL, updated_at = ? WHERE id = ?").run(unmergedAt, sourceId);
     });

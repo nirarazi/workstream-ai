@@ -6,6 +6,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { createLogger } from "../logger.js";
 import { legacyKeyOf } from "./item-keys.js";
+import { CONSTRAINTS_SQL } from "./constraints.js";
 
 const log = createLogger("graph:db");
 
@@ -257,6 +258,7 @@ export class Database {
 
   private initialize(): void {
     this.db.exec(SCHEMA_SQL);
+    this.db.exec(CONSTRAINTS_SQL);
     this.migrate();
     log.debug("Schema initialized");
   }
