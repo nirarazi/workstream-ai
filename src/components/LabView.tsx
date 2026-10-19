@@ -223,7 +223,7 @@ function WaitingPanel({ onOpenCase }: { onOpenCase: (id: string) => void }): JSX
             <div className="flex items-center gap-2">
               <span className="truncate">{w.name}</span>
               {w.blocking > 0 && <span className="shrink-0 rounded bg-red-900/60 px-1.5 text-xs text-red-200">{w.blocking} waiting</span>}
-              {w.open > w.blocking && <span className="shrink-0 rounded bg-gray-800 px-1.5 text-xs text-gray-400">{w.open - w.blocking} mentions</span>}
+              {w.open > w.blocking && <span className="shrink-0 rounded bg-gray-800 px-1.5 text-xs text-gray-400">{plural(w.open - w.blocking, "mention")}</span>}
             </div>
             <div className="text-xs text-gray-500 truncate">by {w.by.join(", ")} · since {when(w.oldest)}</div>
           </button>
