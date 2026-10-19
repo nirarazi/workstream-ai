@@ -26,6 +26,22 @@ const NODE_CLASSES: Record<string, string> = {
   unknown: "fill-gray-400",
 };
 
+/** The traffic-light status colours (docs/theming.md) */
+const STATUS_CLASSES: Record<string, string> = {
+  blocked_on_human: "bg-red-900/60 text-red-200",
+  needs_decision: "bg-red-900/60 text-red-200",
+  in_progress: "bg-amber-900/50 text-amber-200",
+  completed: "bg-green-900/50 text-green-200",
+  noise: "bg-gray-800 text-gray-400",
+};
+const STATUS_LABELS: Record<string, string> = {
+  blocked_on_human: "Blocked",
+  needs_decision: "Decision",
+  in_progress: "In progress",
+  completed: "Done",
+  noise: "Noise",
+};
+
 const LANE = 34;
 const STEP = 46;
 const PAD = 28;
@@ -140,6 +156,7 @@ function Legend(): JSX.Element {
 
 export default function LabView(): JSX.Element {
   const [q, setQ] = useState("");
+  const [waitingOnly, setWaitingOnly] = useState(false);
   const [streams, setStreams] = useState<LabStream[]>([]);
   const [total, setTotal] = useState(0);
   const [streamKey, setStreamKey] = useState<string | null>(null);
@@ -151,10 +168,10 @@ export default function LabView(): JSX.Element {
 
   useEffect(() => {
     const t = setTimeout(() => {
-      fetchLabStreams(q).then((r) => { setStreams(r.streams); setTotal(r.total); setError(null); }).catch((e) => setError(String(e)));
+      fetchLabStreams(q, waitingOnly).then((r) => { setStreams(r.streams); setTotal(r.total); setError(null); }).catch((e) => setError(String(e)));
     }, 200);
     return () => clearTimeout(t);
-  }, [q]);
+  }, [q, waitingOnly]);
 
   useEffect(() => {
     if (!streamKey) return;
@@ -182,7 +199,13 @@ export default function LabView(): JSX.Element {
             aria-label="Filter streams"
             className="w-full rounded bg-gray-900 border border-gray-800 px-2 py-1 text-sm text-gray-200 placeholder-gray-600"
           />
-          <div className="mt-1 text-xs text-gray-500">{total} streams</div>
+          <div className="mt-1 flex items-center justify-between text-xs text-gray-500">
+            <span>{plural(total, "stream")}</span>
+            <label className="flex items-center gap-1 cursor-pointer">
+              <input type="checkbox" checked={waitingOnly} onChange={(e) => setWaitingOnly(e.target.checked)} />
+              waiting only
+            </label>
+          </div>
         </div>
         <ul className="overflow-y-auto flex-1">
           {streams.map((s) => (
@@ -191,7 +214,10 @@ export default function LabView(): JSX.Element {
                 onClick={() => setStreamKey(s.key)}
                 className={`cursor-pointer w-full text-left px-3 py-2 text-sm border-b border-gray-900 ${streamKey === s.key ? "bg-gray-800 text-gray-100" : "text-gray-300 hover:bg-gray-900"}`}
               >
-                <div className="truncate">{streamLabel(s.label ?? s.key)}</div>
+                <div className="flex items-center gap-2">
+                  <span className="truncate">{streamLabel(s.label ?? s.key)}</span>
+                  {s.waiting > 0 && <span className="shrink-0 rounded bg-red-900/60 px-1.5 text-xs text-red-200">{s.waiting} waiting</span>}
+                </div>
                 <div className="text-xs text-gray-500">{plural(s.caseCount, "case")} · {plural(s.messages, "message")} · {when(s.last)}</div>
               </button>
             </li>
@@ -207,7 +233,10 @@ export default function LabView(): JSX.Element {
             onClick={() => setCaseId(c.id)}
             className={`cursor-pointer w-full text-left px-3 py-2 text-sm border-b border-gray-900 ${caseId === c.id ? "bg-gray-800 text-gray-100" : "text-gray-300 hover:bg-gray-900"}`}
           >
-            <div className="line-clamp-2">{c.title || "(no text)"}</div>
+            <div className="flex items-start gap-2">
+              <span className="line-clamp-2 flex-1">{c.title || "(no text)"}</span>
+              {c.status && <span className={`shrink-0 rounded px-1.5 text-xs ${STATUS_CLASSES[c.status] ?? "bg-gray-800 text-gray-400"}`}>{STATUS_LABELS[c.status] ?? c.status}</span>}
+            </div>
             <div className="text-xs text-gray-500">{plural(c.size, "message")} · {when(c.first)} – {when(c.last)}{c.keys.length ? ` · ${c.keys.slice(0, 2).join(", ")}` : ""}</div>
           </button>
         ))}

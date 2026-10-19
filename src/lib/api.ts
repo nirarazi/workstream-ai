@@ -681,6 +681,8 @@ export interface LabStream {
   /** A channel stream's name ("#ops"); others are their key */
   label: string;
   caseCount: number;
+  /** Cases whose latest message is blocked on someone or waiting on a decision */
+  waiting: number;
   messages: number;
   last: string;
 }
@@ -692,6 +694,8 @@ export interface LabCaseSummary {
   first: string;
   last: string;
   title: string;
+  status: string | null;
+  waiting: boolean;
 }
 
 export interface LabNode {
@@ -719,8 +723,12 @@ export interface LabCase {
   edges: LabEdge[];
 }
 
-export function fetchLabStreams(q?: string): Promise<{ streams: LabStream[]; total: number }> {
-  return apiFetch(`/api/lab/streams${q ? `?q=${encodeURIComponent(q)}` : ""}`);
+export function fetchLabStreams(q?: string, waiting = false): Promise<{ streams: LabStream[]; total: number }> {
+  const params = new URLSearchParams();
+  if (q) params.set("q", q);
+  if (waiting) params.set("waiting", "true");
+  const query = params.toString();
+  return apiFetch(`/api/lab/streams${query ? `?${query}` : ""}`);
 }
 
 export function fetchLabStream(key: string): Promise<{ stream: LabStream; cases: LabCaseSummary[] }> {

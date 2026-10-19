@@ -38,6 +38,17 @@ describe("GroupingLab", () => {
     expect(kase.edges.map((e) => e.reason).sort()).toEqual(["sameKey", "thread"]);
     expect(lab.case("nope")).toBeNull();
   });
+
+  it("says which cases wait on someone, and lists only streams with one when asked", () => {
+    graph.upsertThread({ id: "1700000009.000100", channelId: "C0OPS", channelName: "ops", platform: "slack", workItemId: null });
+    graph.insertEvent({ threadId: "1700000009.000100", messageId: "1700000009.000100", agentId: "U0ATLAS", status: "blocked_on_human",
+      confidence: 0.9, rawText: "OPS-202: need approval to roll back", timestamp: new Date(Date.UTC(2026, 9, 19, 10, 0)).toISOString() });
+    const lab = new GroupingLab(db.db);
+    expect(lab.streams().streams.find((s) => s.key === "project:OPS")!.waiting).toBe(1);
+    expect(lab.streams(undefined, 200, true).streams.map((s) => s.key)).toEqual(["project:OPS"]);
+    const statuses = lab.stream("project:OPS")!.cases.map((c) => [c.keys[0], c.status, c.waiting]).sort();
+    expect(statuses).toEqual([["ticket:OPS-101", "in_progress", false], ["ticket:OPS-202", "blocked_on_human", true]]);
+  });
 });
 
 describe("lab routes", () => {
