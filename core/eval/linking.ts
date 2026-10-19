@@ -8,7 +8,9 @@
 // verdicts per sampling stratum. Rates carry Wilson 95% intervals. Pairs are drawn by stratum, so the numbers describe
 // the labeled pairs, not all pairs. --gold adds B-cubed scores against a full clustering of message keys ({ "clusters": [[keys], …] }).
 // By default it scores the current grouping, and the re-link proposal when npm run relink has written it. --labels
-// scores against another label set in eval-data/linking/ instead of the operator's.
+// scores against another label set in eval-data/linking/ instead of the operator's. --split dev or test scores one
+// half of the pairs (linking-labels.ts, splitOf): tune on dev, report test. --errors <grouping> lists the dev pairs
+// that grouping gets wrong, with a few words of each message (never test pairs, which stay unseen).
 
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -25,9 +27,10 @@ import {
   relinkItemsPath,
   type GroupingName,
   type LoadedGroupings,
+  type Observation,
 } from "./linking-data.js";
-import { loadLabels } from "./linking-labels.js";
-import { bcubed, scoreGrouping, type GroupingScore, type Rate } from "./linking-metrics.js";
+import { loadLabels, splitOf } from "./linking-labels.js";
+import { bcubed, scoreGrouping, together, type GroupingScore, type Rate } from "./linking-metrics.js";
 
 const LABEL_WIDTH = 22;
 const COLUMN_WIDTH = 28;
@@ -42,11 +45,15 @@ function row(label: string, cells: string[]): string {
 }
 
 function main(): void {
-  const flags = parseFlags(process.argv.slice(2), ["grouping", "db", "gold", "labels"] as const);
+  const flags = parseFlags(process.argv.slice(2), ["grouping", "db", "gold", "labels", "split", "errors"] as const);
   const root = projectRoot();
   const names = parseGroupingNames(flags.grouping ?? (existsSync(relinkItemsPath(root)) ? "current,relink" : "current"));
-  const labels = loadLabels(root, flags.labels);
-  if (labels.pairs.length === 0 && labels.notWork.length === 0) {
+  const all = loadLabels(root, flags.labels);
+  const split = flags.split ?? "all";
+  if (split !== "all" && split !== "dev" && split !== "test") throw new Error("--split must be dev, test or all");
+  if (flags.errors && split === "test") throw new Error("--errors lists dev pairs only: test pairs stay unseen");
+  const labels = split === "all" ? all : { ...all, pairs: all.pairs.filter((p) => splitOf(p.a, p.b) === split) };
+  if (labels.pairs.length === 0 && labels.notWork.length === 0 && labels.mixed.length === 0) {
     console.log("No linking labels yet. Run: npm run eval:pairs");
     return;
   }
@@ -55,10 +62,12 @@ function main(): void {
   // As npm run relink: the database in the directory it runs in, unless --db says otherwise.
   let loaded: LoadedGroupings;
   let known: Set<string>;
+  let messages: Map<string, Observation>;
   const source = (openSource = openReadOnly(resolve(flags.db ?? "workstream.db")));
   try {
     const index = loadMessageIndex(source.db);
     known = new Set(index.rowOfMessage.keys());
+    messages = new Map(index.observations.map((o) => [o.id, o]));
     loaded = loadGroupings(names, root, source.db, index);
   } finally {
     openSource = undefined;
@@ -96,6 +105,28 @@ function main(): void {
   for (const stratum of strata) {
     const first = cols[0].strata[stratum];
     console.log(row(clean(stratum), [`${first.pairs} · ${first.same}`, ...cols.map((s) => `${s.strata[stratum].agree}/${s.strata[stratum].pairs}`)]));
+  }
+
+  if (flags.errors) {
+    const name = parseGroupingNames(flags.errors)[0];
+    const grouping = groupings.get(name);
+    if (!grouping) throw new Error(`--errors ${name}: add it to --grouping`);
+    const notWork = new Set(labels.notWork.map((n) => n.message));
+    const mixed = new Set(labels.mixed.map((n) => n.message));
+    const wrong = labels.pairs.filter((p) => splitOf(p.a, p.b) === "dev" && !notWork.has(p.a) && !notWork.has(p.b)
+      && !mixed.has(p.a) && !mixed.has(p.b) && known.has(p.a) && known.has(p.b)
+      && together(grouping, p.a, p.b) !== (p.verdict === "same"));
+    const gist = (id: string) => {
+      const m = messages.get(id);
+      return m ? `${clean(m.senderName)} #${clean(m.channelName)} ${m.timestamp.slice(0, 16)}: ${clean(m.text.replace(/\s+/g, " ").slice(0, 140))}` : clean(id);
+    };
+    console.log(`\n${name} gets ${wrong.length} dev pairs wrong:`);
+    for (const p of wrong) {
+      console.log(`\n[${p.verdict === "same" ? "split" : "over-merged"} · ${clean(p.stratum ?? "?")}] ${clean(p.a)}  ${clean(p.b)}`);
+      console.log(`  A ${gist(p.a)}`);
+      console.log(`  B ${gist(p.b)}`);
+      if (p.note) console.log(`  note: ${clean(p.note)}`);
+    }
   }
 
   if (flags.gold) {

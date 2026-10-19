@@ -20,8 +20,9 @@ import { ownLines } from "../graph/own-lines.js";
 import { hasColumn, RELINK_OUT_DIR } from "../graph/relink.js";
 import { projectFile } from "./linking-labels.js";
 import type { Grouping } from "./linking-metrics.js";
+import { v2Grouping } from "./v2-grouping.js";
 
-export const GROUPINGS = ["current", "relink"] as const;
+export const GROUPINGS = ["current", "relink", "v2"] as const;
 export type GroupingName = (typeof GROUPINGS)[number];
 
 /**
@@ -248,6 +249,12 @@ export interface LoadedGroupings {
 export function loadGroupings(names: GroupingName[], root: string, db: BetterSqlite3.Database, index: MessageIndex): LoadedGroupings {
   const out: LoadedGroupings = { groupings: new Map(), unmatched: new Map() };
   for (const name of names) {
+    if (name === "v2") {
+      // Computed here, message by message (core/grouping/)
+      out.groupings.set(name, v2Grouping(db, index).grouping);
+      out.unmatched.set(name, 0);
+      continue;
+    }
     let byEvent: Grouping;
     if (name === "current") {
       byEvent = currentEventGrouping(db);

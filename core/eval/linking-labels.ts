@@ -12,6 +12,7 @@
 
 import { existsSync, lstatSync, readFileSync, realpathSync } from "node:fs";
 import { join } from "node:path";
+import { createHash } from "node:crypto";
 import { prepareOutDir, writePrivateFile } from "../graph/relink.js";
 
 /**
@@ -72,6 +73,16 @@ export interface LinkingLabels {
 
 export function emptyLabels(): LinkingLabels {
   return { version: LABELS_VERSION, keyFormat: KEY_FORMAT, pairs: [], notWork: [], mixed: [] };
+}
+
+/**
+ * Which half of the labels a pair is in: "test" for a fixed fifth, chosen by a hash of the pair (so the same pair is
+ * always in the same half, whoever labeled it and whenever), "dev" for the rest. Tuning looks only at dev; test is the
+ * held-out score.
+ */
+export type Split = "dev" | "test";
+export function splitOf(a: string, b: string): Split {
+  return createHash("sha256").update(pairKey(a, b)).digest()[0] < 52 ? "test" : "dev";
 }
 
 /** The order-free key of a pair */

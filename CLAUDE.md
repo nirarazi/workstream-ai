@@ -134,7 +134,7 @@ See [docs/slack-setup.md](docs/slack-setup.md) to connect Slack.
 
 Classifier evaluation: `npm run eval:sample`, `eval:label` and `eval:run` build and score a labeled set from your own messages. The data stays in `eval-data/`, which is gitignored. The roadmap records results so far.
 
-Grouping evaluation: `npm run eval:pairs` labels message pairs (same work or not), and `eval:linking` scores the current grouping and the re-link proposal against them (see [docs/streams-and-message-linking.md](docs/streams-and-message-linking.md)).
+Grouping evaluation: `npm run eval:pairs` labels message pairs (same work or not), and `eval:linking` scores the current grouping, the re-link proposal and the v2 grouping (`core/grouping/`) against them, on a dev or held-out test split (see [docs/streams-and-message-linking.md](docs/streams-and-message-linking.md)). `eval:pairs-dump` and `eval:agreement` let a second labeler label the same pairs and compare; `eval:constraint-labels` turns the operator's corrections in the app into labels.
 
 ---
 
