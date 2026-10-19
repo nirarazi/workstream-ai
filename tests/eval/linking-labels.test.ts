@@ -14,6 +14,7 @@ import {
   parseLabels,
   saveLabels,
   setPairLabel,
+  toggleMark,
   toggleNotWork,
   LabelSession,
 } from "../../core/eval/linking-labels.js";
@@ -32,7 +33,7 @@ describe("linking labels", () => {
   });
 
   it("starts empty when there's no file", () => {
-    expect(loadLabels(root)).toEqual({ version: LABELS_VERSION, keyFormat: KEY_FORMAT, pairs: [], notWork: [] });
+    expect(loadLabels(root)).toEqual({ version: LABELS_VERSION, keyFormat: KEY_FORMAT, pairs: [], notWork: [], mixed: [] });
   });
 
   it("round-trips through a private file in a private directory", () => {
@@ -67,6 +68,22 @@ describe("linking labels", () => {
     expect(labels.notWork.map((n) => n.message)).toEqual(["m1"]);
     expect(toggleNotWork(labels, "m1")).toBe(false);
     expect(labels.notWork).toEqual([]);
+  });
+
+  it("keeps a message's not-work and mixed marks exclusive", () => {
+    const labels = emptyLabels();
+    toggleNotWork(labels, "m1");
+    expect(toggleMark(labels, "mixed", "m1")).toBe(true);
+    expect(labels.notWork).toEqual([]);
+    expect(labels.mixed.map((n) => n.message)).toEqual(["m1"]);
+    expect(toggleNotWork(labels, "m1")).toBe(true);
+    expect(labels.mixed).toEqual([]);
+  });
+
+  it("reads a file written before mixed marks existed as having none, and refuses a malformed one", () => {
+    expect(parseLabels(JSON.stringify({ version: 1, keyFormat: KEY_FORMAT, pairs: [], notWork: [] })).mixed).toEqual([]);
+    expect(() => parseLabels(JSON.stringify({ version: 1, keyFormat: KEY_FORMAT, pairs: [], notWork: [], mixed: [{ labeledAt: "t" }] }))).toThrow(/mixed label 1/);
+    expect(() => parseLabels(JSON.stringify({ version: 1, keyFormat: KEY_FORMAT, pairs: [], notWork: [], mixed: {} }))).toThrow(/mixed list/);
   });
 
   it("refuses a newer format version instead of misreading it", () => {

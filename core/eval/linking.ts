@@ -71,12 +71,13 @@ function main(): void {
 
   const scores = new Map<GroupingName, GroupingScore>([...groupings].map(([name, g]) => [name, scoreGrouping(labels, g, known)]));
   const same = labels.pairs.filter((p) => p.verdict === "same").length;
-  console.log(`Labels: ${labels.pairs.length} pairs (${same} same work, ${labels.pairs.length - same} different), ${labels.notWork.length} messages marked not work`);
+  console.log(`Labels: ${labels.pairs.length} pairs (${same} same work, ${labels.pairs.length - same} different), ${labels.notWork.length} messages marked not work, ${labels.mixed.length} mixed`);
   const first = [...scores.values()][0];
   if (first.unknownMessages) {
     console.log(`${first.unknownMessages} labeled messages aren't in this database (another or older --db?): ${first.pairsWithUnknown} pairs with them are left out`);
   }
   if (first.pairsWithNotWork) console.log(`${first.pairsWithNotWork} pairs with a not-work message are left out of the pairwise scores`);
+  if (first.pairsWithMixed) console.log(`${first.pairsWithMixed} pairs with a mixed message (several cases) are left out too`);
   console.log("");
 
   const cols = [...scores.values()];

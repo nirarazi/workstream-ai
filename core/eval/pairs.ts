@@ -8,8 +8,9 @@
 // --only asks about just the pairs listed in a file in eval-data/linking/ ({ "pairs": [{ "a", "b" }] }), such as the
 // ones another labeler was unsure of, without showing its answers:
 //   s  same work      d  different work      1 / 2  mark message A / B "not work" (again to clear)
+//   a / b  mark message A / B "mixed": it moves several cases (again to clear)
 //   u  unsure, skip   n  add note            q  save & quit
-// A dimmed hint under the keys says what each verdict means. A note goes with the next verdict or not-work mark. A
+// A dimmed hint under the keys says what each verdict means. A note goes with the next verdict or mark. A
 // skipped pair comes back once at the end of the session, and nothing is recorded for it, so a later session can draw
 // it again.
 // Each message shows its sender, channel, time, its own lines and a few messages around it in its thread. Which item
@@ -152,6 +153,7 @@ function gap(a: Observation, b: Observation): string | null {
 }
 
 const isNotWork = (id: string) => session.labels.notWork.some((n) => n.message === id);
+const isMixed = (id: string) => session.labels.mixed.some((n) => n.message === id);
 
 /** What the verdicts mean, shown under the keys (docs/streams-and-message-linking.md has the full definitions) */
 const HINT = [
@@ -159,6 +161,7 @@ const HINT = [
   "Different work: different cases, even with the same partner, agent, channel, routine or routine run.",
   "Not work: about no single case: heartbeats, health checks, empty tick logs, chatter, many-case digests or briefings.",
   "A question about one case and its answer: same work. A \"one by one\" walk: not work. Can't see the question: u.",
+  "Mixed (a/b): the message moves several cases, like a dispatch of three tickets. Mark it, then still give s or d.",
 ];
 
 function renderMessage(tag: string, o: Observation | undefined, id: string): void {
@@ -166,7 +169,7 @@ function renderMessage(tag: string, o: Observation | undefined, id: string): voi
     console.log(`${BOLD}── ${tag} ──${RESET} ${DIM}(message ${clean(id)} not found)${RESET}\n`);
     return;
   }
-  const mark = isNotWork(o.id) ? `  ${BOLD}[not work]${RESET}` : "";
+  const mark = isNotWork(o.id) ? `  ${BOLD}[not work]${RESET}` : isMixed(o.id) ? `  ${BOLD}[mixed]${RESET}` : "";
   console.log(`${BOLD}── ${tag} ──${RESET} ${clean(o.senderName)} in #${clean(o.channelName)}  ${clean(o.timestamp)}${mark}`);
   const ctx = loadItemContext(source.db, o.eventId, { before: 2, after: 1 });
   for (const m of ctx?.before ?? []) console.log(`${DIM}  before  ${oneLine(m)}${RESET}`);
@@ -191,7 +194,7 @@ function render(): void {
     return;
   }
   if (note) console.log(`  note: ${clean(note)}`);
-  console.log("  s same work · d different work · 1/2 A/B not work · u unsure, skip · n note · q quit");
+  console.log("  s same work · d different work · 1/2 A/B not work · a/b A/B mixed · u unsure, skip · n note · q quit");
   for (const line of HINT) console.log(`  ${DIM}${line}${RESET}`);
 }
 
@@ -205,7 +208,7 @@ function next(): void {
 function quit(): never {
   stop();
   console.clear();
-  console.log(`Saved ${session.labels.pairs.length} pair labels, ${session.labels.notWork.length} not-work marks → eval-data/linking/labels.json`);
+  console.log(`Saved ${session.labels.pairs.length} pair labels, ${session.labels.notWork.length} not-work marks, ${session.labels.mixed.length} mixed → eval-data/linking/labels.json`);
   console.log("Next: npm run eval:linking");
   process.exit(0);
 }
@@ -250,6 +253,11 @@ function onKey(str: string | undefined, key: { name?: string; ctrl?: boolean }):
   if (str === "1" || str === "2") {
     // A note typed before the mark goes with it
     session.toggleNotWork(str === "1" ? pair.a : pair.b, note);
+    note = undefined;
+    return render();
+  }
+  if (key.name === "a" || key.name === "b") {
+    session.toggleMark("mixed", key.name === "a" ? pair.a : pair.b, note);
     note = undefined;
     return render();
   }

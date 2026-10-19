@@ -94,6 +94,23 @@ describe("notWorkRate and scoreGrouping", () => {
     expect(s.unplaced).toBe(1);
   });
 
+  it("leaves pairs with a mixed message out of the pairwise scores, but not out of the not-work rate", () => {
+    const s = scoreGrouping({
+      pairs: [
+        { a: "a1", b: "a2", verdict: "same" },
+        { a: "a2", b: "h1", verdict: "different" },
+        { a: "h1", b: "h2", verdict: "same" },
+      ],
+      notWork: [{ message: "h1" }],
+      mixed: [{ message: "a2" }],
+    }, g);
+    // a2-h1 has both marks' messages: counted once, as not work
+    expect(s.pairsWithNotWork).toBe(2);
+    expect(s.pairsWithMixed).toBe(1);
+    expect(s.pairwise.tp + s.pairwise.fp + s.pairwise.fn + s.pairwise.tn).toBe(0);
+    expect(s.notWork.n).toBe(4);
+  });
+
   it("leaves out labeled messages the database doesn't hold, rather than scoring them as unplaced", () => {
     const labels = {
       pairs: [

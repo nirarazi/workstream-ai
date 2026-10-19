@@ -3,15 +3,15 @@
 //
 // Usage: npm run eval:agreement -- --other labels.<name>.json
 // Compares the operator's labels (eval-data/linking/labels.json) with another label set on the pairs both labeled.
-// Each pair gets one of three answers per labeler: same work, different work, or not work (either message marked
-// not work). Prints the agreement rate, Cohen's kappa, and every pair they disagree on, with both notes.
+// Each pair gets one of four answers per labeler: same work, different work, not work (either message marked not
+// work), or mixed (either message marked as moving several cases). Prints the agreement rate, Cohen's kappa, and every pair they disagree on, with both notes.
 
 import { pairKey, loadLabels, type LinkingLabels } from "./linking-labels.js";
 import { parseFlags, projectRoot } from "./linking-data.js";
 import { clean } from "./terminal.js";
 
-type Answer = "same" | "different" | "not work";
-const ANSWERS: Answer[] = ["same", "different", "not work"];
+type Answer = "same" | "different" | "not work" | "mixed";
+const ANSWERS: Answer[] = ["same", "different", "not work", "mixed"];
 
 interface Answered {
   answer: Answer;
@@ -19,12 +19,13 @@ interface Answered {
   note?: string;
 }
 
-/** Each labeled pair's three-way answer, keyed by pairKey() */
+/** Each labeled pair's answer, keyed by pairKey(). Not work comes before mixed, as in the scores. */
 export function answers(labels: LinkingLabels): Map<string, Answered> {
   const notWork = new Set(labels.notWork.map((n) => n.message));
+  const mixed = new Set(labels.mixed.map((n) => n.message));
   const out = new Map<string, Answered>();
   for (const p of labels.pairs) {
-    const answer: Answer = notWork.has(p.a) || notWork.has(p.b) ? "not work" : p.verdict;
+    const answer: Answer = notWork.has(p.a) || notWork.has(p.b) ? "not work" : mixed.has(p.a) || mixed.has(p.b) ? "mixed" : p.verdict;
     out.set(pairKey(p.a, p.b), { answer, stratum: p.stratum, note: p.note });
   }
   return out;

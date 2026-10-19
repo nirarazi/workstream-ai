@@ -120,6 +120,8 @@ export interface GroupingScore {
   unplaced: number;
   /** Labeled pairs left out of the pairwise scores because a message in them isn't work */
   pairsWithNotWork: number;
+  /** Labeled pairs left out because a message in them moves several cases, which one item can't hold */
+  pairsWithMixed: number;
   /** Labeled messages the database doesn't hold (a different or older database), and the pairs left out for them */
   unknownMessages: number;
   pairsWithUnknown: number;
@@ -127,26 +129,31 @@ export interface GroupingScore {
 
 /**
  * Scores a grouping against a label set. A pair with a message marked "not work" is left out of the pairwise scores:
- * that message shouldn't be in any item, which the not-work rate counts instead. With `known` (every message key the
- * database holds), labeled messages it lacks are left out too, rather than scored as unplaced.
+ * that message shouldn't be in any item, which the not-work rate counts instead. So is a pair with a message marked
+ * "mixed": it moves several cases, and a grouping that puts each message in one item can't be right about it. With
+ * `known` (every message key the database holds), labeled messages it lacks are left out too, rather than scored as
+ * unplaced.
  */
 export function scoreGrouping(
-  labels: { pairs: LabeledPair[]; notWork: Array<{ message: string }> },
+  labels: { pairs: LabeledPair[]; notWork: Array<{ message: string }>; mixed?: Array<{ message: string }> },
   grouping: Grouping,
   known?: ReadonlySet<string>,
 ): GroupingScore {
   const isKnown = (id: string) => !known || known.has(id);
   const notWork = new Set(labels.notWork.map((n) => n.message).filter(isKnown));
-  const all = new Set([...labels.pairs.flatMap((p) => [p.a, p.b]), ...labels.notWork.map((n) => n.message)]);
+  const mixed = new Set((labels.mixed ?? []).map((n) => n.message));
+  const all = new Set([...labels.pairs.flatMap((p) => [p.a, p.b]), ...labels.notWork.map((n) => n.message), ...mixed]);
   const knownPairs = labels.pairs.filter((p) => isKnown(p.a) && isKnown(p.b));
   const work = knownPairs.filter((p) => !notWork.has(p.a) && !notWork.has(p.b));
+  const scored = work.filter((p) => !mixed.has(p.a) && !mixed.has(p.b));
   const seen = [...all].filter(isKnown);
   return {
-    pairwise: pairwiseScores(work, grouping),
+    pairwise: pairwiseScores(scored, grouping),
     notWork: notWorkRate(seen, notWork, grouping),
-    strata: byStratum(work, grouping),
+    strata: byStratum(scored, grouping),
     unplaced: seen.filter((id) => !grouping.has(id)).length,
     pairsWithNotWork: knownPairs.length - work.length,
+    pairsWithMixed: work.length - scored.length,
     unknownMessages: all.size - seen.length,
     pairsWithUnknown: labels.pairs.length - knownPairs.length,
   };

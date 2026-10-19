@@ -3,8 +3,9 @@
 // Labels are keyed by a message's platform identity ("<platform>:<channel id>:<message id>", see messageKey in
 // linking-data.ts), not by events.id: an event row's id is a random UUID that changes when messages are re-ingested
 // or relinked, while the platform's id doesn't, so one set of verdicts scores the current grouping, the re-link
-// proposal and any later one. The file names its key format, so a change to it is a new format version. Two kinds
-// of label: a pair verdict (same work or different work) and a "not work" mark on a single message. The file holds
+// proposal and any later one. The file names its key format, so a change to it is a new format version. Three kinds
+// of label: a pair verdict (same work or different work), a "not work" mark on a single message, and a "mixed" mark on
+// a message that moves several cases (a dispatch of three tickets), which one item can't hold. The file holds
 // message keys and the operator's notes, so it lives in eval-data/ (gitignored), in a private directory, written as a
 // private file. Each save re-reads the file and replays this session's labels onto it, so two labeling sessions
 // don't overwrite each other's work.
@@ -53,16 +54,24 @@ export interface NotWorkLabel {
   note?: string;
 }
 
+/** A message that moves several cases: work, but no one item can hold all of it, so its pairs aren't scored */
+export type MixedLabel = NotWorkLabel;
+
+/** The two marks on a single message; a message has at most one of them */
+export type MessageMark = "notWork" | "mixed";
+
 export interface LinkingLabels {
   version: typeof LABELS_VERSION;
   /** Always KEY_FORMAT: says what the message keys below are */
   keyFormat: typeof KEY_FORMAT;
   pairs: PairLabel[];
   notWork: NotWorkLabel[];
+  /** Absent in files written before it existed, read as none */
+  mixed: MixedLabel[];
 }
 
 export function emptyLabels(): LinkingLabels {
-  return { version: LABELS_VERSION, keyFormat: KEY_FORMAT, pairs: [], notWork: [] };
+  return { version: LABELS_VERSION, keyFormat: KEY_FORMAT, pairs: [], notWork: [], mixed: [] };
 }
 
 /** The order-free key of a pair */
@@ -101,10 +110,16 @@ export function parseLabels(content: string): LinkingLabels {
       throw new Error(`Linking labels: pair ${i + 1} is malformed`);
     }
   });
+  if (data.mixed !== undefined && !Array.isArray(data.mixed)) throw new Error("Linking labels: expected a mixed list");
+  const mixed = data.mixed ?? [];
+  const malformed = (n: NotWorkLabel) => !isString(n?.message) || !isString(n.labeledAt) || !optionalString(n.note);
   data.notWork.forEach((n, i) => {
-    if (!isString(n?.message) || !isString(n.labeledAt) || !optionalString(n.note)) throw new Error(`Linking labels: not-work label ${i + 1} is malformed`);
+    if (malformed(n)) throw new Error(`Linking labels: not-work label ${i + 1} is malformed`);
   });
-  return { version: LABELS_VERSION, keyFormat: KEY_FORMAT, pairs: data.pairs, notWork: data.notWork };
+  mixed.forEach((n, i) => {
+    if (malformed(n)) throw new Error(`Linking labels: mixed label ${i + 1} is malformed`);
+  });
+  return { version: LABELS_VERSION, keyFormat: KEY_FORMAT, pairs: data.pairs, notWork: data.notWork, mixed };
 }
 
 /** Other label sets beside the operator's (labels.<name>.json), such as a model's bulk labels; never a path */
@@ -134,26 +149,39 @@ export function setPairLabel(labels: LinkingLabels, label: PairLabel): void {
   labels.pairs.push({ ...label, a, b });
 }
 
+/** Gives a message a mark (replacing either mark it had: "not work" and "mixed" exclude each other), or clears it */
+export function setMark(labels: LinkingLabels, mark: MessageMark, message: string, marked: boolean, labeledAt = new Date().toISOString(), note?: string): void {
+  const other: MessageMark = mark === "notWork" ? "mixed" : "notWork";
+  labels[mark] = labels[mark].filter((n) => n.message !== message);
+  if (!marked) return;
+  labels[other] = labels[other].filter((n) => n.message !== message);
+  labels[mark].push(note ? { message, labeledAt, note } : { message, labeledAt });
+}
+
 /** Marks a message "not work" (replacing an earlier mark), or clears its mark */
 export function setNotWork(labels: LinkingLabels, message: string, marked: boolean, labeledAt = new Date().toISOString(), note?: string): void {
-  labels.notWork = labels.notWork.filter((n) => n.message !== message);
-  if (marked) labels.notWork.push(note ? { message, labeledAt, note } : { message, labeledAt });
+  setMark(labels, "notWork", message, marked, labeledAt, note);
+}
+
+/** Gives a message a mark, or clears it. Returns whether it has the mark now. */
+export function toggleMark(labels: LinkingLabels, mark: MessageMark, message: string, labeledAt = new Date().toISOString(), note?: string): boolean {
+  const marked = !labels[mark].some((n) => n.message === message);
+  setMark(labels, mark, message, marked, labeledAt, note);
+  return marked;
 }
 
 /** Marks a message "not work", or clears the mark. Returns whether it's marked now. */
 export function toggleNotWork(labels: LinkingLabels, message: string, labeledAt = new Date().toISOString(), note?: string): boolean {
-  const marked = !labels.notWork.some((n) => n.message === message);
-  setNotWork(labels, message, marked, labeledAt, note);
-  return marked;
+  return toggleMark(labels, "notWork", message, labeledAt, note);
 }
 
 type LabelOp =
   | { kind: "pair"; label: PairLabel }
-  | { kind: "notWork"; message: string; marked: boolean; labeledAt: string; note?: string };
+  | { kind: MessageMark; message: string; marked: boolean; labeledAt: string; note?: string };
 
 function applyOp(labels: LinkingLabels, op: LabelOp): void {
   if (op.kind === "pair") setPairLabel(labels, op.label);
-  else setNotWork(labels, op.message, op.marked, op.labeledAt, op.note);
+  else setMark(labels, op.kind, op.message, op.marked, op.labeledAt, op.note);
 }
 
 /** Whether the labels already hold a newer label for the op's pair or message (another session's, saved since) */
@@ -162,7 +190,7 @@ function newerThan(labels: LinkingLabels, op: LabelOp): boolean {
     const key = pairKey(op.label.a, op.label.b);
     return labels.pairs.some((p) => pairKey(p.a, p.b) === key && p.labeledAt > op.label.labeledAt);
   }
-  return labels.notWork.some((n) => n.message === op.message && n.labeledAt > op.labeledAt);
+  return [...labels.notWork, ...labels.mixed].some((n) => n.message === op.message && n.labeledAt > op.labeledAt);
 }
 
 /**
@@ -184,12 +212,16 @@ export class LabelSession {
     this.record({ kind: "pair", label });
   }
 
-  /** Toggles the not-work mark on a message, as the file holds it now; returns whether it's marked */
-  toggleNotWork(message: string, note?: string): boolean {
+  /** Toggles a mark on a message, as the file holds it now; returns whether it has the mark */
+  toggleMark(mark: MessageMark, message: string, note?: string): boolean {
     this.labels = this.merged();
-    const marked = !this.labels.notWork.some((n) => n.message === message);
-    this.record({ kind: "notWork", message, marked, labeledAt: new Date().toISOString(), note });
+    const marked = !this.labels[mark].some((n) => n.message === message);
+    this.record({ kind: mark, message, marked, labeledAt: new Date().toISOString(), note });
     return marked;
+  }
+
+  toggleNotWork(message: string, note?: string): boolean {
+    return this.toggleMark("notWork", message, note);
   }
 
   /** Saves the unsaved changes over whatever the file holds now (nothing to write when there are none) */
