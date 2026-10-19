@@ -26,7 +26,8 @@ export interface GroupingMessage {
   topLevel?: boolean;
 }
 
-export type MessageKind = "work" | "report" | "telemetry";
+/** report: about many cases (a digest, a briefing); telemetry: machine output; chatter: about no case (a greeting, "are we up?") */
+export type MessageKind = "work" | "report" | "telemetry" | "chatter";
 
 export interface Recognized {
   kind: MessageKind;
@@ -36,6 +37,11 @@ export interface Recognized {
   mentions: string[];
   /** The routine lane a tagged line names ("drain"), if any */
   lane: string | null;
+  /**
+   * It asks for someone (blocked, a decision). An ask surfaces on its own, attached to its message, whatever the
+   * grouping (docs/work-model.md, "Starting an item"), so a report carrying one joins no case but must still surface.
+   */
+  asks: boolean;
 }
 
 /** "[lane] Subject (detail): …" or "[lane] *Subject* — …": a routine's note about one subject */
@@ -53,7 +59,7 @@ export function taggedSubject(firstLine: string): { lane: string; subject: strin
   const rest = m[2].replace(/[*_`]/g, "").trim();
   const name = rest.split(SUBJECT_END)[0].trim().replace(/\s+/g, " ");
   const words = name.split(" ").filter(Boolean);
-  if (words.length === 0 || words.length > MAX_SUBJECT_WORDS || !/^[\p{Lu}\d$]/u.test(name)) return null;
+  if (words.length === 0 || words.length > MAX_SUBJECT_WORDS || !/^[\p{Lu}\d$]/u.test(name) || COUNTED.test(name)) return null;
   return { lane: m[1].toLowerCase(), subject: name.toLowerCase() };
 }
 
@@ -68,6 +74,26 @@ export function releaseKey(text: string, senderKind: SenderKind): string | null 
   const v = VERSION.exec(first);
   return v ? `release:${v[1]}` : null;
 }
+
+/**
+ * A briefing or status post about many cases, by its header: "Mission status, Mon …", "Daily JIRA sync — …", "Night
+ * shift summary", "Sprint planning complete", "Efficiency audit Oct 14", a "[daily-report]" tag. Read as the start of
+ * the first line, so a sentence that only mentions a status doesn't count.
+ */
+const BRIEFING = new RegExp(
+  String.raw`^[\W_]*(?:\[[a-z-]*(?:report|digest|summary|briefing|status)[a-z-]*\]|` +
+    String.raw`(?:(?:daily|weekly|nightly|night[- ]shift|morning|evening|sprint|mission|efficiency|queue|dispatch)\b[^\n]{0,40}?\b` +
+    String.raw`(?:status|sync|summary|plan|planning|wrap-up|digest|report|audit|reconciliation|verification|dispatch)\b))`,
+  "i",
+);
+/** A briefing for the operator: "In priority order: 1. …", "Here's my list, most urgent first" */
+const PRIORITY_LIST = /\b(?:in priority order|most urgent first|top \d+ things)\b/i;
+/** A tagged line whose subject is a count of things ("Five items", "Three follow-ups checked"): many subjects, not one */
+const COUNTED = /^(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten|several|all)\s+\S+/i;
+/** Health and liveness: "All green ✓ Gateway: running …", "HEARTBEAT_OK", "nothing needs a Slack post" */
+const HEALTH = /^[\W_]*all green\b|\bHEARTBEAT_OK\b|\bnothing needs a slack post\b/i;
+/** A person checking on the fleet or greeting it, in a few words: "OK are we still alive?", "How are you", "Are you down?" */
+const CHATTER = /^[\W_]*(?:(?:ok|so|hey|hi)[,!]?\s+)?(?:are (?:we|you|they)(?: all)? (?:still )?(?:alive|up|down|there|ok|running|healthy)|how are you|good (?:morning|night)|thanks?(?: you)?|thx)\b[^\n]{0,40}$/i;
 
 /** Machine output: key=value lines, tick markers, idle heartbeats */
 const TELEMETRY = [
@@ -114,18 +140,24 @@ export function recognize(message: GroupingMessage, options: ResolverOptions & {
   const tagged = message.senderKind !== "human" ? taggedSubject(firstLine) : null;
   // The classifier's "noise" decides what surfaces, never what a message belongs to (docs/work-model.md, §3): a short
   // "yes" or "you merge" it calls noise is still a step in a case, so status isn't read here except for asks
-  // A message that asks for someone is never set aside as telemetry or a report: the ask must not be lost
+  // An ask is never set aside as telemetry, and a report carrying one says so (asks), so it surfaces on its own
   const asks = message.status === "blocked_on_human" || message.status === "needs_decision";
-  const telemetry = message.senderKind !== "human" && !asks && TELEMETRY.some((re) => re.test(firstLine.slice(0, MAX_FIRST_LINE)));
-  const report = !tagged && !asks && isReport(
+  const head = firstLine.slice(0, MAX_FIRST_LINE);
+  const machine = message.senderKind !== "human";
+  const telemetry = machine && !asks && (TELEMETRY.some((re) => re.test(head)) || HEALTH.test(head));
+  // Anyone's: a briefing is told by its header, which people rarely start a message with otherwise (and an agent posting
+  // under a person's account reads as a person)
+  const briefing = !tagged && (BRIEFING.test(head) || PRIORITY_LIST.test(own.slice(0, MAX_FIRST_LINE)));
+  const chatter = !asks && own.trim().length <= 80 && CHATTER.test(own.trim());
+  const report = briefing || (!tagged && isReport(
     { threadId: message.threadId, senderKind: message.senderKind, text: own, status: message.status ?? null, priorInThread: 0, digest: message.digest },
     lines, [], about.subject,
-  );
-  const kind: MessageKind = telemetry ? "telemetry" : report ? "report" : "work";
+  ));
+  const kind: MessageKind = telemetry ? "telemetry" : report ? "report" : chatter ? "chatter" : "work";
 
   const named = !tagged && options.subjects?.length ? namedSubject(own, options.subjects) : null;
   const subjectKey = tagged ? `subject:${tagged.subject}` : named ? `subject:${named}` : null;
   const aboutKey = about.subject ?? subjectKey ?? releaseKey(own, message.senderKind);
   const mentions = refs.filter((r) => r !== aboutKey && keyKind(r) !== "subject");
-  return { kind, about: kind === "work" ? aboutKey : null, mentions, lane: tagged?.lane ?? null };
+  return { kind, about: kind === "work" ? aboutKey : null, mentions, lane: tagged?.lane ?? null, asks };
 }

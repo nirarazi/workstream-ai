@@ -719,6 +719,9 @@ export class ContextGraph {
     const status = source.currentAtcStatus === "completed" ? "in_progress" : source.currentAtcStatus;
     if (!status || status === "noise") return undefined;
     if (asks(target.currentAtcStatus) && !asks(status)) return undefined;
+    // Done stays done unless something asks for someone, as for a message (the pipeline's reopens()): trackers close a
+    // sub-task around or after its parent
+    if (target.currentAtcStatus === "completed" && !asks(status)) return undefined;
     const newer = !target.statusAt || (source.statusAt !== null && source.statusAt > target.statusAt);
     const carry = newer || (asks(status) && !asks(target.currentAtcStatus));
     if (!carry) return undefined;
@@ -728,6 +731,8 @@ export class ContextGraph {
     // Never back in time: an older ask carried over a newer status is stamped with the fold, so a backlog message
     // from between the two can't overwrite it
     const statusAt = newer ? (source.statusAt ?? at) : at;
+    // A dismissal from before the carried status is lifted (it's news since); one from after it, the operator's later
+    // word, stays
     this.db.db.prepare(`
       UPDATE work_items SET current_atc_status = ?, current_confidence = ?, status_at = ?, updated_at = ?,
         dismissed_at = CASE WHEN dismissed_at IS NOT NULL AND dismissed_at < COALESCE(?, '') THEN NULL ELSE dismissed_at END,
@@ -2454,12 +2459,16 @@ export class ContextGraph {
       if (saved && saved.target_id === targetId) {
         const record = JSON.parse(saved.moved) as MergeRecord;
         // What a fold carried to the target goes back, unless a newer message has set the target's status since
-        if (record.carried && this.getWorkItemById(targetId)?.statusAt === record.carried.statusAt) {
+        const now = this.getWorkItemById(targetId);
+        if (record.carried && now?.statusAt === record.carried.statusAt) {
           const b = record.carried.before;
           db.prepare(`
-            UPDATE work_items SET current_atc_status = ?, current_confidence = ?, status_at = ?, dismissed_at = ?,
-              dismiss_reason = ?, reopened_at = ? WHERE id = ?
-          `).run(b.current_atc_status, b.current_confidence, b.status_at, b.dismissed_at, b.dismiss_reason, b.reopened_at, targetId);
+            UPDATE work_items SET current_atc_status = ?, current_confidence = ?, status_at = ?, reopened_at = ? WHERE id = ?
+          `).run(b.current_atc_status, b.current_confidence, b.status_at, b.reopened_at, targetId);
+          // The dismissal as it was, unless the operator has dismissed it (again) since the fold
+          if (!now.dismissedAt || now.dismissedAt <= record.carried.statusAt) {
+            db.prepare("UPDATE work_items SET dismissed_at = ?, dismiss_reason = ? WHERE id = ?").run(b.dismissed_at, b.dismiss_reason, targetId);
+          }
         }
         const threadBack = db.prepare("UPDATE threads SET work_item_id = ? WHERE id = ? AND work_item_id = ?");
         // Messages in the thread since the merge took its item then: they're the source's again

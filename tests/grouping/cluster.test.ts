@@ -51,9 +51,19 @@ describe("recognizers", () => {
     expect(Date.now() - started).toBeLessThan(100);
   });
 
-  it("never sets aside a message that asks for someone as telemetry or a report", () => {
+  it("never sets aside an ask as telemetry, and marks a report that carries one, so it surfaces on its own", () => {
     expect(recognize(msg("TICK_DONE cases=3", { status: "blocked_on_human" }), options).kind).toBe("work");
-    expect(recognize(msg("Daily digest\n- OPS-1 done\n- OPS-2 blocked\n- OPS-3 open", { status: "needs_decision" }), options).kind).toBe("work");
+    const digest = recognize(msg("Daily digest\n- OPS-1 done\n- OPS-2 blocked\n- OPS-3 open", { status: "needs_decision" }), options);
+    expect(digest).toMatchObject({ kind: "report", asks: true });
+  });
+
+  it("tells briefings, health checks and chatter from work", () => {
+    expect(recognize(msg("*Mission status, Mon Oct 12, 07:15 UTC* • Atlas: blocked on review"), options).kind).toBe("report");
+    expect(recognize(msg("_Daily tracker sync — Oct 12_ — 30 open tickets checked"), options).kind).toBe("report");
+    expect(recognize(msg("All green ✓ • Gateway: running"), options).kind).toBe("telemetry");
+    expect(recognize(msg("OK are we still alive?", { senderKind: "human" }), options).kind).toBe("chatter");
+    expect(recognize(msg("Fixed. Root cause: the stale note.\nIt now replies HEARTBEAT_OK only on ticks."), options).kind).toBe("work");
+    expect(taggedSubject("[drain] Five items: • Northwind …")).toBeNull();
   });
 
   it("keys a pipeline's release notes by version, never a person's message", () => {

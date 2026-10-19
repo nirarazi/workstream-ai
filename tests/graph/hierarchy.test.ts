@@ -81,11 +81,16 @@ describe("foldIntoTrackerItem", () => {
       expect(g.getWorkItemById("OPS-101")!.currentAtcStatus).toBe("blocked_on_human");
       db2.close();
     }
-    // With no ask open, a step's newer done says the case is in progress
+    // A finished case stays finished when a sub-task closes after it
     graph.upsertWorkItem({ id: "OPS-101", source: "jira", currentAtcStatus: "completed", statusAt: "2026-10-19T09:00:00.000Z" });
     graph.upsertWorkItem({ id: "OPS-102", source: "extracted", currentAtcStatus: "completed", statusAt: "2026-10-19T10:00:00.000Z" });
     graph.foldIntoTrackerItem("OPS-102", "OPS-101", "hierarchy", "jira");
-    expect(graph.getWorkItemById("OPS-101")!.currentAtcStatus).toBe("in_progress");
+    expect(graph.getWorkItemById("OPS-101")).toMatchObject({ currentAtcStatus: "completed", reopenedAt: null });
+    // A quiet case with no status: a step's newer done says it's in progress
+    graph.upsertWorkItem({ id: "OPS-201", source: "jira" });
+    graph.upsertWorkItem({ id: "OPS-202", source: "extracted", currentAtcStatus: "completed", statusAt: "2026-10-19T10:00:00.000Z" });
+    graph.foldIntoTrackerItem("OPS-202", "OPS-201", "hierarchy", "jira");
+    expect(graph.getWorkItemById("OPS-201")!.currentAtcStatus).toBe("in_progress");
   });
 
   it("puts the parent's status back when the operator undoes the fold, and never carries noise", () => {
