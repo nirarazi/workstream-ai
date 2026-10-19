@@ -67,6 +67,8 @@ export function findAsks(
   messages: readonly LoadedMessage[],
   placements: ReadonlyMap<string, Placement>,
   byName: ReadonlyMap<string, string>,
+  /** Each handle's actor (load.ts, actorOfHandle): asks to either handle of one agent are asks to that agent */
+  actorOf: ReadonlyMap<string, string> = new Map(),
 ): Ask[] {
   const sorted = [...messages].sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0));
   const known = new Set(messages.map((m) => m.senderId).filter((x): x is string => Boolean(x)));
@@ -93,8 +95,13 @@ export function findAsks(
     if ((m.status === "blocked_on_human" || m.status === "needs_decision") && m.actionRequiredFrom?.length) {
       for (const id of resolveActors(m.actionRequiredFrom, byName, known)) targets.set(id, "blocks");
     }
-    targets.delete(m.senderId);
-    for (const [to, strength] of targets) {
+    const asked = new Map<string, Ask["strength"]>();
+    for (const [id, strength] of targets) {
+      const actor = actorOf.get(id) ?? id;
+      if (asked.get(actor) !== "blocks") asked.set(actor, strength);
+    }
+    asked.delete(m.senderId);
+    for (const [to, strength] of asked) {
       const ask: Ask = { strength, message: m.key, caseId: placements.get(m.key)?.cluster ?? null, from: m.senderId, to, at: m.at, answeredAt: null, answeredBy: null };
       asks.push(ask);
       open.set(`${scope}|${to}`, [...(open.get(`${scope}|${to}`) ?? []), ask]);

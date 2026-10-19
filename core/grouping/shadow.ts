@@ -11,7 +11,7 @@ import type BetterSqlite3 from "better-sqlite3";
 import { DefaultExtractor } from "../graph/extractors/default.js";
 import type { ClusterOptions } from "./cluster.js";
 import { groupMessages } from "./index.js";
-import { loadActorNames, loadGroupingMessages } from "./load.js";
+import { actorOfHandle, loadActorNames, loadGroupingMessages } from "./load.js";
 import { findAsks } from "./asks.js";
 import { casesFrom } from "./streams.js";
 
@@ -103,7 +103,7 @@ export function runShadowGrouping(db: BetterSqlite3.Database, lastVersion: strin
   const { cases, streams } = casesFrom(placements, new Map(messages.map((m) => [m.key, { at: m.at, channelId: m.channelId }])));
   const now = new Date().toISOString();
   const actors = loadActorNames(db);
-  const asks = findAsks(messages, placements, new Map([...actors].map(([id, name]) => [name.trim().toLowerCase(), id])));
+  const asks = findAsks(messages, placements, new Map([...actors].map(([id, name]) => [name.trim().toLowerCase(), id])), actorOfHandle(actors));
   const write = db.transaction(() => {
     db.exec("DELETE FROM v2_cases; DELETE FROM v2_assignments; DELETE FROM v2_claims;");
     const insertClaim = db.prepare("INSERT INTO v2_claims (message_key, claim, value, relation, computed_at) VALUES (?, ?, ?, ?, ?)");

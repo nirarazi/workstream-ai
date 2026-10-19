@@ -8,7 +8,7 @@ import type BetterSqlite3 from "better-sqlite3";
 import { DefaultExtractor } from "../graph/extractors/default.js";
 import type { Placement } from "./cluster.js";
 import { groupMessages } from "./index.js";
-import { loadActorNames, loadGroupingMessages, type LoadedMessage } from "./load.js";
+import { actorOfHandle, loadActorNames, loadGroupingMessages, type LoadedMessage } from "./load.js";
 import { findAsks, waitFor, type Ask } from "./asks.js";
 import { casesFrom, type Case, type Stream } from "./streams.js";
 
@@ -73,7 +73,7 @@ export class GroupingLab {
     const channelNames = new Map(list.filter((m) => m.channelId && m.channelName).map((m) => [m.channelId!, m.channelName]));
     const actors = loadActorNames(this.db);
     const byName = new Map([...actors].map(([id, name]) => [name.trim().toLowerCase(), id]));
-    const asks = findAsks(list, placements, byName);
+    const asks = findAsks(list, placements, byName, actorOfHandle(actors));
     this.snapshot = { version, messages, placements, cases: new Map(cases.map((c) => [c.id, c])), streams, channelNames, actors, asks };
     return this.snapshot;
   }
