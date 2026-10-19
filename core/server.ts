@@ -270,7 +270,10 @@ export function createApp(
   // The grouping lab: read-only views of the v2 grouping, only when WORKSTREAM_LAB=true (core/grouping/lab.ts)
   const lab = process.env.WORKSTREAM_LAB === "true" ? new GroupingLab(state.db.db) : null;
   if (lab) {
-    app.get("/api/lab/streams", (c) => c.json(lab.streams(c.req.query("q") ?? undefined, 200, c.req.query("waiting") === "true")));
+    app.get("/api/lab/streams", (c) => {
+      const only = c.req.query("only");
+      return c.json(lab.streams(c.req.query("q") ?? undefined, 200, only === "waiting" || only === "needsYou" ? only : "all"));
+    });
     app.get("/api/lab/stream", (c) => {
       const out = lab.stream(c.req.query("key") ?? "");
       return out ? c.json(out) : c.json({ error: "No such stream" }, 404);

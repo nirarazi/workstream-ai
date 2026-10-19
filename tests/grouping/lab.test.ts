@@ -42,12 +42,24 @@ describe("GroupingLab", () => {
   it("says which cases wait on someone, and lists only streams with one when asked", () => {
     graph.upsertThread({ id: "1700000009.000100", channelId: "C0OPS", channelName: "ops", platform: "slack", workItemId: null });
     graph.insertEvent({ threadId: "1700000009.000100", messageId: "1700000009.000100", agentId: "U0ATLAS", status: "blocked_on_human",
-      confidence: 0.9, rawText: "OPS-202: need approval to roll back", timestamp: new Date(Date.UTC(2026, 9, 19, 10, 0)).toISOString() });
+      confidence: 0.9, rawText: "OPS-202: need approval to roll back", timestamp: new Date(Date.UTC(2026, 9, 19, 10, 0)).toISOString(),
+      targetedAtOperator: false });
     const lab = new GroupingLab(db.db);
     expect(lab.streams().streams.find((s) => s.key === "project:OPS")!.waiting).toBe(1);
-    expect(lab.streams(undefined, 200, true).streams.map((s) => s.key)).toEqual(["project:OPS"]);
+    expect(lab.streams(undefined, 200, "waiting").streams.map((s) => s.key)).toEqual(["project:OPS"]);
+    // Blocked, but not put in front of the operator: waiting on someone, not on them
+    expect(lab.streams(undefined, 200, "needsYou").streams).toEqual([]);
     const statuses = lab.stream("project:OPS")!.cases.map((c) => [c.keys[0], c.status, c.waiting]).sort();
     expect(statuses).toEqual([["ticket:OPS-101", "in_progress", false], ["ticket:OPS-202", "blocked_on_human", true]]);
+  });
+
+  it("says which waiting cases are in front of the operator", () => {
+    graph.upsertThread({ id: "1700000010.000100", channelId: "C0OPS", channelName: "ops", platform: "slack", workItemId: null });
+    graph.insertEvent({ threadId: "1700000010.000100", messageId: "1700000010.000100", agentId: "U0ATLAS", status: "needs_decision",
+      confidence: 0.9, rawText: "OPS-303: Dana, which schema do we keep?", timestamp: new Date(Date.UTC(2026, 9, 19, 11, 0)).toISOString(),
+      targetedAtOperator: true });
+    const lab = new GroupingLab(db.db);
+    expect(lab.streams(undefined, 200, "needsYou").streams.map((s) => [s.key, s.needsYou])).toEqual([["project:OPS", 1]]);
   });
 });
 

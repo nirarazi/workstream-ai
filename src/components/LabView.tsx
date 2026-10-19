@@ -156,7 +156,7 @@ function Legend(): JSX.Element {
 
 export default function LabView(): JSX.Element {
   const [q, setQ] = useState("");
-  const [waitingOnly, setWaitingOnly] = useState(false);
+  const [only, setOnly] = useState<"all" | "waiting" | "needsYou">("all");
   const [streams, setStreams] = useState<LabStream[]>([]);
   const [total, setTotal] = useState(0);
   const [streamKey, setStreamKey] = useState<string | null>(null);
@@ -168,10 +168,10 @@ export default function LabView(): JSX.Element {
 
   useEffect(() => {
     const t = setTimeout(() => {
-      fetchLabStreams(q, waitingOnly).then((r) => { setStreams(r.streams); setTotal(r.total); setError(null); }).catch((e) => setError(String(e)));
+      fetchLabStreams(q, only).then((r) => { setStreams(r.streams); setTotal(r.total); setError(null); }).catch((e) => setError(String(e)));
     }, 200);
     return () => clearTimeout(t);
-  }, [q, waitingOnly]);
+  }, [q, only]);
 
   useEffect(() => {
     if (!streamKey) return;
@@ -201,10 +201,16 @@ export default function LabView(): JSX.Element {
           />
           <div className="mt-1 flex items-center justify-between text-xs text-gray-500">
             <span>{plural(total, "stream")}</span>
-            <label className="flex items-center gap-1 cursor-pointer">
-              <input type="checkbox" checked={waitingOnly} onChange={(e) => setWaitingOnly(e.target.checked)} />
-              waiting only
-            </label>
+            <select
+              value={only}
+              onChange={(e) => setOnly(e.target.value as "all" | "waiting" | "needsYou")}
+              aria-label="Which streams"
+              className="cursor-pointer rounded bg-gray-900 border border-gray-800 px-1 py-0.5 text-xs text-gray-300"
+            >
+              <option value="all">all streams</option>
+              <option value="needsYou">need you</option>
+              <option value="waiting">waiting on anyone</option>
+            </select>
           </div>
         </div>
         <ul className="overflow-y-auto flex-1">
@@ -216,7 +222,8 @@ export default function LabView(): JSX.Element {
               >
                 <div className="flex items-center gap-2">
                   <span className="truncate">{streamLabel(s.label ?? s.key)}</span>
-                  {s.waiting > 0 && <span className="shrink-0 rounded bg-red-900/60 px-1.5 text-xs text-red-200">{s.waiting} waiting</span>}
+                  {s.needsYou > 0 && <span className="shrink-0 rounded bg-red-900/60 px-1.5 text-xs text-red-200">{s.needsYou} need you</span>}
+                  {s.waiting > s.needsYou && <span className="shrink-0 rounded bg-amber-900/50 px-1.5 text-xs text-amber-200">{s.waiting - s.needsYou} waiting</span>}
                 </div>
                 <div className="text-xs text-gray-500">{plural(s.caseCount, "case")} · {plural(s.messages, "message")} · {when(s.last)}</div>
               </button>

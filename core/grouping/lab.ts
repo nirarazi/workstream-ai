@@ -83,15 +83,17 @@ export class GroupingLab {
    * A case's status: its latest message's classification; waiting when that is blocked on someone or a decision
    * (what's stuck, by stream: the lab's view of what to unblock)
    */
-  private statusOf(c: Case): { status: string | null; waiting: boolean } {
+  private statusOf(c: Case): { status: string | null; waiting: boolean; needsYou: boolean } {
     const last = this.current().messages.get(c.members[c.members.length - 1].key);
     const status = last?.status ?? null;
-    return { status, waiting: status === "blocked_on_human" || status === "needs_decision" };
+    const waiting = status === "blocked_on_human" || status === "needs_decision";
+    // Waiting, and the classifier put it in front of the operator: what Needs me holds, by case
+    return { status, waiting, needsYou: waiting && Boolean(last?.targetedAtOperator) };
   }
 
   /** Streams, most recently active first, optionally those whose key or name contains `q`, or only those waiting */
-  streams(q?: string, limit = 200, waitingOnly = false): {
-    streams: Array<Omit<Stream, "cases"> & { caseCount: number; waiting: number; label: string }>;
+  streams(q?: string, limit = 200, filter: "all" | "waiting" | "needsYou" = "all"): {
+    streams: Array<Omit<Stream, "cases"> & { caseCount: number; waiting: number; needsYou: number; label: string }>;
     total: number;
   } {
     const snap = this.current();
@@ -101,15 +103,16 @@ export class GroupingLab {
       last: s.last,
       caseCount: s.cases.length,
       waiting: s.cases.filter((id) => this.statusOf(snap.cases.get(id)!).waiting).length,
+      needsYou: s.cases.filter((id) => this.statusOf(snap.cases.get(id)!).needsYou).length,
       label: this.label(s.key),
     }));
     const needle = q?.trim().toLowerCase();
-    const matched = all.filter((s) => (!needle || s.key.toLowerCase().includes(needle) || s.label.toLowerCase().includes(needle)) && (!waitingOnly || s.waiting > 0));
+    const matched = all.filter((s) => (!needle || s.key.toLowerCase().includes(needle) || s.label.toLowerCase().includes(needle)) && (filter === "all" || (filter === "waiting" ? s.waiting > 0 : s.needsYou > 0)));
     return { streams: matched.slice(0, limit), total: matched.length };
   }
 
   /** A stream's cases, most recent first, each with the start of its first message as a title */
-  stream(key: string): { stream: Stream; cases: Array<{ id: string; keys: string[]; size: number; first: string; last: string; title: string; status: string | null; waiting: boolean }> } | null {
+  stream(key: string): { stream: Stream; cases: Array<{ id: string; keys: string[]; size: number; first: string; last: string; title: string; status: string | null; waiting: boolean; needsYou: boolean }> } | null {
     const snap = this.current();
     const stream = snap.streams.find((s) => s.key === key);
     if (!stream) return null;

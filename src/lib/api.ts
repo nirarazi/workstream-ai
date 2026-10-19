@@ -683,6 +683,8 @@ export interface LabStream {
   caseCount: number;
   /** Cases whose latest message is blocked on someone or waiting on a decision */
   waiting: number;
+  /** Of those, the ones whose latest message is in front of the operator */
+  needsYou: number;
   messages: number;
   last: string;
 }
@@ -696,6 +698,7 @@ export interface LabCaseSummary {
   title: string;
   status: string | null;
   waiting: boolean;
+  needsYou: boolean;
 }
 
 export interface LabNode {
@@ -723,10 +726,10 @@ export interface LabCase {
   edges: LabEdge[];
 }
 
-export function fetchLabStreams(q?: string, waiting = false): Promise<{ streams: LabStream[]; total: number }> {
+export function fetchLabStreams(q?: string, only: "all" | "waiting" | "needsYou" = "all"): Promise<{ streams: LabStream[]; total: number }> {
   const params = new URLSearchParams();
   if (q) params.set("q", q);
-  if (waiting) params.set("waiting", "true");
+  if (only !== "all") params.set("only", only);
   const query = params.toString();
   return apiFetch(`/api/lab/streams${query ? `?${query}` : ""}`);
 }
