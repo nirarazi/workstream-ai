@@ -10,7 +10,7 @@ import { resolve } from "node:path";
 import { openReadOnly, prepareOutDir, writePrivateFile, type ReadOnlyCopy } from "../graph/relink.js";
 import { DefaultExtractor } from "../graph/extractors/default.js";
 import { onStopSignals, parseFlags, projectRoot } from "../eval/linking-data.js";
-import { cluster } from "./cluster.js";
+import { groupMessages } from "./index.js";
 import { loadGroupingMessages } from "./load.js";
 import { casesFrom } from "./streams.js";
 
@@ -24,7 +24,7 @@ function main(): void {
     const messages = loadGroupingMessages(source.db);
     const extractor = new DefaultExtractor({ ticketPatterns: ["\\b([A-Z]{2,6}-\\d+)\\b"] });
     const started = Date.now();
-    const placements = cluster(messages, { extractTickets: (t) => extractor.extractWorkItemIds(t) });
+    const placements = groupMessages(messages, { extractTickets: (t) => extractor.extractWorkItemIds(t) });
     const info = new Map(messages.map((m) => [m.key, { at: m.at, channelId: m.channelId }]));
     const { cases, streams } = casesFrom(placements, info);
     const kinds: Record<string, number> = {};

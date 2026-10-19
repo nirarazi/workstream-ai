@@ -10,7 +10,8 @@
 
 import { resolve } from "node:path";
 import { openReadOnly, type ReadOnlyCopy } from "../graph/relink.js";
-import { cluster, DEFAULT_WEIGHTS, type Weights } from "../grouping/cluster.js";
+import { DEFAULT_WEIGHTS, type Weights } from "../grouping/cluster.js";
+import { groupMessages } from "../grouping/index.js";
 import { loadMessageIndex, onStopSignals, parseFlags, projectRoot } from "./linking-data.js";
 import { loadLabels, splitOf, type LinkingLabels } from "./linking-labels.js";
 import { scoreGrouping } from "./linking-metrics.js";
@@ -23,7 +24,7 @@ const PASSES = 2;
 const TUNED: Array<keyof Weights> = ["thread", "namedSubject", "followUp", "continuation", "exchange", "nearCopy", "join"];
 
 function f1(messages: GroupingMessage[], weights: Weights, labels: LinkingLabels, known: Set<string>): number {
-  const placed = cluster(messages, v2Options({ weights }));
+  const placed = groupMessages(messages, v2Options({ weights }));
   const grouping = new Map<string, string>();
   for (const [k, p] of placed) if (p.cluster) grouping.set(k, p.cluster);
   return scoreGrouping(labels, grouping, known).pairwise.f1 ?? 0;

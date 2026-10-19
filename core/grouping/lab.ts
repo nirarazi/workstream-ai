@@ -6,7 +6,8 @@
 
 import type BetterSqlite3 from "better-sqlite3";
 import { DefaultExtractor } from "../graph/extractors/default.js";
-import { cluster, type Placement } from "./cluster.js";
+import type { Placement } from "./cluster.js";
+import { groupMessages } from "./index.js";
 import { loadGroupingMessages, type LoadedMessage } from "./load.js";
 import { casesFrom, type Case, type Stream } from "./streams.js";
 
@@ -63,7 +64,7 @@ export class GroupingLab {
     if (this.snapshot?.version === version) return this.snapshot;
     const list = loadGroupingMessages(this.db);
     const extractor = new DefaultExtractor({ ticketPatterns: ["\\b([A-Z]{2,6}-\\d+)\\b"] });
-    const placements = cluster(list, { extractTickets: (t) => extractor.extractWorkItemIds(t) });
+    const placements = groupMessages(list, { extractTickets: (t) => extractor.extractWorkItemIds(t) });
     const messages = new Map(list.map((m) => [m.key, m]));
     const { cases, streams } = casesFrom(placements, new Map(list.map((m) => [m.key, { at: m.at, channelId: m.channelId }])));
     const channelNames = new Map(list.filter((m) => m.channelId && m.channelName).map((m) => [m.channelId!, m.channelName]));

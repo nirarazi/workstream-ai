@@ -8,8 +8,8 @@ import type BetterSqlite3 from "better-sqlite3";
 import { DefaultExtractor } from "../graph/extractors/default.js";
 import { hasColumn } from "../graph/relink.js";
 import type { SenderKind } from "../graph/resolver.js";
-import { cluster, type ClusterOptions, type Placement } from "../grouping/cluster.js";
-import { applySplits, proposeSplits } from "../grouping/split.js";
+import type { ClusterOptions, Placement } from "../grouping/cluster.js";
+import { groupMessages } from "../grouping/index.js";
 import type { GroupingMessage } from "../grouping/recognize.js";
 import type { StatusCategory } from "../types.js";
 import type { MessageIndex } from "./linking-data.js";
@@ -60,9 +60,8 @@ export function v2Grouping(db: BetterSqlite3.Database, index: Pick<MessageIndex,
   grouping: Grouping;
   placements: Map<string, Placement>;
 } {
-  const clustered = cluster(groupingMessages(db, index), v2Options(overrides));
-  // WORKSTREAM_V2_SPLIT=true applies the over-merge detector's splits (core/grouping/split.ts), to score it
-  const placements = process.env.WORKSTREAM_V2_SPLIT === "true" ? applySplits(clustered, proposeSplits(clustered)) : clustered;
+  // WORKSTREAM_V2_SPLIT=false leaves out the over-merge detector's splits, to score without them
+  const placements = groupMessages(groupingMessages(db, index), { ...v2Options(overrides), split: process.env.WORKSTREAM_V2_SPLIT !== "false" });
   const grouping = new Map<string, string>();
   for (const [key, p] of placements) if (p.cluster) grouping.set(key, p.cluster);
   return { grouping, placements };
