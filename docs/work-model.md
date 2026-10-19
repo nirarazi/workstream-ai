@@ -187,12 +187,13 @@ a report not work as a unit. A notification is a sender kind, not an act.
 telemetry and report formats, default-pack recognizers for ask moves and short acknowledgements, then the
 classification call, which already runs on every message and adds act tags to its output. Acts from the model are soft
 evidence: a model ask claim can surface an ask, and closes one only as section 7 allows (the operator's own answer),
-and on their own, model acts can't make an observation not work, start a case, close an ask, or keep a part from
-surfacing (section 7). The model returns the text it tags (each part's opening words), and the engine maps it to spans
-by exact match within `parts.own`, in order, left to right (the first unused occurrence wins); a tag it can't place is
-dropped, never guessed, and the model's returned text is never stored or shown, only the span. With no act claims at
-all, a part is treated as assertive: activity, never not work and never an ask. Where claims overlap, a part with any
-directive, commissive or declarative claim is never not work, whatever telemetry or expressive claims also cover it.
+and on their own, model acts can't make an observation not work, start a case, close an ask outside that case, or keep
+a part from surfacing (section 7). The model returns the text it tags (each part's opening words), and the engine maps
+it to spans by exact match within `parts.own`, in order, left to right (the first unused occurrence wins); a tag it
+can't place is dropped, never guessed, and the model's returned text is never stored or shown, only the span. With no
+act claims at all, a part is treated as assertive: activity, never not work and never an ask. Where claims overlap, a
+part with any directive, commissive or declarative claim is never not work, whatever telemetry or expressive claims
+also cover it.
 
 ### Routines, runs and origin
 
@@ -544,9 +545,13 @@ operator and where their replies go, so they get the same care as the action end
   never comes from quoted or forwarded text or an MCP report. A model ask claim alone closes it only when the message
   is by that performer's verified handle, in the ask's own conversation, after the request, while it's their turn: the
   trust is the verified author, and the model only labels the move. The operator answering an agent in free text ("go
-  with B") is the common case. A later request or `reject` from the agent reopens the ask. `dedupeKey` comes only from
-  the platform's own id, namespaced by platform and workspace (MCP reports use their own `mcp-report:` namespace,
-  distinct from the `mcp:` item key kind); a quote or forward never replaces or dedupes the original.
+  with B") is the common case. A follow-up request on the same ask (same `askRef`) or a `reject` from the agent
+  reopens it. The model tags such a closing move only on a span of the performer's own `parts.own` (thread context can
+  inform the tag, never be the span). The UI says when an ask was closed this way ("closed by your reply") and lets
+  the operator undo it. An ask closed by a model-labelled move is never reported as approved to an agent, an MCP tool
+  or a task adapter, and never triggers an action. `dedupeKey` comes only from the platform's own id, namespaced by
+  platform and workspace (MCP reports use their own `mcp-report:` namespace, distinct from the `mcp:` item key kind);
+  a quote or forward never replaces or dedupes the original.
 - **Packs are local code.** They run in-process with the same trust as adapters; this is not a sandbox. They are
   explicitly installed, never fetched automatically. A fleet pack reads only config paths the operator chose,
   read-only, takes only cadence, sweep and owner fields, and drops everything else without logging, storing,
