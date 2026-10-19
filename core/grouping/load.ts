@@ -17,6 +17,23 @@ export interface LoadedMessage extends GroupingMessage {
   eventId: string;
   /** The classifier put it in front of the operator (events.targeted_at_operator) */
   targetedAtOperator: boolean;
+  /** Who the classifier says must act (events.action_required_from): actor ids or names */
+  actionRequiredFrom: string[] | null;
+}
+
+/** Actors by id, with their display names (the agents table: people and agents alike) */
+export function loadActorNames(db: BetterSqlite3.Database): Map<string, string> {
+  return new Map((db.prepare("SELECT id, name FROM agents").all() as Array<{ id: string; name: string }>).map((r) => [r.id, r.name]));
+}
+
+function parseNames(json: string | null): string[] | null {
+  if (!json) return null;
+  try {
+    const v = JSON.parse(json) as unknown;
+    return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : null;
+  } catch {
+    return null;
+  }
 }
 
 function hasColumn(db: BetterSqlite3.Database, table: string, column: string): boolean {
@@ -34,15 +51,16 @@ export function loadGroupingMessages(db: BetterSqlite3.Database): LoadedMessage[
   const digest = hasColumn(db, "events", "digest") ? "e.digest" : "0";
   const bot = hasColumn(db, "agents", "bot_type") ? "a.is_bot, a.bot_type" : "NULL AS is_bot, NULL AS bot_type";
   const targeted = hasColumn(db, "events", "targeted_at_operator") ? "e.targeted_at_operator" : "0";
+  const required = hasColumn(db, "events", "action_required_from") ? "e.action_required_from" : "NULL";
   const rows = db.prepare(`
-    SELECT e.id, e.thread_id, e.message_id, e.agent_id, e.status, e.raw_text, e.timestamp, ${digest} AS digest, ${targeted} AS targeted,
+    SELECT e.id, e.thread_id, e.message_id, e.agent_id, e.status, e.raw_text, e.timestamp, ${digest} AS digest, ${targeted} AS targeted, ${required} AS required,
            t.platform, t.channel_id, COALESCE(t.channel_name, '') AS channel_name, COALESCE(a.name, 'unknown') AS sender_name, ${bot}
     FROM events e LEFT JOIN threads t ON t.id = e.thread_id LEFT JOIN agents a ON a.id = e.agent_id
     WHERE e.message_id NOT LIKE 'operator-%'
     ORDER BY e.rowid
   `).all() as Array<{
     id: string; thread_id: string; message_id: string; agent_id: string | null; status: StatusCategory; raw_text: string | null;
-    timestamp: string; digest: number; targeted: number; platform: string | null; channel_id: string | null; channel_name: string; sender_name: string;
+    timestamp: string; digest: number; targeted: number; required: string | null; platform: string | null; channel_id: string | null; channel_name: string; sender_name: string;
     is_bot: number | null; bot_type: string | null;
   }>;
   const chosen = new Map<string, (typeof rows)[number]>();
@@ -71,6 +89,7 @@ export function loadGroupingMessages(db: BetterSqlite3.Database): LoadedMessage[
       digest: r.digest === 1,
       topLevel: r.thread_id === r.message_id,
       targetedAtOperator: r.targeted === 1,
+      actionRequiredFrom: parseNames(r.required),
     });
   }
   return out;

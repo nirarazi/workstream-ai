@@ -190,8 +190,16 @@ function namedSubject(text: string, subjects: SubjectLexicon): string | null {
 /** A sign-off a tool adds ("*Sent using* @Composer"): never stored or read as content (docs/work-model.md §4) */
 const SIGNATURE = /^\s*[*_]*sent (?:using|from|with)[*_]*\s+(?:<@[^<>\s]+>|\S+)\s*$/gim;
 
+/** The same sign-off at the end of a line of text, naming a tool by mention ("… done. *Sent using* @Composer") */
+const INLINE_SIGNATURE = /[*_]*sent (?:using|from|with)[*_]*\s+<@[^<>\s]+>[*_]*\s*$/gim;
+
+/** A message's text without the sign-offs tools add */
+export function stripSignature(text: string): string {
+  return text.replace(SIGNATURE, "").replace(INLINE_SIGNATURE, "").trim();
+}
+
 export function recognize(message: GroupingMessage, options: ResolverOptions & { subjects?: SubjectLexicon }): Recognized {
-  const own = message.text.replace(SIGNATURE, "").trim();
+  const own = stripSignature(message.text);
   if (!own) return { kind: "chatter", about: null, aboutBy: null, mentions: [], lane: null, asks: false };
   const lines = refsByLine(stripEmphasis(own), options);
   const about = aboutRef(lines);

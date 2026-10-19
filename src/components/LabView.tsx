@@ -5,7 +5,7 @@
 // message whose evidence drew it in, coloured by that evidence. Clicking a node shows the message and why it joined.
 
 import { useEffect, useMemo, useState, type JSX } from "react";
-import { fetchLabCase, fetchLabStream, fetchLabStreams, type LabCase, type LabCaseSummary, type LabNode, type LabStream } from "../lib/api";
+import { fetchLabCase, fetchLabStream, fetchLabStreams, fetchLabWaiting, type LabCase, type LabCaseSummary, type LabNode, type LabStream, type LabWaiting } from "../lib/api";
 
 const EDGE_CLASSES: Record<string, string> = {
   thread: "stroke-gray-500",
@@ -49,6 +49,11 @@ const PAD = 28;
 function when(iso: string): string {
   const d = new Date(iso);
   return Number.isNaN(d.getTime()) ? iso : d.toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
+/** Slack's escapes, shown as the characters they stand for */
+function unescape(text: string): string {
+  return text.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
 }
 
 function plural(n: number, word: string): string {
@@ -130,7 +135,7 @@ function NodeDetail({ node }: { node: LabNode }): JSX.Element {
         {node.about && <span className="text-cyan-400">about {node.about}</span>}
       </div>
       <div className="mt-2 text-xs text-gray-400">Joined by: {node.reasons.join(" · ")}</div>
-      <p className="mt-2 whitespace-pre-wrap text-gray-300">{node.text}</p>
+      <p className="mt-2 whitespace-pre-wrap text-gray-300">{unescape(node.text)}</p>
     </div>
   );
 }
@@ -154,7 +159,111 @@ function Legend(): JSX.Element {
   );
 }
 
+/** The wait-for graph: actors on a circle, an arrow from each one waiting to the one they wait on */
+function WaitGraph({ data, selected, onSelect }: { data: LabWaiting; selected: string | null; onSelect: (name: string) => void }): JSX.Element {
+  const names = [...new Set(data.edges.flatMap((e) => [e.from, e.to]))];
+  const size = 360;
+  const r = size / 2 - 50;
+  const at = new Map(names.map((n, i) => {
+    const angle = (2 * Math.PI * i) / Math.max(1, names.length) - Math.PI / 2;
+    return [n, { x: size / 2 + r * Math.cos(angle), y: size / 2 + r * Math.sin(angle) }];
+  }));
+  return (
+    <svg width={size} height={size} role="img" aria-label="Who is waiting on whom" className="shrink-0">
+      <defs>
+        <marker id="lab-arrow" viewBox="0 0 10 10" refX="22" refY="5" markerWidth="8" markerHeight="8" markerUnits="userSpaceOnUse" orient="auto-start-reverse">
+          <path d="M 0 0 L 10 5 L 0 10 z" className="fill-gray-500" />
+        </marker>
+      </defs>
+      {data.edges.map((e) => {
+        const a = at.get(e.from)!;
+        const b = at.get(e.to)!;
+        return (
+          <line key={`${e.from}>${e.to}`} x1={a.x} y1={a.y} x2={b.x} y2={b.y} markerEnd="url(#lab-arrow)"
+            className={e.blocking > 0 ? "stroke-red-500" : "stroke-gray-600"} strokeWidth={e.blocking > 0 ? 1 + Math.min(4, e.blocking / 10) : 1} opacity={0.8}>
+            <title>{`${e.from} → ${e.to}: ${e.blocking} blocking, ${e.open} open`}</title>
+          </line>
+        );
+      })}
+      {names.map((n) => {
+        const p = at.get(n)!;
+        return (
+          <g key={n} onClick={() => onSelect(n)} className="cursor-pointer">
+            <circle cx={p.x} cy={p.y} r={selected === n ? 9 : 7} className={selected === n ? "fill-cyan-500" : "fill-gray-400"} />
+            <text x={p.x} y={p.y - 12} textAnchor="middle" className="fill-gray-300 text-xs">{n}</text>
+          </g>
+        );
+      })}
+    </svg>
+  );
+}
+
+function WaitingPanel({ onOpenCase }: { onOpenCase: (id: string) => void }): JSX.Element {
+  const [days, setDays] = useState(14);
+  const [data, setData] = useState<LabWaiting | null>(null);
+  const [selected, setSelected] = useState<string | null>(null);
+  useEffect(() => {
+    fetchLabWaiting(days).then((d) => { setData(d); setSelected(d.waitedOn[0]?.name ?? null); }).catch(() => setData(null));
+  }, [days]);
+  if (!data) return <p className="p-4 text-sm text-gray-500">Loading…</p>;
+  const actor = data.waitedOn.find((w) => w.name === selected) ?? null;
+  return (
+    <div className="flex h-full min-h-0">
+      <aside className="w-72 shrink-0 border-r border-gray-800 overflow-y-auto">
+        <div className="p-3 border-b border-gray-800 flex items-center justify-between text-xs text-gray-500">
+          <span>Waited on, open asks from the last</span>
+          <select value={days} onChange={(e) => setDays(Number(e.target.value))} aria-label="Days" className="rounded bg-gray-900 border border-gray-800 px-1 text-gray-300">
+            {[3, 7, 14, 30].map((d) => <option key={d} value={d}>{d} days</option>)}
+          </select>
+        </div>
+        {data.waitedOn.map((w) => (
+          <button key={w.actor} onClick={() => setSelected(w.name)}
+            className={`cursor-pointer w-full text-left px-3 py-2 text-sm border-b border-gray-900 ${selected === w.name ? "bg-gray-800 text-gray-100" : "text-gray-300 hover:bg-gray-900"}`}>
+            <div className="flex items-center gap-2">
+              <span className="truncate">{w.name}</span>
+              {w.blocking > 0 && <span className="shrink-0 rounded bg-red-900/60 px-1.5 text-xs text-red-200">{w.blocking} blocking</span>}
+              {w.open > w.blocking && <span className="shrink-0 rounded bg-gray-800 px-1.5 text-xs text-gray-400">{w.open - w.blocking} asks</span>}
+            </div>
+            <div className="text-xs text-gray-500 truncate">by {w.by.join(", ")} · since {when(w.oldest)}</div>
+          </button>
+        ))}
+      </aside>
+      <section className="flex-1 min-w-0 overflow-y-auto p-4">
+        <div className="flex flex-wrap gap-6">
+          <WaitGraph data={data} selected={selected} onSelect={setSelected} />
+          <div className="min-w-64 flex-1 text-sm">
+            {data.cycles.length > 0 && (
+              <div className="mb-3 rounded border border-red-900/60 bg-red-900/20 p-2 text-red-200">
+                Deadlock: {data.cycles.map((c) => c.join(" → ")).join("; ")} each blocked on the next.
+              </div>
+            )}
+            {actor && (
+              <>
+                <h2 className="text-sm font-medium text-gray-200">Waiting on {actor.name}</h2>
+                <ul className="mt-2 space-y-2">
+                  {actor.asks.map((a, i) => (
+                    <li key={i} className="text-gray-300">
+                      <span className={`mr-2 rounded px-1.5 text-xs ${a.strength === "blocks" ? "bg-red-900/60 text-red-200" : "bg-gray-800 text-gray-400"}`}>{a.strength === "blocks" ? "blocks" : "asks"}</span>
+                      <span className="text-xs text-gray-500">{a.from} · {when(a.at)}</span>
+                      {a.caseId ? (
+                        <button onClick={() => onOpenCase(a.caseId!)} className="cursor-pointer block text-left hover:text-gray-100">{unescape(a.text)}</button>
+                      ) : (
+                        <p>{unescape(a.text)}</p>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              </>
+            )}
+          </div>
+        </div>
+      </section>
+    </div>
+  );
+}
+
 export default function LabView(): JSX.Element {
+  const [mode, setMode] = useState<"streams" | "waiting">("streams");
   const [q, setQ] = useState("");
   const [only, setOnly] = useState<"all" | "waiting" | "needsYou">("all");
   const [streams, setStreams] = useState<LabStream[]>([]);
@@ -188,8 +297,32 @@ export default function LabView(): JSX.Element {
 
   const node = graph?.nodes.find((n) => n.key === selected) ?? null;
 
+  const modes = (
+    <div className="flex gap-1 border-b border-gray-800 px-3 py-2 text-xs">
+      {(["streams", "waiting"] as const).map((m) => (
+        <button key={m} onClick={() => setMode(m)}
+          className={`cursor-pointer rounded px-2 py-1 ${mode === m ? "bg-gray-800 text-gray-100" : "text-gray-500 hover:text-gray-300"}`}>
+          {m === "streams" ? "Streams and cases" : "Who's waiting on whom"}
+        </button>
+      ))}
+    </div>
+  );
+
+  if (mode === "waiting") {
+    return (
+      <div className="flex h-full min-h-0 flex-col">
+        {modes}
+        <div className="flex-1 min-h-0">
+          <WaitingPanel onOpenCase={(id) => { setMode("streams"); setCaseId(id); }} />
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="flex h-full min-h-0">
+    <div className="flex h-full min-h-0 flex-col">
+    {modes}
+    <div className="flex flex-1 min-h-0">
       <aside className="w-64 shrink-0 border-r border-gray-800 flex flex-col min-h-0">
         <div className="p-3 border-b border-gray-800">
           <input
@@ -290,6 +423,7 @@ export default function LabView(): JSX.Element {
           </>
         )}
       </section>
+    </div>
     </div>
   );
 }

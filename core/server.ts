@@ -278,6 +278,10 @@ export function createApp(
       const out = lab.stream(c.req.query("key") ?? "");
       return out ? c.json(out) : c.json({ error: "No such stream" }, 404);
     });
+    app.get("/api/lab/waiting", (c) => {
+      const days = Number(c.req.query("days") ?? "14");
+      return c.json(lab.waiting(Number.isFinite(days) && days > 0 && days <= 365 ? days : 14));
+    });
     app.get("/api/lab/case/:id", (c) => {
       const out = lab.case(c.req.param("id"));
       return out ? c.json(out) : c.json({ error: "No such case" }, 404);

@@ -8,7 +8,8 @@ import type BetterSqlite3 from "better-sqlite3";
 import { DefaultExtractor } from "../graph/extractors/default.js";
 import type { Placement } from "./cluster.js";
 import { groupMessages } from "./index.js";
-import { loadGroupingMessages, type LoadedMessage } from "./load.js";
+import { loadActorNames, loadGroupingMessages, type LoadedMessage } from "./load.js";
+import { findAsks, waitFor, type Ask } from "./asks.js";
 import { casesFrom, type Case, type Stream } from "./streams.js";
 
 const RECHECK_MS = 30_000;
@@ -41,6 +42,8 @@ interface Snapshot {
   cases: Map<string, Case>;
   streams: Stream[];
   channelNames: Map<string, string>;
+  actors: Map<string, string>;
+  asks: Ask[];
 }
 
 /** The evidence a reason names, without its points: "sameKey ticket:OPS-1 +10" → "sameKey" */
@@ -68,7 +71,10 @@ export class GroupingLab {
     const messages = new Map(list.map((m) => [m.key, m]));
     const { cases, streams } = casesFrom(placements, new Map(list.map((m) => [m.key, { at: m.at, channelId: m.channelId }])));
     const channelNames = new Map(list.filter((m) => m.channelId && m.channelName).map((m) => [m.channelId!, m.channelName]));
-    this.snapshot = { version, messages, placements, cases: new Map(cases.map((c) => [c.id, c])), streams, channelNames };
+    const actors = loadActorNames(this.db);
+    const byName = new Map([...actors].map(([id, name]) => [name.trim().toLowerCase(), id]));
+    const asks = findAsks(list, placements, byName);
+    this.snapshot = { version, messages, placements, cases: new Map(cases.map((c) => [c.id, c])), streams, channelNames, actors, asks };
     return this.snapshot;
   }
 
@@ -151,6 +157,51 @@ export class GroupingLab {
       });
     }
     return out.sort((a, b) => b.cases.length - a.cases.length || (a.key < b.key ? -1 : 1)).slice(0, 20);
+  }
+
+  /**
+   * Who is waiting on whom: the wait-for graph of asks still open from the last `days` days, with actors' names, the
+   * open asks on each (newest first, with their case), cycles and root blockers
+   */
+  waiting(days = 14): {
+    waitedOn: Array<{ actor: string; name: string; open: number; blocking: number; by: string[]; oldest: string; asks: Array<{ from: string; at: string; caseId: string | null; text: string; strength: string }> }>;
+    edges: Array<{ from: string; to: string; open: number; blocking: number }>;
+    cycles: string[][];
+    rootBlockers: Array<{ actor: string; root: string; path: string[] }>;
+  } {
+    const snap = this.current();
+    const latest = [...snap.messages.values()].reduce((max, m) => (m.at > max ? m.at : max), "");
+    const since = new Date(Date.parse(latest || new Date().toISOString()) - days * 86_400_000).toISOString();
+    const graph = waitFor(snap.asks, since);
+    const name = (id: string) => snap.actors.get(id) ?? id;
+    const live = snap.asks.filter((a) => !a.answeredAt && a.at >= since);
+    const edgeCount = new Map<string, { open: number; blocking: number }>();
+    for (const a of live) {
+      const e = edgeCount.get(`${a.from}>${a.to}`) ?? { open: 0, blocking: 0 };
+      e.open++;
+      if (a.strength === "blocks") e.blocking++;
+      edgeCount.set(`${a.from}>${a.to}`, e);
+    }
+    return {
+      waitedOn: graph.waitedOn.map((w) => ({
+        ...w,
+        name: name(w.actor),
+        by: w.by.map(name),
+        asks: live.filter((a) => a.to === w.actor).sort((x, y) => (x.at < y.at ? 1 : -1)).slice(0, 10).map((a) => ({
+          from: name(a.from),
+          at: a.at,
+          caseId: a.caseId,
+          text: (snap.messages.get(a.message)?.text ?? "").replace(/\s+/g, " ").slice(0, 160),
+          strength: a.strength,
+        })),
+      })),
+      edges: [...edgeCount].map(([k, e]) => {
+        const [from, to] = k.split(">");
+        return { from: name(from), to: name(to), ...e };
+      }),
+      cycles: graph.cycles.map((c) => c.map(name)),
+      rootBlockers: graph.rootBlockers.map((r) => ({ actor: name(r.actor), root: name(r.root), path: r.path.map(name) })),
+    };
   }
 
   /** One case as a graph: its messages, the edges that drew them in, and the cases it touches */

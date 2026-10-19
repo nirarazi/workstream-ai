@@ -740,6 +740,25 @@ export function fetchLabStream(key: string): Promise<{ stream: LabStream; cases:
   return apiFetch(`/api/lab/stream?key=${encodeURIComponent(key)}`);
 }
 
+export interface LabWaiting {
+  waitedOn: Array<{
+    actor: string;
+    name: string;
+    open: number;
+    blocking: number;
+    by: string[];
+    oldest: string;
+    asks: Array<{ from: string; at: string; caseId: string | null; text: string; strength: string }>;
+  }>;
+  edges: Array<{ from: string; to: string; open: number; blocking: number }>;
+  cycles: string[][];
+  rootBlockers: Array<{ actor: string; root: string; path: string[] }>;
+}
+
+export function fetchLabWaiting(days = 14): Promise<LabWaiting> {
+  return apiFetch(`/api/lab/waiting?days=${days}`);
+}
+
 export function fetchLabCase(id: string): Promise<LabCase> {
   return apiFetch(`/api/lab/case/${encodeURIComponent(id)}`);
 }
