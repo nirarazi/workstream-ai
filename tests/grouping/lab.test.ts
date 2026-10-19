@@ -62,6 +62,16 @@ describe("GroupingLab", () => {
     expect(lab.streams(undefined, 200, "needsYou").streams.map((s) => [s.key, s.needsYou])).toEqual([["project:OPS", 1]]);
   });
 
+  it("says who is waiting on whom, by name, with each handle of an agent as one actor", () => {
+    graph.upsertAgent({ id: "U0ATLAS2", name: "Atlas - Release Agent", platform: "slack", platformUserId: "U0ATLAS2", isBot: true });
+    graph.upsertThread({ id: "1700000012.000100", channelId: "C0OPS", channelName: "ops", platform: "slack", workItemId: null });
+    graph.insertEvent({ threadId: "1700000012.000100", messageId: "1700000012.000100", agentId: "U0ATLAS2", status: "needs_decision",
+      confidence: 0.9, rawText: "OPS-505: which schema do we keep?", timestamp: new Date(Date.UTC(2026, 9, 19, 12, 0)).toISOString(),
+      actionRequiredFrom: ["Dana"] });
+    const waiting = new GroupingLab(db.db).waiting(30);
+    expect(waiting.waitedOn.map((w) => [w.name, w.blocking, w.by])).toEqual([["Dana", 1, ["Atlas"]]]);
+  });
+
   it("connects a case to the cases about the keys its messages mention", () => {
     graph.upsertThread({ id: "1700000011.000100", channelId: "C0OPS", channelName: "ops", platform: "slack", workItemId: null });
     graph.insertEvent({ threadId: "1700000011.000100", messageId: "1700000011.000100", agentId: "U0ATLAS", status: "blocked_on_human",
