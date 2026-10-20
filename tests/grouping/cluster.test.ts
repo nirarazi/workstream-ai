@@ -76,6 +76,8 @@ describe("recognizers", () => {
     expect(recognize(msg("All green ✓ • Gateway: running"), options).kind).toBe("telemetry");
     expect(recognize(msg("OK are we still alive?", { senderKind: "human" }), options).kind).toBe("chatter");
     expect(recognize(msg("Fixed. Root cause: the stale note.\nIt now replies HEARTBEAT_OK only on ticks."), options).kind).toBe("work");
+    expect(recognize(msg("Fixed. Root cause: the note said to output HEARTBEAT_OK as raw text, so it leaked."), options).kind).toBe("work");
+    expect(recognize(msg("HEARTBEAT_OK — nothing new"), options).kind).toBe("telemetry");
     expect(taggedSubject("[drain] Five items: • Northwind …")).toBeNull();
   });
 

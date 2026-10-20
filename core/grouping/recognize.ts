@@ -140,8 +140,11 @@ const BRIEFING = new RegExp(
 const PRIORITY_LIST = /\b(?:in priority order|most urgent first|top \d+ things)\b/i;
 /** A tagged line whose subject is a count of things ("Five items", "Three follow-ups checked"): many subjects, not one */
 const COUNTED = /^(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten|several|all)\s+\S+/i;
-/** Health and liveness: "All green ✓ Gateway: running …", "HEARTBEAT_OK", "nothing needs a Slack post" */
-const HEALTH = /^[\W_]*all green\b|\bHEARTBEAT_OK\b|\bnothing needs a slack post\b/i;
+/**
+ * Health and liveness: "All green ✓ Gateway: running …", "HEARTBEAT_OK …", "nothing needs a Slack post". The token
+ * only at the start: a message explaining a heartbeat fix names it in passing (a post ending on it is IDLE_TOKEN)
+ */
+const HEALTH = /^[\W_]*(?:all green|HEARTBEAT_OK)\b|\bnothing needs a slack post\b/i;
 /** A person checking on the fleet or greeting it, in a few words: "OK are we still alive?", "How are you", "Are you down?" */
 const CHATTER = /^[\W_]*(?:(?:ok|so|hey|hi)[,!]?\s+)?(?:are (?:we|you|they)(?: all)? (?:still )?(?:alive|up|down|there|ok|running|healthy)|how are you|good (?:morning|night)|thanks?(?: you)?|thx)\b[^\n]{0,40}$/i;
 /** A liveness check addressed to someone, and nothing else: "Atlas are you alive?", "@Relay are you there?" */
