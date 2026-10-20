@@ -160,13 +160,15 @@ function Legend(): JSX.Element {
 }
 
 /** The wait-for graph: actors on a circle, an arrow from each one waiting to the one they wait on */
-function WaitGraph({ data, selected, onSelect }: { data: LabWaiting; selected: string | null; onSelect: (name: string) => void }): JSX.Element {
+function WaitGraph({ data, selected, onSelect }: { data: LabWaiting; selected: string | null; onSelect: (actor: string) => void }): JSX.Element {
   // Only what the classifier reads as waiting on someone: mentions with a question are too often not asks to draw
-  const names = [...new Set(data.edges.filter((e) => e.blocking > 0).flatMap((e) => [e.from, e.to]))];
+  const drawn = data.edges.filter((e) => e.blocking > 0);
+  const names = new Map(drawn.flatMap((e) => [[e.from, e.fromName], [e.to, e.toName]] as Array<[string, string]>));
+  const actors = [...names.keys()];
   const size = 360;
   const r = size / 2 - 50;
-  const at = new Map(names.map((n, i) => {
-    const angle = (2 * Math.PI * i) / Math.max(1, names.length) - Math.PI / 2;
+  const at = new Map(actors.map((n, i) => {
+    const angle = (2 * Math.PI * i) / Math.max(1, actors.length) - Math.PI / 2;
     return [n, { x: size / 2 + r * Math.cos(angle), y: size / 2 + r * Math.sin(angle) }];
   }));
   return (
@@ -176,22 +178,22 @@ function WaitGraph({ data, selected, onSelect }: { data: LabWaiting; selected: s
           <path d="M 0 0 L 10 5 L 0 10 z" className="fill-gray-500" />
         </marker>
       </defs>
-      {data.edges.filter((e) => e.blocking > 0).map((e) => {
+      {drawn.map((e) => {
         const a = at.get(e.from)!;
         const b = at.get(e.to)!;
         return (
           <line key={`${e.from}>${e.to}`} x1={a.x} y1={a.y} x2={b.x} y2={b.y} markerEnd="url(#lab-arrow)"
             className={e.blocking > 0 ? "stroke-red-500" : "stroke-gray-600"} strokeWidth={e.blocking > 0 ? 1 + Math.min(4, e.blocking / 10) : 1} opacity={0.8}>
-            <title>{`${e.from} waits on ${e.to}: ${e.blocking} open`}</title>
+            <title>{`${e.fromName} waits on ${e.toName}: ${e.blocking} open`}</title>
           </line>
         );
       })}
-      {names.map((n) => {
+      {actors.map((n) => {
         const p = at.get(n)!;
         return (
           <g key={n} onClick={() => onSelect(n)} className="cursor-pointer">
             <circle cx={p.x} cy={p.y} r={selected === n ? 9 : 7} className={selected === n ? "fill-cyan-500" : "fill-gray-400"} />
-            <text x={p.x} y={p.y - 12} textAnchor="middle" className="fill-gray-300 text-xs">{n}</text>
+            <text x={p.x} y={p.y - 12} textAnchor="middle" className="fill-gray-300 text-xs">{names.get(n)}</text>
           </g>
         );
       })}
@@ -204,10 +206,12 @@ function WaitingPanel({ onOpenCase }: { onOpenCase: (id: string) => void }): JSX
   const [data, setData] = useState<LabWaiting | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   useEffect(() => {
-    fetchLabWaiting(days).then((d) => { setData(d); setSelected(d.waitedOn[0]?.name ?? null); }).catch(() => setData(null));
+    let live = true;
+    fetchLabWaiting(days).then((d) => { if (live) { setData(d); setSelected(d.waitedOn[0]?.actor ?? null); } }).catch(() => { if (live) setData(null); });
+    return () => { live = false; };
   }, [days]);
   if (!data) return <p className="p-4 text-sm text-gray-500">Loading…</p>;
-  const actor = data.waitedOn.find((w) => w.name === selected) ?? null;
+  const actor = data.waitedOn.find((w) => w.actor === selected) ?? null;
   return (
     <div className="flex h-full min-h-0">
       <aside className="w-72 shrink-0 border-r border-gray-800 overflow-y-auto">
@@ -218,8 +222,8 @@ function WaitingPanel({ onOpenCase }: { onOpenCase: (id: string) => void }): JSX
           </select>
         </div>
         {data.waitedOn.map((w) => (
-          <button key={w.actor} onClick={() => setSelected(w.name)}
-            className={`cursor-pointer w-full text-left px-3 py-2 text-sm border-b border-gray-900 ${selected === w.name ? "bg-gray-800 text-gray-100" : "text-gray-300 hover:bg-gray-900"}`}>
+          <button key={w.actor} onClick={() => setSelected(w.actor)}
+            className={`cursor-pointer w-full text-left px-3 py-2 text-sm border-b border-gray-900 ${selected === w.actor ? "bg-gray-800 text-gray-100" : "text-gray-300 hover:bg-gray-900"}`}>
             <div className="flex items-center gap-2">
               <span className="truncate">{w.name}</span>
               {w.blocking > 0 && <span className="shrink-0 rounded bg-red-900/60 px-1.5 text-xs text-red-200">{w.blocking} waiting</span>}
@@ -277,23 +281,29 @@ export default function LabView(): JSX.Element {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    let live = true;
     const t = setTimeout(() => {
-      fetchLabStreams(q, only).then((r) => { setStreams(r.streams); setTotal(r.total); setError(null); }).catch((e) => setError(String(e)));
+      fetchLabStreams(q, only).then((r) => { if (live) { setStreams(r.streams); setTotal(r.total); setError(null); } }).catch((e) => { if (live) setError(String(e)); });
     }, 200);
-    return () => clearTimeout(t);
+    return () => { live = false; clearTimeout(t); };
   }, [q, only]);
 
   useEffect(() => {
     if (!streamKey) return;
     setCases([]);
     setCaseId(null);
-    fetchLabStream(streamKey).then((r) => setCases(r.cases)).catch((e) => setError(String(e)));
+    // A response for a stream no longer selected is dropped
+    let live = true;
+    fetchLabStream(streamKey).then((r) => { if (live) setCases(r.cases); }).catch((e) => { if (live) setError(String(e)); });
+    return () => { live = false; };
   }, [streamKey]);
 
   useEffect(() => {
     if (!caseId) { setGraph(null); return; }
     setSelected(null);
-    fetchLabCase(caseId).then(setGraph).catch((e) => setError(String(e)));
+    let live = true;
+    fetchLabCase(caseId).then((g) => { if (live) setGraph(g); }).catch((e) => { if (live) setError(String(e)); });
+    return () => { live = false; };
   }, [caseId]);
 
   const node = graph?.nodes.find((n) => n.key === selected) ?? null;
@@ -390,6 +400,7 @@ export default function LabView(): JSX.Element {
           <>
             <div className="mb-2 flex flex-wrap items-baseline gap-x-3">
               <h2 className="text-sm font-medium text-gray-200">{plural(graph.nodes.length, "message")}</h2>
+              {graph.case.omitted > 0 && <span className="text-xs text-gray-500">latest only, {graph.case.omitted} earlier not shown</span>}
               <span className="text-xs text-gray-500">{streamLabel(graph.case.streamLabel ?? graph.case.stream)}</span>
               {graph.case.keys.length > 0 && <span className="text-xs text-cyan-400">{graph.case.keys.join(", ")}</span>}
             </div>

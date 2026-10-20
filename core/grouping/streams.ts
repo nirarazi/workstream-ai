@@ -9,6 +9,8 @@ export interface CaseMember {
   key: string;
   at: string;
   via: string | null;
+  /** The kind of evidence behind `via` (Placement.viaReason) */
+  viaReason: string | null;
   reasons: string[];
 }
 
@@ -50,7 +52,10 @@ export function casesFrom(
   for (const [key, p] of placements) {
     if (!p.cluster) continue;
     const at = info.get(key)?.at ?? "";
-    byCase.set(p.cluster, [...(byCase.get(p.cluster) ?? []), { key, at, via: p.via, reasons: p.reasons }]);
+    const member = { key, at, via: p.via, viaReason: p.viaReason, reasons: p.reasons };
+    const members = byCase.get(p.cluster);
+    if (members) members.push(member);
+    else byCase.set(p.cluster, [member]);
   }
   const cases: Case[] = [];
   for (const [id, members] of byCase) {

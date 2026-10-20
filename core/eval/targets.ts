@@ -73,7 +73,8 @@ export function drawTargets(
     if (++windows >= perDecision) break;
   }
   for (const rule of JOINS) {
-    const joined = [...placed].filter(([, p]) => p.via && (p.reasons[0] ?? "").startsWith(rule)).map(([k, p]) => ({ a: p.via!, b: k }));
+    // The rule that drew the message in, so the pair is the edge that rule made
+    const joined = [...placed].filter(([, p]) => p.via && p.viaReason === rule).map(([k, p]) => ({ a: p.via!, b: k }));
     for (let i = 0; i < perDecision && joined.length > 0; i++) {
       const [j] = joined.splice(Math.floor(rnd() * joined.length), 1);
       out.push({ ...j, decision: `join:${rule}` });

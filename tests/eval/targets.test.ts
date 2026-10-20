@@ -5,7 +5,7 @@ import { drawTargets } from "../../core/eval/targets.js";
 import type { Placement } from "../../core/grouping/cluster.js";
 
 function p(cluster: string, about: string | null, via: string | null, reason: string): Placement {
-  return { cluster, via, reasons: [reason], recognized: { kind: "work", about, aboutBy: about ? "key" : null, mentions: [], lane: null, asks: false } };
+  return { cluster, via, viaReason: via ? reason.split(/[ ,:]/)[0] : null, reasons: [reason], recognized: { kind: "work", about, aboutBy: about ? "key" : null, mentions: [], lane: null, asks: false } };
 }
 
 describe("drawTargets", () => {

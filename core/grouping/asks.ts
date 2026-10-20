@@ -104,7 +104,9 @@ export function findAsks(
     for (const [to, strength] of asked) {
       const ask: Ask = { strength, message: m.key, caseId: placements.get(m.key)?.cluster ?? null, from: m.senderId, to, at: m.at, answeredAt: null, answeredBy: null };
       asks.push(ask);
-      open.set(`${scope}|${to}`, [...(open.get(`${scope}|${to}`) ?? []), ask]);
+      const waiting = open.get(`${scope}|${to}`);
+      if (waiting) waiting.push(ask);
+      else open.set(`${scope}|${to}`, [ask]);
     }
   }
   return asks;

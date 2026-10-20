@@ -71,6 +71,11 @@ export interface Placement {
   reasons: string[];
   /** The message whose evidence drew it in most (its thread's last, the first with its key, …): an edge of the graph */
   via: string | null;
+  /**
+   * The kind of evidence behind `via` ("thread", "sameKey", "followUp", "operator", "promoted", …), which isn't always
+   * the first of `reasons`: a weak reason can come first and a strong one draw the message in
+   */
+  viaReason: string | null;
 }
 
 interface Cluster {
@@ -175,26 +180,28 @@ export function cluster(messages: readonly GroupingMessage[], options: ClusterOp
     // The operator's pin or link says it's work, whatever the recognizers make of it
     const tied = pins.has(m.key) || must.has(m.key);
     if (notAnItem.has(m.key) || (recognized.kind !== "work" && !tied)) {
-      out.set(m.key, { cluster: null, recognized, reasons: [notAnItem.has(m.key) ? "operator: not an item" : recognized.kind], via: null });
+      out.set(m.key, { cluster: null, recognized, reasons: [notAnItem.has(m.key) ? "operator: not an item" : recognized.kind], via: null, viaReason: null });
       continue;
     }
     const about = pins.get(m.key) ?? recognized.about;
-    const scores = new Map<string, { score: number; reasons: string[]; via: string | null; strongest: number }>();
+    const scores = new Map<string, { score: number; reasons: string[]; via: string | null; viaReason: string | null; strongest: number }>();
     const add = (id: string | undefined, points: number, reason: string, via: string | null | undefined) => {
       if (!id) return;
-      const s = scores.get(id) ?? { score: 0, reasons: [], via: null, strongest: 0 };
+      const s = scores.get(id) ?? { score: 0, reasons: [], via: null, viaReason: null, strongest: 0 };
       s.score += points;
       s.reasons.push(`${reason} ${points >= 0 ? "+" : ""}${points}`);
       if (via && points > s.strongest) {
         s.via = via;
+        s.viaReason = reason.split(/[ ,:]/)[0];
         s.strongest = points;
       }
       scores.set(id, s);
     };
 
     const named = recognized.aboutBy === "named" && !pins.has(m.key);
+    // The key its case holds: the same, or a subject named a little differently
+    const holderKey = about ? (byKey.has(about) ? about : similarSubjectKey(byKey, about)) : undefined;
     if (about) {
-      const holderKey = byKey.has(about) ? about : similarSubjectKey(byKey, about);
       const holder = holderKey ? byKey.get(holderKey) : undefined;
       const last = holderKey ? lastWithKey.get(holderKey) : undefined;
       const lapsed = about.startsWith("subject:") && last !== undefined && Date.parse(m.at) - Date.parse(last.at) > subjectWindowMs;
@@ -232,18 +239,20 @@ export function cluster(messages: readonly GroupingMessage[], options: ClusterOp
     // A cluster holding a message the operator kept apart from this one is out
     for (const other of cannot.get(m.key) ?? []) {
       const id = ofMessage.get(other);
-      if (id) scores.set(id, { score: -Infinity, reasons: ["operator: cannot link"], via: null, strongest: 0 });
+      if (id) scores.set(id, { score: -Infinity, reasons: ["operator: cannot link"], via: null, viaReason: null, strongest: 0 });
     }
 
-    let best: { id: string; score: number; reasons: string[]; via: string | null } | null = null;
+    let best: { id: string; score: number; reasons: string[]; via: string | null; viaReason: string | null } | null = null;
     for (const [id, s] of scores) if (!best || s.score > best.score || (s.score === best.score && id < best.id)) best = { id, ...s };
     let id: string;
     let reasons: string[];
     let via: string | null = null;
+    let viaReason: string | null = null;
     if (best && best.score >= w.join) {
       id = best.id;
       reasons = best.reasons;
       via = best.via;
+      viaReason = best.viaReason;
     } else {
       id = `c${++next}`;
       clusters.set(id, { id, keys: new Set(), members: [] });
@@ -260,7 +269,7 @@ export function cluster(messages: readonly GroupingMessage[], options: ClusterOp
           ofMessage.set(k, id);
           clusters.get(id)!.members.push(k);
           const p = out.get(k)!;
-          out.set(k, { ...p, cluster: id, reasons: [...p.reasons, `promoted with ${about}`], via: p.via ?? m.key });
+          out.set(k, { ...p, cluster: id, reasons: [...p.reasons, `promoted with ${about}`], via: p.via ?? m.key, viaReason: p.via ? p.viaReason : "promoted" });
         }
         for (const [slot, last] of lastBySender) if (last.cluster === threadOwn) lastBySender.set(slot, { ...last, cluster: id });
         for (const [ch, last] of lastInChannel) if (last.cluster === threadOwn) lastInChannel.set(ch, { ...last, cluster: id });
@@ -279,12 +288,14 @@ export function cluster(messages: readonly GroupingMessage[], options: ClusterOp
       }
     }
     if (about && byKey.get(about) === id) lastWithKey.set(about, { key: m.key, at: m.at });
+    // A subject's other name keeps its window open too, so two names in turn don't let it lapse
+    if (holderKey && holderKey !== about && byKey.get(holderKey) === id) lastWithKey.set(holderKey, { key: m.key, at: m.at });
     ofMessage.set(m.key, id);
     if (!threadCluster.has(m.threadId)) threadCluster.set(m.threadId, id);
     lastBySender.set(senderSlot, { message: m, cluster: id, about });
     if (m.channelId) lastInChannel.set(m.channelId, { message: m, cluster: id });
     lastInThread.set(m.threadId, m.key);
-    out.set(m.key, { cluster: id, recognized, reasons, via });
+    out.set(m.key, { cluster: id, recognized, reasons, via, viaReason });
   }
   return out;
 }

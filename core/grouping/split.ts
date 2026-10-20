@@ -18,9 +18,6 @@ export interface Split {
   moved: string[];
 }
 
-function evidence(p: Placement): string {
-  return (p.reasons[0] ?? "").split(/[ ,]/)[0];
-}
 
 /**
  * The splits to propose: per case, the weak bridge with the most balanced cut, if any. Thread edges are never cut:
@@ -28,15 +25,33 @@ function evidence(p: Placement): string {
  */
 export function proposeSplits(placements: ReadonlyMap<string, Placement>, minPart = 2): Split[] {
   const byCluster = new Map<string, string[]>();
-  for (const [key, p] of placements) if (p.cluster) byCluster.set(p.cluster, [...(byCluster.get(p.cluster) ?? []), key]);
+  for (const [key, p] of placements) {
+    if (!p.cluster) continue;
+    const members = byCluster.get(p.cluster);
+    if (members) members.push(key);
+    else byCluster.set(p.cluster, [key]);
+  }
   const out: Split[] = [];
   for (const [id, members] of byCluster) {
     if (members.length < minPart * 2) continue;
+    const keysOf = (ks: Iterable<string>) => {
+      const out = new Set<string>();
+      for (const k of ks) {
+        const about = placements.get(k)!.recognized.about;
+        if (about !== null) out.add(about);
+      }
+      return out;
+    };
+    // A cut leaves keys on both sides that the other never names: a case naming fewer than two has none to propose
+    if (keysOf(members).size < 2) continue;
     const inCase = new Set(members);
     const children = new Map<string, string[]>();
     for (const k of members) {
       const via = placements.get(k)!.via;
-      if (via && inCase.has(via) && via !== k) children.set(via, [...(children.get(via) ?? []), k]);
+      if (!via || !inCase.has(via) || via === k) continue;
+      const siblings = children.get(via);
+      if (siblings) siblings.push(k);
+      else children.set(via, [k]);
     }
     const subtree = (root: string): string[] => {
       const seen: string[] = [];
@@ -48,14 +63,15 @@ export function proposeSplits(placements: ReadonlyMap<string, Placement>, minPar
       }
       return seen;
     };
-    const keysOf = (ks: readonly string[]) => new Set(ks.map((k) => placements.get(k)!.recognized.about).filter((a): a is string => a !== null));
     let best: Split | null = null;
     let bestBalance = 0;
     for (const k of members) {
       const p = placements.get(k)!;
-      if (!p.via || !inCase.has(p.via) || !WEAK.has(evidence(p))) continue;
+      // The evidence that drew it in, not its first reason: a must-link listed after a follow-up is never cut
+      if (!p.via || !inCase.has(p.via) || !WEAK.has(p.viaReason ?? "")) continue;
       const moved = subtree(k);
-      const rest = members.filter((m) => !moved.includes(m));
+      const movedSet = new Set(moved);
+      const rest = members.filter((m) => !movedSet.has(m));
       if (moved.length < minPart || rest.length < minPart) continue;
       const a = keysOf(moved);
       const b = keysOf(rest);
@@ -77,7 +93,7 @@ export function applySplits(placements: ReadonlyMap<string, Placement>, splits: 
   for (const s of splits) {
     for (const k of s.moved) {
       const p = out.get(k)!;
-      out.set(k, { ...p, cluster: `${s.cluster}/${s.at}`, ...(k === s.at ? { via: null, reasons: [...p.reasons, "split: weak bridge"] } : {}) });
+      out.set(k, { ...p, cluster: `${s.cluster}/${s.at}`, ...(k === s.at ? { via: null, viaReason: null, reasons: [...p.reasons, "split: weak bridge"] } : {}) });
     }
   }
   return out;

@@ -14,7 +14,7 @@ function msg(sender: string, text: string, over: Partial<LoadedMessage> = {}): L
     targetedAtOperator: false, actionRequiredFrom: null, topLevel: false, ...over,
   };
 }
-const placed = (ms: LoadedMessage[]) => new Map<string, Placement>(ms.map((m) => [m.key, { cluster: "c1", via: null, reasons: [], recognized: { kind: "work", about: null, aboutBy: null, mentions: [], lane: null, asks: false } }]));
+const placed = (ms: LoadedMessage[]) => new Map<string, Placement>(ms.map((m) => [m.key, { cluster: "c1", via: null, viaReason: null, reasons: [], recognized: { kind: "work", about: null, aboutBy: null, mentions: [], lane: null, asks: false } }]));
 
 describe("findAsks", () => {
   it("finds blocks from the classifier and asks from mentions, and closes them when the one asked posts in the case", () => {

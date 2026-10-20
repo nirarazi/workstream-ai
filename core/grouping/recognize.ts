@@ -142,10 +142,12 @@ const PRIORITY_LIST = /\b(?:in priority order|most urgent first|top \d+ things)\
 const COUNTED = /^(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten|several|all)\s+\S+/i;
 /** Health and liveness: "All green ✓ Gateway: running …", "HEARTBEAT_OK", "nothing needs a Slack post" */
 const HEALTH = /^[\W_]*all green\b|\bHEARTBEAT_OK\b|\bnothing needs a slack post\b/i;
-/** A person checking on the fleet or greeting it, in a few words: "OK are we still alive?", "Atlas are you alive?", "How are you" */
-const CHATTER = /^[\W_]*(?:(?:ok|so|hey|hi|<@[^<>\s]+>|[a-z]+)[,!]?\s+)?(?:are (?:we|you|they)(?: all)? (?:still )?(?:alive|up|down|there|ok|running|healthy)|how are you|good (?:morning|night)|thanks?(?: you)?|thx)\b[^\n]{0,40}$/i;
-/** An agent answering a liveness check, in a few words: "Alive and kicking. What do you need?", "Yes, here — what's up?" */
-const ALIVE = /^[\W_]*(?:yes,?\s+)?(?:alive and kicking|(?:i'?m )?here)\b[^\n]{0,40}$/i;
+/** A person checking on the fleet or greeting it, in a few words: "OK are we still alive?", "How are you", "Are you down?" */
+const CHATTER = /^[\W_]*(?:(?:ok|so|hey|hi)[,!]?\s+)?(?:are (?:we|you|they)(?: all)? (?:still )?(?:alive|up|down|there|ok|running|healthy)|how are you|good (?:morning|night)|thanks?(?: you)?|thx)\b[^\n]{0,40}$/i;
+/** A liveness check addressed to someone, and nothing else: "Atlas are you alive?", "@Relay are you there?" */
+const LIVENESS = /^[\W_]*(?:<@[^<>\s]+>|[a-z]+)[,!]?\s+are (?:you|we)(?: all)? (?:still )?(?:alive|there|up|around)[\s?!.]*$/i;
+/** An agent answering a liveness check, and nothing else: "Alive and kicking. What do you need?", "Yes, here :wave:" */
+const ALIVE = /^[\W_]*(?:yes,?\s+)?(?:alive and kicking|(?:i'?m )?here)[\s.,!—–-]*(?::[a-z_]+:[\s.,!—–-]*)?(?:(?:what do you need|what's up|how can i help)[\s?!.]*)?$/i;
 /** A short post that ends on a runtime's idle token: "Nothing new since the last sweep. HEARTBEAT_OK NO_REPLY" */
 const IDLE_TOKEN = /^[\s\S]{0,400}(?:^|\s)(?:HEARTBEAT_OK|NO_REPLY|TICK_DONE)\W*$/;
 /** A fragment of an agent runtime's serialized log, pasted or leaked into chat */
@@ -155,9 +157,9 @@ const PLATFORM_NOTICE = /^[\W_]*(?:added an integration to this channel|has (?:r
 
 /** Machine output: key=value lines, tick markers, idle heartbeats, a sweep's "no change since the last check" */
 const TELEMETRY = [
-  /^[\W_]*(?:\d{1,2}:\d{2}\s*(?:UTC|[AP]M)?[^.\n]{0,40}\.\s*)?(?:no (?:new )?changes?|nothing (?:has )?changed|nothing new)(?:\s+since\b|\s*[.!:]|\s*$)/i,
+  /^[\W_]*(?:\d{1,2}:\d{2}\s*(?:UTC|[AP]M)?[^.\n]{0,40}\.\s*)?(?:no (?:new )?changes?|nothing (?:has )?changed|nothing new)(?:\s+since\b|\s*[.!]|\s*$)/i,
   /^[A-Z][A-Z0-9_]*=\S+(?:\s+[a-z_]+=\S+)*\s*$/,
-  /^[A-Z][A-Z0-9_]{2,}(?:\s+[a-z_]+=\S+){2,}/,
+  /^[A-Z][A-Z0-9_]{2,}(?:\s+[a-z_]+=\S+){2,}(?:\s+\([^()\n]*\))?\s*$/,
   /^[\W_]*(?:quiet cycle|all (?:pending )?items (?:are )?unchanged)\b/i,
   /\bheartbeat tick\b/i,
   /^[\s:\w]*\bIdle since\b/i,
@@ -209,11 +211,17 @@ function namedSubject(text: string, subjects: SubjectLexicon): string | null {
   return distinct.length === 1 ? distinct[0] : null;
 }
 
-/** A sign-off a tool adds ("*Sent using* @Composer"): never stored or read as content (docs/work-model.md §4) */
-const SIGNATURE = /^\s*[*_]*sent (?:using|from|with)[*_]*\s+(?:<@[^<>\s]+>|\S+)\s*$/gim;
+/**
+ * A sign-off a tool adds ("*Sent using* @Composer"): never stored or read as content (docs/work-model.md §4). Spaces,
+ * not \s, around it: \s would cross lines, and a run of blank lines would then be rescanned from each one
+ */
+const SIGNATURE = /^[ \t]*[*_]*sent (?:using|from|with)[*_]*[ \t]+(?:<@[^<>\s]+>|\S+)[ \t]*$/gim;
 
-/** The same sign-off at the end of a line of text, naming a tool by mention ("… done. *Sent using* @Composer") */
-const INLINE_SIGNATURE = /[*_]*sent (?:using|from|with)[*_]*\s+<@[^<>\s]+>[*_]*\s*$/gim;
+/**
+ * The same sign-off at the end of a line of text, naming a tool by mention ("… done. *Sent using* @Composer"). A run
+ * of marks is matched only from its start, so a long one isn't rescanned from each mark
+ */
+const INLINE_SIGNATURE = /(?<![*_])[*_]*sent (?:using|from|with)[*_]*[ \t]+<@[^<>\s]+>[*_]*[ \t]*$/gim;
 
 /** A message's text without the sign-offs tools add */
 export function stripSignature(text: string): string {
@@ -239,7 +247,7 @@ export function recognize(message: GroupingMessage, options: ResolverOptions & {
   // Anyone's: a briefing is told by its header, which people rarely start a message with otherwise (and an agent posting
   // under a person's account reads as a person)
   const briefing = !tagged && (BRIEFING.test(head) || PRIORITY_LIST.test(own.slice(0, MAX_FIRST_LINE)));
-  const chatter = !asks && own.trim().length <= 80 && (CHATTER.test(own.trim()) || (machine && ALIVE.test(own.trim())));
+  const chatter = !asks && own.trim().length <= 80 && (CHATTER.test(own.trim()) || LIVENESS.test(own.trim()) || (machine && ALIVE.test(own.trim())));
   const report = briefing || (!tagged && isReport(
     { threadId: message.threadId, senderKind: message.senderKind, text: own, status: message.status ?? null, priorInThread: 0, digest: message.digest },
     lines, [], about.subject,
@@ -250,7 +258,7 @@ export function recognize(message: GroupingMessage, options: ResolverOptions & {
   const subjectKey = tagged ? `subject:${tagged.subject}` : named ? `subject:${named}` : null;
   const release = releaseKey(own, message.senderKind) ?? jobKey(own, message.senderKind);
   // An alert often puts its link on the line after its header: the start of the message, not just its first line
-  const record = about.subject || subjectKey || release ? null : recordKey(own.slice(0, MAX_FIRST_LINE));
+  const record = about.subject || subjectKey || release || !machine ? null : recordKey(own.slice(0, MAX_FIRST_LINE));
   const aboutKey = about.subject ?? subjectKey ?? release ?? record;
   const aboutBy = about.subject || (!subjectKey && (release || record)) ? "key" : tagged ? "tagged" : named ? "named" : null;
   const mentions = refs.filter((r) => r !== aboutKey && keyKind(r) !== "subject");

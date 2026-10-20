@@ -103,11 +103,15 @@ export interface ProcessResult {
   errors: number;
 }
 
+/** The shortest time between two shadow regroups */
+export const SHADOW_MIN_INTERVAL_MS = 5 * 60_000;
+
 export class Pipeline {
   private catchUpLogged = false;
   private messagingAdapter: MessagingAdapter;
-  /** The events the shadow grouping last ran on (it skips a poll that added none) */
+  /** What the shadow grouping last ran on (it skips a poll that changed nothing it depends on), and when */
   private shadowVersion: string | null = null;
+  private shadowRanAt = 0;
   private classifier: Classifier;
   private graph: ContextGraph;
   private linker: WorkItemLinker;
@@ -235,16 +239,23 @@ export class Pipeline {
   }
 
   /**
-   * Plan step 6: the v2 grouping, in shadow mode, after each poll that added messages (core/grouping/shadow.ts).
-   * Nothing shown changes. Off with WORKSTREAM_SHADOW_GROUPING=false; a failure is logged and never stops polling.
+   * Plan step 6: the v2 grouping, in shadow mode, after a poll that changed what it depends on (core/grouping/shadow.ts),
+   * at most every SHADOW_MIN_INTERVAL_MS: it regroups the whole history on the engine's thread, so a busy fleet's
+   * polls don't each pay for it (a change skipped now is picked up by a later poll). Nothing shown changes. Off with
+   * WORKSTREAM_SHADOW_GROUPING=false; a failure is logged and never stops polling. Called after each poll.
    */
-  private regroupShadow(): void {
+  regroupShadow(now = Date.now()): void {
     if (process.env.WORKSTREAM_SHADOW_GROUPING === "false") return;
+    if (this.shadowRanAt && now - this.shadowRanAt < SHADOW_MIN_INTERVAL_MS) return;
     try {
       const { version, run } = this.graph.regroupShadow(this.shadowVersion);
       this.shadowVersion = version;
-      if (run) log.info(`Shadow grouping: ${run.messages} messages in ${run.cases} cases and ${run.streams} streams (${run.ms} ms)`);
+      if (!run) return;
+      this.shadowRanAt = now;
+      log.info(`Shadow grouping: ${run.messages} messages in ${run.cases} cases and ${run.streams} streams (${run.ms} ms)`);
     } catch (err) {
+      // A failing run waits the interval too, rather than failing on every poll
+      this.shadowRanAt = now;
       log.warn("Shadow grouping failed", err);
     }
   }

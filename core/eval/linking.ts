@@ -13,8 +13,9 @@
 // that grouping gets wrong, with a few words of each message (never test pairs, which stay unseen). --record <note>
 // appends the scores, with the commit and the note, to eval-data/linking/history.jsonl.
 
-import { existsSync, readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { closeSync, constants, existsSync, fchmodSync, openSync, readFileSync, writeSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { join, resolve } from "node:path";
 import { openReadOnly, prepareOutDir, type ReadOnlyCopy } from "../graph/relink.js";
 import { clean } from "./terminal.js";
 import {
@@ -31,9 +32,7 @@ import {
   type Observation,
 } from "./linking-data.js";
 import { LINKING_DIR, loadLabels, splitOf } from "./linking-labels.js";
-import { appendFileSync, chmodSync, existsSync as fileExists, lstatSync } from "node:fs";
-import { execFileSync } from "node:child_process";
-import { join } from "node:path";
+import { bcubed, scoreGrouping, together, type GroupingScore, type Rate } from "./linking-metrics.js";
 
 const HISTORY_FILE = "history.jsonl";
 
@@ -47,12 +46,15 @@ function currentCommit(root: string): string | null {
 
 function appendHistory(root: string, line: unknown): void {
   const dir = prepareOutDir(root, LINKING_DIR);
-  const path = join(dir, HISTORY_FILE);
-  if (fileExists(path) && lstatSync(path).isSymbolicLink()) throw new Error(`Refusing to write: ${path} is a symlink`);
-  appendFileSync(path, JSON.stringify(line) + "\n", { mode: 0o600 });
-  chmodSync(path, 0o600);
+  // O_NOFOLLOW: a symlink put in the file's place is refused, not followed, with no gap between checking and opening
+  const fd = openSync(join(dir, HISTORY_FILE), constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT | constants.O_NOFOLLOW, 0o600);
+  try {
+    fchmodSync(fd, 0o600);
+    writeSync(fd, JSON.stringify(line) + "\n");
+  } finally {
+    closeSync(fd);
+  }
 }
-import { bcubed, scoreGrouping, together, type GroupingScore, type Rate } from "./linking-metrics.js";
 
 const LABEL_WIDTH = 22;
 const COLUMN_WIDTH = 28;

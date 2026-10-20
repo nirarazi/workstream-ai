@@ -1,19 +1,21 @@
 // core/grouping/lab.ts — The lab's view of the v2 grouping: streams, their cases, and one case's graph (read only)
 //
 // Served by the engine only with WORKSTREAM_LAB=true (a development aid, docs/work-model.md §3, "The graph"). It reads
-// the live database without writing, recomputes when messages have been added (checked at most every 30 seconds), and
-// returns each case as a graph: its messages as nodes, and an edge from the message whose evidence drew each one in.
+// the live database without writing, recomputes when what the grouping depends on changes (checked at most every 30
+// seconds), and returns each case as a graph: its messages as nodes, and an edge from the message whose evidence drew
+// each one in. It groups as shadow mode does (computeGrouping: the operator's constraints, stable case ids).
 
 import type BetterSqlite3 from "better-sqlite3";
-import { DefaultExtractor } from "../graph/extractors/default.js";
 import type { Placement } from "./cluster.js";
-import { groupMessages } from "./index.js";
-import { actorOfHandle, loadActorNames, loadGroupingMessages, type LoadedMessage } from "./load.js";
-import { findAsks, waitFor, type Ask } from "./asks.js";
-import { casesFrom, type Case, type Stream } from "./streams.js";
+import type { LoadedMessage } from "./load.js";
+import { waitFor, type Ask } from "./asks.js";
+import type { Case, Stream } from "./streams.js";
+import { computeGrouping, groupingVersion } from "./shadow.js";
 
 const RECHECK_MS = 30_000;
 const MAX_TEXT = 600;
+/** At most this many messages drawn for a case, actors waited on, or wait-for edges: a response stays small */
+const MAX_LISTED = 500;
 
 export interface LabNode {
   key: string;
@@ -46,10 +48,10 @@ interface Snapshot {
   asks: Ask[];
 }
 
-/** The evidence a reason names, without its points: "sameKey ticket:OPS-1 +10" → "sameKey" */
-function reasonKind(reasons: readonly string[]): string {
-  const promoted = reasons.find((r) => r.startsWith("promoted"));
-  return (promoted ? "promoted" : reasons[0] ?? "new").split(/[ ,]/)[0];
+/** The evidence that drew a message in ("sameKey", "thread", "promoted", …), else the first reason's, without points */
+function reasonKind(viaReason: string | null, reasons: readonly string[]): string {
+  if (reasons.some((r) => r.startsWith("promoted"))) return "promoted";
+  return viaReason ?? (reasons[0] ?? "new").split(/[ ,]/)[0];
 }
 
 export class GroupingLab {
@@ -62,18 +64,11 @@ export class GroupingLab {
     const now = Date.now();
     if (this.snapshot && now - this.checkedAt < RECHECK_MS) return this.snapshot;
     this.checkedAt = now;
-    const v = this.db.prepare("SELECT COUNT(*) AS n, MAX(rowid) AS last FROM events").get() as { n: number; last: number | null };
-    const version = `${v.n}:${v.last ?? 0}`;
+    const version = groupingVersion(this.db);
     if (this.snapshot?.version === version) return this.snapshot;
-    const list = loadGroupingMessages(this.db);
-    const extractor = new DefaultExtractor({ ticketPatterns: ["\\b([A-Z]{2,6}-\\d+)\\b"] });
-    const placements = groupMessages(list, { extractTickets: (t) => extractor.extractWorkItemIds(t) });
+    const { messages: list, placements, cases, streams, actors, asks } = computeGrouping(this.db);
     const messages = new Map(list.map((m) => [m.key, m]));
-    const { cases, streams } = casesFrom(placements, new Map(list.map((m) => [m.key, { at: m.at, channelId: m.channelId }])));
     const channelNames = new Map(list.filter((m) => m.channelId && m.channelName).map((m) => [m.channelId!, m.channelName]));
-    const actors = loadActorNames(this.db);
-    const byName = new Map([...actors].map(([id, name]) => [name.trim().toLowerCase(), id]));
-    const asks = findAsks(list, placements, byName, actorOfHandle(actors));
     this.snapshot = { version, messages, placements, cases: new Map(cases.map((c) => [c.id, c])), streams, channelNames, actors, asks };
     return this.snapshot;
   }
@@ -165,7 +160,8 @@ export class GroupingLab {
    */
   waiting(days = 14): {
     waitedOn: Array<{ actor: string; name: string; open: number; blocking: number; by: string[]; oldest: string; asks: Array<{ from: string; at: string; caseId: string | null; text: string; strength: string }> }>;
-    edges: Array<{ from: string; to: string; open: number; blocking: number }>;
+    /** By actor id, with names to show: two actors can share a name */
+    edges: Array<{ from: string; to: string; fromName: string; toName: string; open: number; blocking: number }>;
     cycles: string[][];
     rootBlockers: Array<{ actor: string; root: string; path: string[] }>;
   } {
@@ -183,7 +179,7 @@ export class GroupingLab {
       edgeCount.set(`${a.from}>${a.to}`, e);
     }
     return {
-      waitedOn: graph.waitedOn.map((w) => ({
+      waitedOn: graph.waitedOn.slice(0, MAX_LISTED).map((w) => ({
         ...w,
         name: name(w.actor),
         by: w.by.map(name),
@@ -195,9 +191,9 @@ export class GroupingLab {
           strength: a.strength,
         })),
       })),
-      edges: [...edgeCount].map(([k, e]) => {
+      edges: [...edgeCount].sort((x, y) => y[1].blocking - x[1].blocking || y[1].open - x[1].open).slice(0, MAX_LISTED).map(([k, e]) => {
         const [from, to] = k.split(">");
-        return { from: name(from), to: name(to), ...e };
+        return { from, to, fromName: name(from), toName: name(to), ...e };
       }),
       cycles: graph.cycles.map((c) => c.map(name)),
       rootBlockers: graph.rootBlockers.map((r) => ({ actor: name(r.actor), root: name(r.root), path: r.path.map(name) })),
@@ -206,7 +202,8 @@ export class GroupingLab {
 
   /** One case as a graph: its messages, the edges that drew them in, and the cases it touches */
   case(id: string): {
-    case: { id: string; keys: string[]; stream: string; streamLabel: string };
+    /** omitted: the case's earliest messages left out, past MAX_LISTED */
+    case: { id: string; keys: string[]; stream: string; streamLabel: string; omitted: number };
     nodes: LabNode[];
     edges: LabEdge[];
     connections: ReturnType<GroupingLab["connections"]>;
@@ -214,8 +211,10 @@ export class GroupingLab {
     const snap = this.current();
     const c = snap.cases.get(id);
     if (!c) return null;
-    const inCase = new Set(c.members.map((m) => m.key));
-    const nodes: LabNode[] = c.members.map((m) => {
+    // A long-running case is drawn by its latest messages
+    const members = c.members.slice(-MAX_LISTED);
+    const inCase = new Set(members.map((m) => m.key));
+    const nodes: LabNode[] = members.map((m) => {
       const msg = snap.messages.get(m.key)!;
       return {
         key: m.key,
@@ -230,9 +229,10 @@ export class GroupingLab {
         reasons: m.reasons,
       };
     });
-    const edges: LabEdge[] = c.members
+    const edges: LabEdge[] = members
       .filter((m) => m.via && inCase.has(m.via) && m.via !== m.key)
-      .map((m) => ({ from: m.via!, to: m.key, reason: reasonKind(m.reasons) }));
-    return { case: { id: c.id, keys: c.keys, stream: c.stream, streamLabel: this.label(c.stream) }, nodes, edges, connections: this.connections(c) };
+      .map((m) => ({ from: m.via!, to: m.key, reason: reasonKind(m.viaReason, m.reasons) }));
+    const omitted = c.members.length - members.length;
+    return { case: { id: c.id, keys: c.keys, stream: c.stream, streamLabel: this.label(c.stream), omitted }, nodes, edges, connections: this.connections(c) };
   }
 }

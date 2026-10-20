@@ -266,7 +266,6 @@ export function createApp(
     }),
   );
 
-  // --- GET /api/status ---
   // The grouping lab: read-only views of the v2 grouping, only when WORKSTREAM_LAB=true (core/grouping/lab.ts)
   const lab = process.env.WORKSTREAM_LAB === "true" ? new GroupingLab(state.db.db) : null;
   if (lab) {
@@ -288,6 +287,7 @@ export function createApp(
     });
   }
 
+  // --- GET /api/status ---
   app.get("/api/status", (c) => {
     const uptime = Math.floor((Date.now() - state.startedAt.getTime()) / 1000);
     const llmBackoff = state.classifier.getBackoffState();

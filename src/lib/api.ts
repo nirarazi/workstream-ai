@@ -721,7 +721,8 @@ export interface LabEdge {
 }
 
 export interface LabCase {
-  case: { id: string; keys: string[]; stream: string; streamLabel: string };
+  /** omitted: the earliest messages left out of a very long case */
+  case: { id: string; keys: string[]; stream: string; streamLabel: string; omitted: number };
   nodes: LabNode[];
   edges: LabEdge[];
   /** Keys the case's messages mention without being about, and the cases about them */
@@ -750,7 +751,8 @@ export interface LabWaiting {
     oldest: string;
     asks: Array<{ from: string; at: string; caseId: string | null; text: string; strength: string }>;
   }>;
-  edges: Array<{ from: string; to: string; open: number; blocking: number }>;
+  /** By actor id, with names to show */
+  edges: Array<{ from: string; to: string; fromName: string; toName: string; open: number; blocking: number }>;
   cycles: string[][];
   rootBlockers: Array<{ actor: string; root: string; path: string[] }>;
 }

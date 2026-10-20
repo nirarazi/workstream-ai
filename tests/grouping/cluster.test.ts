@@ -2,7 +2,7 @@
 
 import { describe, it, expect } from "vitest";
 import { cluster, type ClusterOptions } from "../../core/grouping/cluster.js";
-import { jobKey, recognize, recordKey, releaseKey, stripEmphasis, taggedSubject, type GroupingMessage } from "../../core/grouping/recognize.js";
+import { jobKey, recognize, recordKey, releaseKey, stripEmphasis, stripSignature, taggedSubject, type GroupingMessage } from "../../core/grouping/recognize.js";
 import { DefaultExtractor } from "../../core/graph/extractors/default.js";
 
 const extractor = new DefaultExtractor({ ticketPatterns: ["\\b([A-Z]{2,6}-\\d+)\\b"] });
@@ -79,11 +79,29 @@ describe("recognizers", () => {
     expect(taggedSubject("[drain] Five items: • Northwind …")).toBeNull();
   });
 
+  it("strips sign-offs in linear time, whatever the text", () => {
+    expect(stripSignature("Done.\n*Sent using* <@U0TOOL|Composer>")).toBe("Done.");
+    expect(stripSignature("Done. *Sent using* <@U0TOOL|Composer>")).toBe("Done.");
+    const started = performance.now();
+    stripSignature(`a${"\n".repeat(40_000)}b`);
+    stripSignature(`a ${"*".repeat(40_000)} b`);
+    stripSignature(`a ${"_".repeat(40_000)}sent using`);
+    expect(performance.now() - started).toBeLessThan(200);
+  });
+
   it("reads liveness checks, idle tokens, log fragments and the platform's notices as not work", () => {
     expect(recognize(msg("Atlas are you alive?", { senderKind: "human" }), options).kind).toBe("chatter");
     expect(recognize(msg("<@U0AGENT1|Relay> are you there?", { senderKind: "human" }), options).kind).toBe("chatter");
     expect(recognize(msg("Alive and kicking. What do you need?"), options).kind).toBe("chatter");
     expect(recognize(msg("Here", { senderKind: "human" }), options).kind).toBe("work");
+    // Work that only starts like chatter stays work
+    expect(recognize(msg("Approved, thanks — merge when green", { senderKind: "human" }), options).kind).toBe("work");
+    expect(recognize(msg("Merged, thanks. OPS-101 is done", { senderKind: "human" }), options).kind).toBe("work");
+    expect(recognize(msg("Here's the PR for OPS-101, ready for review"), options).kind).toBe("work");
+    expect(recognize(msg("Here is the fix, needs your approval"), options).kind).toBe("work");
+    expect(recognize(msg("Dana are you around to review OPS-101?", { senderKind: "human" }), options).kind).toBe("work");
+    expect(recognize(msg("No change: still waiting on Dana to approve the schema"), options).kind).toBe("work");
+    expect(recognize(msg("DEPLOY env=prod version=1.2.3 failed, rollback needed now"), options).kind).toBe("work");
     expect(recognize(msg("Sunday, outside calling hours. Ready for Monday.\n\nHEARTBEAT_OK\n\nNO_REPLY"), options).kind).toBe("telemetry");
     expect(recognize(msg("Waiting on Dana for OPS-101. NO_REPLY", { status: "blocked_on_human" }), options).kind).toBe("work");
     expect(recognize(msg(`OPS-101 shipped. ${"Details follow. ".repeat(40)}HEARTBEAT_OK`), options).kind).toBe("work");
@@ -168,6 +186,10 @@ describe("cluster", () => {
   it("keys a tool's alert by the record it links to, so alerts about different records stay apart", () => {
     expect(recordKey("*QUOTE <https://crm.example/index.php?module=Quotes&amp;action=Detail&amp;record=66e3525b-e8a1>* new")).toBe("record:crm.example/index.php#66e3525b-e8a1");
     expect(recordKey("see https://docs.example/guide")).toBeNull();
+    // A link a person pastes isn't a tool's alert about a record
+    const pasted = recognize(msg("look at https://wiki.example/page?id=4471 when you can", { senderKind: "human" }), options);
+    expect(pasted.about).toBeNull();
+    expect(recognize(msg("New order https://shop.example/admin?id=4471"), options).about).toBe("record:shop.example/admin#4471");
     const g = groups([
       msg("*QUOTE <https://crm.example/q?record=aaaa1111>* New lead: pending review", { senderKind: "notification" }),
       msg("*QUOTE <https://crm.example/q?record=bbbb2222>* New lead: pending review", { senderKind: "notification" }),
