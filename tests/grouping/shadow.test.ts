@@ -3,7 +3,7 @@
 import { describe, it, expect } from "vitest";
 import { Database } from "../../core/graph/db.js";
 import { ContextGraph } from "../../core/graph/index.js";
-import { runShadowGrouping, stableCaseId } from "../../core/grouping/shadow.js";
+import { groupingVersion, runShadowGrouping, stableCaseId } from "../../core/grouping/shadow.js";
 import { observeSlackMessage } from "../../core/adapters/messaging/slack/observe.js";
 import type { Message } from "../../core/types.js";
 
@@ -47,5 +47,29 @@ describe("runShadowGrouping", () => {
     const cases = db.db.prepare("SELECT case_id FROM v2_assignments ORDER BY message_key").all() as Array<{ case_id: string }>;
     expect(cases[0].case_id).not.toBe(cases[1].case_id);
     db.close();
+  });
+});
+
+describe("groupingVersion", () => {
+  it("changes when an agent is renamed or reclassified, and when a constraint is added", () => {
+    const db = new Database(":memory:");
+    try {
+      const graph = new ContextGraph(db);
+      const now = new Date().toISOString();
+      db.db.prepare("INSERT INTO agents (id, name, platform, platform_user_id, first_seen, last_seen) VALUES (?, ?, 'slack', ?, ?, ?)")
+        .run("U0RELAY", "Relay", "U0RELAY", now, now);
+      const versions = [groupingVersion(db.db)];
+      db.db.prepare("UPDATE agents SET name = 'Relay - Builder' WHERE id = 'U0RELAY'").run();
+      versions.push(groupingVersion(db.db));
+      db.db.prepare("UPDATE agents SET bot_type = 'notification' WHERE id = 'U0RELAY'").run();
+      versions.push(groupingVersion(db.db));
+      graph.constraints.add({ kind: "not_an_item", a: "slack:T0NORTHWND/C0OPS/1700000001.000100", decidedBy: "operator" });
+      versions.push(groupingVersion(db.db));
+      versions.push(groupingVersion(db.db));
+      expect(new Set(versions).size).toBe(4);
+      expect(versions[4]).toBe(versions[3]);
+    } finally {
+      db.close();
+    }
   });
 });

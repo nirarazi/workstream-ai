@@ -111,8 +111,7 @@ export class GroupingLab {
     return { streams: matched.slice(0, limit), total: matched.length };
   }
 
-  /** A stream's cases, most recent first, each with the start of its first message as a title */
-  /** A stream's cases, latest first, at most MAX_LISTED */
+  /** A stream's cases, most recent first (at most MAX_LISTED), each with the start of its first message as a title */
   stream(key: string): { stream: Stream; cases: Array<{ id: string; keys: string[]; size: number; first: string; last: string; title: string; status: string | null; waiting: boolean; needsYou: boolean }> } | null {
     const snap = this.current();
     const stream = snap.streams.find((s) => s.key === key);
