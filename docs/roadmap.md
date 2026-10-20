@@ -239,8 +239,8 @@ act (`npm run eval:targets`); 598 dev pairs, 163 held-out test pairs):
 - Each decision v2 makes is measured where it acts (`npm run eval:targets`): the over-merge detector's cuts were
   judged right in 12 of 12 pairs, and starting a new case after a subject's week of quiet in 7 of 10.
 - On the earlier 673-pair set, fitting v2's weights to dev (`npm run eval:tune`) raised dev to 0.87 but dropped
-  test to 0.76, an overfit, so the hand-set weights stay. More labels come first: the operator's corrections in the app now become labels
-  (`npm run eval:constraint-labels`).
+  test to 0.76, an overfit, so the hand-set weights stay. More labels come first: the operator's corrections in
+  the app now become labels (`npm run eval:constraint-labels`).
 - Each join rule, on pairs drawn where it decided (model labels, unsure left out): near copies 12 of 14 right,
   named subjects 6 of 8, a question and its answer 5 of 7, a person's follow-up 5 of 8, a sender's keyless
   continuation 4 of 7. Switching off any but named subjects lowers dev F1; named subjects changes nothing on dev
@@ -254,7 +254,7 @@ act (`npm run eval:targets`); 598 dev pairs, 163 held-out test pairs):
     4 over-merges fixed and 5 same-work pairs split, and test fell from 0.90 to 0.89.
 
   Most of v2's remaining mistakes are a long thread changing topic, which none of these see.
-- `npm run regroup` puts the real history in about 1,600 cases in 530 streams, most of them a subject's.
+- `npm run regroup` puts the real history in about 1,600 cases in 530 streams, most of them keyed by a subject.
 
 ## Then — strategic
 
