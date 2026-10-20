@@ -209,6 +209,9 @@ describe("disagreementQueue", () => {
     // Before the ask, or the ask itself: no later message to show
     expect(byId.get("live:OPS-2:e3")!.later).toBeNull();
     expect(byId.get("v2:case:a:e5")!.later).toBeNull();
+    // A merged or split entry's Later is the other side's ask, whenever it was
+    const merged = disagreementQueue([{ side: "merged", about: "OPS-7", ask: { event: "e8", at: "2026-10-19T10:00:00Z" }, later: { event: "e7", at: "2026-10-19T09:00:00Z" }, why: "" }]);
+    expect(merged[0].later).toBe("e7");
     // The same entries in another order give the same queue
     expect(disagreementQueue([...ds].reverse()).map((e) => e.id)).toEqual(q.map((e) => e.id));
   });

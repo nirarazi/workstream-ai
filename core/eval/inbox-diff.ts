@@ -271,9 +271,10 @@ export interface Disagreement {
 }
 
 /**
- * Pure. The queue to ask about: each disagreement with a stable id (side, item or case, ask), its "later" message
- * kept only when it is later than the ask, in an order set by the ids' hashes, so neither the order nor a count
- * printed by side says which side shows an entry
+ * Pure. The queue to ask about: each disagreement with a stable id (side, item or case, ask), and its "later"
+ * message: for an ask only one side shows, the message that moved it on, kept only when it is later than the ask; for
+ * a split or merged entry, the ask the other side shows instead, whenever it was. In an order set by the ids' hashes,
+ * so neither the order nor a count printed by side says which side shows an entry
  */
 export function disagreementQueue(ds: readonly Disagreement[]): QueueEntry[] {
   const hash = (id: string) => createHash("sha256").update(id).digest("hex");
@@ -282,10 +283,14 @@ export function disagreementQueue(ds: readonly Disagreement[]): QueueEntry[] {
       id: `${d.side}:${d.about}:${d.ask.event}`,
       side: d.side,
       ask: d.ask.event,
-      later: d.later && d.later.event !== d.ask.event && d.later.at > d.ask.at ? d.later.event : null,
+      later: d.later && d.later.event !== d.ask.event && (d.side === "split" || d.side === "merged" || d.later.at > d.ask.at)
+        ? d.later.event
+        : null,
       why: d.why,
     }))
-    .sort((x, y) => (hash(x.id) < hash(y.id) ? -1 : 1));
+    .map((e) => ({ e, h: hash(e.id) }))
+    .sort((x, y) => (x.h < y.h ? -1 : x.h > y.h ? 1 : 0))
+    .map(({ e }) => e);
 }
 
 export interface SideScore {
@@ -489,10 +494,16 @@ function main(): void {
       // Needs me's further items in one v2 case: the ask v2 shows the case under
       ...cmp.merged.flatMap((x) => {
         const shown = v2.entries.find((e) => e.caseId === x.caseId)!;
-        return x.items.filter((i) => i.workItem.id !== shown.itemId && i.latestEvent.id !== shown.ask.eventId).map((i) => ({
+        const extra = x.items.filter((i) => i.workItem.id !== shown.itemId && i.latestEvent.id !== shown.ask.eventId);
+        const ds: Disagreement[] = extra.map((i) => ({
           side: "merged" as const, about: i.workItem.id, ask: at(i.latestEvent.id)!, later: at(shown.ask.eventId),
           why: "v2 shows its case once, under another of its asks",
         }));
+        // v2's own ask is none of the items Needs me shows here: it's one only v2 shows
+        if (extra.length === x.items.length) {
+          ds.push({ side: "v2", about: x.caseId, ask: at(shown.ask.eventId)!, later: null, why: "v2 shows its case under an ask Needs me doesn't show" });
+        }
+        return ds;
       }),
     ]);
     const dir = prepareOutDir(root, OUT_DIR);

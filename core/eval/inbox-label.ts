@@ -110,24 +110,31 @@ try {
 }
 
 let idx = 0;
-const eventRow = source.db.prepare(`
+let eventRow: ReturnType<ReadOnlyCopy["db"]["prepare"]>;
+try {
+  eventRow = source.db.prepare(`
   SELECT e.raw_text, e.timestamp, COALESCE(a.name, 'unknown') AS sender, COALESCE(t.channel_name, '') AS channel
   FROM events e LEFT JOIN agents a ON a.id = e.agent_id LEFT JOIN threads t ON t.id = e.thread_id WHERE e.id = ?
-`);
-
-function oneLine(m: ContextMessage, max = 160): string {
-  const text = clean(m.text).replace(/\s+/g, " ").trim();
-  return `${clean(m.sender)}: ${text.length > max ? text.slice(0, max) + "…" : text}`;
+  `);
+} catch (err) {
+  fail(err);
 }
 
-/** A message, its header on one line (a name with a line break can't add a line that passes for the labeler's own) */
+/** Untrusted text on one line: a name with a line break can't add a line that passes for the labeler's own */
+const flat = (s: string) => clean(s).replace(/\s+/g, " ").trim();
+
+function oneLine(m: ContextMessage, max = 160): string {
+  const text = flat(m.text);
+  return `${flat(m.sender)}: ${text.length > max ? text.slice(0, max) + "…" : text}`;
+}
+
+/** A message: its header on one line, its text behind a gutter */
 function renderMessage(tag: string, eventId: string, around: boolean): void {
   const e = eventRow.get(eventId) as { raw_text: string | null; timestamp: string; sender: string; channel: string } | undefined;
   if (!e) {
     console.log(`${BOLD}── ${tag} ──${RESET} ${DIM}(message not found)${RESET}\n`);
     return;
   }
-  const flat = (s: string) => clean(s).replace(/\s+/g, " ").trim();
   console.log(`${BOLD}── ${tag} ──${RESET} ${flat(e.sender)} in #${flat(e.channel)}  ${flat(e.timestamp)}`);
   const ctx = around ? loadItemContext(source.db, eventId, { before: 2, after: 0 }) : null;
   for (const m of ctx?.before ?? []) console.log(`${DIM}  before  ${oneLine(m)}${RESET}`);
@@ -175,7 +182,11 @@ function onKey(key: { name?: string; ctrl?: boolean }): void {
 
 emitKeypressEvents(process.stdin);
 process.stdin.setRawMode(true);
-render();
+try {
+  render();
+} catch (err) {
+  fail(err);
+}
 process.stdin.on("keypress", (_str: string | undefined, key: { name?: string; ctrl?: boolean }) => {
   try {
     onKey(key);
