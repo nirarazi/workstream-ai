@@ -19,6 +19,7 @@
 // configured operator name. The engine also knows their platform ids and usernames from the messaging adapter: pass
 // those here to match it exactly. Nothing is written to the database and no model is called.
 
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { loadConfig } from "../config.js";
@@ -240,8 +241,11 @@ export function compareInboxes(
 export interface QueueEntry {
   /** Stable across runs while the ask is the same: the side, the item or case, and the ask's event */
   id: string;
-  /** Who shows it: live (Needs me now), v2, or v2 as one more entry for an item Needs me shows once (split) */
-  side: "live" | "v2" | "split";
+  /**
+   * Who shows it: live (Needs me now) or v2 alone; split, v2 as one more entry for an item Needs me shows once; merged,
+   * Needs me as one more entry for an ask v2 holds behind another in the same case
+   */
+  side: "live" | "v2" | "split" | "merged";
   /** The ask's event */
   ask: string;
   /** The later message that is why the other side doesn't show it (moved it on, closed it), if there's one */
@@ -256,7 +260,37 @@ export interface InboxLabel {
   labeledAt: string;
 }
 
+/** A disagreement before it's queued: what's asked, and the message that is the other side's reason, with their times */
+export interface Disagreement {
+  side: QueueEntry["side"];
+  /** The item or case it's about */
+  about: string;
+  ask: { event: string; at: string };
+  later: { event: string; at: string } | null;
+  why: string;
+}
+
+/**
+ * Pure. The queue to ask about: each disagreement with a stable id (side, item or case, ask), its "later" message
+ * kept only when it is later than the ask, in an order set by the ids' hashes, so neither the order nor a count
+ * printed by side says which side shows an entry
+ */
+export function disagreementQueue(ds: readonly Disagreement[]): QueueEntry[] {
+  const hash = (id: string) => createHash("sha256").update(id).digest("hex");
+  return ds
+    .map((d) => ({
+      id: `${d.side}:${d.about}:${d.ask.event}`,
+      side: d.side,
+      ask: d.ask.event,
+      later: d.later && d.later.event !== d.ask.event && d.later.at > d.ask.at ? d.later.event : null,
+      why: d.why,
+    }))
+    .sort((x, y) => (hash(x.id) < hash(y.id) ? -1 : 1));
+}
+
 export interface SideScore {
+  /** Labelled entries this side shows */
+  shown: number;
   /** Shown, and the operator said it didn't need them */
   forNothing: number;
   /** Needed, and not shown */
@@ -265,19 +299,22 @@ export interface SideScore {
 
 /**
  * Pure. Each side's mistakes on the labelled disagreements: what one side shows and the other doesn't is, by the
- * operator's answer, either an interruption for nothing on the showing side or a miss on the other. (A split counts
- * as v2 showing one more entry: needed means Needs me merged a separate ask away.)
+ * operator's answer, either an interruption for nothing on the showing side or a miss on the other. A split is v2
+ * showing one more entry for an item (needed: Needs me held a separate ask behind another), merged its mirror, Needs
+ * me showing one more for a case (needed: v2 held a separate ask behind another), so each side can lose on both.
  */
 export function scoreDisagreements(queue: readonly QueueEntry[], labels: readonly InboxLabel[]): { live: SideScore; v2: SideScore; labelled: number } {
-  const answer = new Map(labels.map((l) => [l.id, l.needed]));
-  const live: SideScore = { forNothing: 0, missed: 0 };
-  const v2: SideScore = { forNothing: 0, missed: 0 };
+  // Only a yes or a no counts: anything else in a hand-edited file is no answer
+  const answer = new Map(labels.filter((l) => l.needed === "yes" || l.needed === "no").map((l) => [l.id, l.needed]));
+  const live: SideScore = { shown: 0, forNothing: 0, missed: 0 };
+  const v2: SideScore = { shown: 0, forNothing: 0, missed: 0 };
   let labelled = 0;
   for (const q of queue) {
     const needed = answer.get(q.id);
     if (!needed) continue;
     labelled++;
-    const [shows, hides] = q.side === "live" ? [live, v2] : [v2, live];
+    const [shows, hides] = q.side === "live" || q.side === "merged" ? [live, v2] : [v2, live];
+    shows.shown++;
     if (needed === "yes") hides.missed++;
     else shows.forNothing++;
   }
@@ -314,12 +351,15 @@ function main(): void {
     const caseOfKey = new Map<string, string>();
     for (const c of g.cases) for (const m of c.members) caseOfKey.set(m.key, c.id);
     const cases = new Map(g.cases.map((c) => [c.id, c]));
-    const events = new Map<string, EventInfo & { key: string }>();
+    const events = new Map<string, EventInfo & { key: string; at: string }>();
     for (const r of source.db.prepare(`
-      SELECT e.id, e.confidence, e.work_item_id, e.message_id, t.platform, t.channel_id
+      SELECT e.id, e.confidence, e.work_item_id, e.message_id, e.timestamp, t.platform, t.channel_id
       FROM events e LEFT JOIN threads t ON t.id = e.thread_id
-    `).all() as Array<{ id: string; confidence: number | null; work_item_id: string | null; message_id: string; platform: string | null; channel_id: string | null }>) {
-      events.set(r.id, { confidence: r.confidence ?? 0, workItemId: r.work_item_id, key: `${r.platform ?? "unknown"}:${r.channel_id ?? ""}:${r.message_id}` });
+    `).all() as Array<{ id: string; confidence: number | null; work_item_id: string | null; message_id: string; timestamp: string; platform: string | null; channel_id: string | null }>) {
+      events.set(r.id, {
+        confidence: r.confidence ?? 0, workItemId: r.work_item_id, at: r.timestamp,
+        key: `${r.platform ?? "unknown"}:${r.channel_id ?? ""}:${r.message_id}`,
+      });
     }
     // The operator's actions in the app are events with no sender, labelled by action (core/server.ts, /api/action):
     // the ones that take an item out of Needs me. Snoozes and dismissals from the stream are on the item itself
@@ -429,22 +469,32 @@ function main(): void {
     lines.push("", `## Both (${cmp.both.length})`, "");
     for (const x of cmp.both) lines.push(`- ${itemLine(x.item)}`);
     // The disagreements, for the operator to judge blind (npm run eval:inbox-label)
-    const queue: QueueEntry[] = [
+    const at = (event: string | undefined) => (event ? { event, at: events.get(event)?.at ?? "" } : null);
+    const queue = disagreementQueue([
+      // Shown now, not by v2: the latest message of the case v2 put it in, which moved it on
       ...cmp.liveOnly.map((x) => {
         const c = x.caseId ? cases.get(x.caseId) : undefined;
-        const last = c && !v2.held.has(c.id) ? lastOf(c) : undefined;
-        return { id: `live:${x.item.workItem.id}:${x.item.latestEvent.id}`, side: "live" as const, ask: x.item.latestEvent.id,
-          later: last && last.eventId !== x.item.latestEvent.id ? last.eventId : null, why: x.why };
+        return { side: "live" as const, about: x.item.workItem.id, ask: at(x.item.latestEvent.id)!,
+          later: at(c && !v2.held.has(c.id) ? lastOf(c)?.eventId : undefined), why: x.why };
       }),
+      // Shown by v2, not now: the message that last set its item's status
       ...cmp.v2Only.map((x) => {
         const item = x.entry.itemId ? items.get(x.entry.itemId) : undefined;
         const by = x.entry.itemId && item?.status ? setBy.get(x.entry.itemId, item.status) as { id: string } | undefined : undefined;
-        return { id: `v2:${x.entry.caseId}:${x.entry.ask.eventId}`, side: "v2" as const, ask: x.entry.ask.eventId,
-          later: by && by.id !== x.entry.ask.eventId ? by.id : null, why: x.why };
+        return { side: "v2" as const, about: x.entry.caseId, ask: at(x.entry.ask.eventId)!, later: at(by?.id), why: x.why };
       }),
-      ...cmp.split.map((x) => ({ id: `split:${x.entry.caseId}:${x.entry.ask.eventId}`, side: "split" as const, ask: x.entry.ask.eventId,
-        later: x.item.latestEvent.id, why: "Needs me shows its item once, under another of its asks" })),
-    ];
+      // v2's second entry for an item: the ask Needs me shows it under
+      ...cmp.split.map((x) => ({ side: "split" as const, about: x.entry.caseId, ask: at(x.entry.ask.eventId)!,
+        later: at(x.item.latestEvent.id), why: "Needs me shows its item once, under another of its asks" })),
+      // Needs me's further items in one v2 case: the ask v2 shows the case under
+      ...cmp.merged.flatMap((x) => {
+        const shown = v2.entries.find((e) => e.caseId === x.caseId)!;
+        return x.items.filter((i) => i.workItem.id !== shown.itemId && i.latestEvent.id !== shown.ask.eventId).map((i) => ({
+          side: "merged" as const, about: i.workItem.id, ask: at(i.latestEvent.id)!, later: at(shown.ask.eventId),
+          why: "v2 shows its case once, under another of its asks",
+        }));
+      }),
+    ]);
     const dir = prepareOutDir(root, OUT_DIR);
     const path = writePrivateFile(dir, "report.md", lines.join("\n") + "\n");
     writePrivateFile(dir, "queue.json", JSON.stringify({ version: 1, entries: queue }, null, 2) + "\n");
@@ -454,8 +504,8 @@ function main(): void {
       const { labels } = JSON.parse(readFileSync(labelsPath, "utf8")) as { labels: InboxLabel[] };
       const sc = scoreDisagreements(queue, labels);
       console.log(`On the ${sc.labelled} of ${queue.length} disagreements judged:`);
-      console.log(`  Needs me now: ${sc.live.forNothing} shown for nothing, ${sc.live.missed} missed`);
-      console.log(`  v2:           ${sc.v2.forNothing} shown for nothing, ${sc.v2.missed} missed`);
+      console.log(`  Needs me now: showed ${sc.live.shown}, ${sc.live.forNothing} of them for nothing; missed ${sc.live.missed}`);
+      console.log(`  v2:           showed ${sc.v2.shown}, ${sc.v2.forNothing} of them for nothing; missed ${sc.v2.missed}`);
     }
   } finally {
     openSource = undefined;

@@ -1,7 +1,7 @@
 // tests/eval/inbox-diff.test.ts — Needs me by case under v2, and how it lines up with the live items
 
 import { describe, it, expect } from "vitest";
-import { compareInboxes, excerpt, scoreDisagreements, v2Inbox, type Escalation, type EventInfo, type ItemState } from "../../core/eval/inbox-diff.js";
+import { compareInboxes, disagreementQueue, excerpt, scoreDisagreements, v2Inbox, type Escalation, type EventInfo, type ItemState } from "../../core/eval/inbox-diff.js";
 import type { LoadedMessage } from "../../core/grouping/load.js";
 import type { Case } from "../../core/grouping/streams.js";
 import type { ActionableItem } from "../../core/types.js";
@@ -170,15 +170,46 @@ describe("excerpt", () => {
 
 describe("scoreDisagreements", () => {
   it("counts an unneeded ask against the side showing it, and a needed one against the side hiding it", () => {
-    const q = (id: string, side: "live" | "v2" | "split") => ({ id, side, ask: `e-${id}`, later: null, why: "" });
-    const queue = [q("a", "live"), q("b", "live"), q("c", "v2"), q("d", "split"), q("e", "v2")];
+    const q = (id: string, side: "live" | "v2" | "split" | "merged") => ({ id, side, ask: `e-${id}`, later: null, why: "" });
+    const queue = [q("a", "live"), q("b", "live"), q("c", "v2"), q("d", "split"), q("e", "v2"), q("f", "merged"), q("g", "merged"), q("h", "split")];
     const at = "2026-10-20T00:00:00.000Z";
     const labels = [
       { id: "a", needed: "no" as const, labeledAt: at },
       { id: "b", needed: "yes" as const, labeledAt: at },
       { id: "c", needed: "no" as const, labeledAt: at },
       { id: "d", needed: "yes" as const, labeledAt: at },
+      { id: "e", needed: "maybe" as unknown as "no", labeledAt: at },
+      // Needs me's extra entry for a v2 case: needed, so v2 held a separate ask behind another; not, a duplicate
+      { id: "f", needed: "yes" as const, labeledAt: at },
+      { id: "g", needed: "no" as const, labeledAt: at },
+      { id: "h", needed: "no" as const, labeledAt: at },
     ];
-    expect(scoreDisagreements(queue, labels)).toEqual({ live: { forNothing: 1, missed: 1 }, v2: { forNothing: 1, missed: 1 }, labelled: 4 });
+    expect(scoreDisagreements(queue, labels)).toEqual({
+      live: { shown: 4, forNothing: 2, missed: 1 },
+      v2: { shown: 3, forNothing: 2, missed: 2 },
+      labelled: 7,
+    });
+  });
+});
+
+describe("disagreementQueue", () => {
+  it("ids each entry stably, keeps only a later message that is later, and orders by id hash, not by side", () => {
+    const d = (side: "live" | "v2", about: string, ask: [string, string], later: [string, string] | null) =>
+      ({ side, about, ask: { event: ask[0], at: ask[1] }, later: later && { event: later[0], at: later[1] }, why: "" });
+    const ds = [
+      d("live", "OPS-1", ["e1", "2026-10-19T09:00:00Z"], ["e2", "2026-10-19T10:00:00Z"]),
+      d("live", "OPS-2", ["e3", "2026-10-19T09:00:00Z"], ["e4", "2026-10-19T08:00:00Z"]),
+      d("v2", "case:a", ["e5", "2026-10-19T09:00:00Z"], ["e5", "2026-10-19T09:00:00Z"]),
+      d("v2", "case:b", ["e6", "2026-10-19T09:00:00Z"], null),
+    ];
+    const q = disagreementQueue(ds);
+    const byId = new Map(q.map((e) => [e.id, e]));
+    expect([...byId.keys()].sort()).toEqual(["live:OPS-1:e1", "live:OPS-2:e3", "v2:case:a:e5", "v2:case:b:e6"]);
+    expect(byId.get("live:OPS-1:e1")!.later).toBe("e2");
+    // Before the ask, or the ask itself: no later message to show
+    expect(byId.get("live:OPS-2:e3")!.later).toBeNull();
+    expect(byId.get("v2:case:a:e5")!.later).toBeNull();
+    // The same entries in another order give the same queue
+    expect(disagreementQueue([...ds].reverse()).map((e) => e.id)).toEqual(q.map((e) => e.id));
   });
 });
