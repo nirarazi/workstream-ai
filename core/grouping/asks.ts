@@ -78,15 +78,14 @@ export function findAsks(
   const scopeOf = (m: LoadedMessage) => placements.get(m.key)?.cluster ?? `thread:${m.threadId}`;
   for (const m of sorted) {
     const scope = scopeOf(m);
-    // A post by someone answers what was asked of them in the same case
-    if (m.senderId) {
-      for (const a of open.get(`${scope}|${m.senderId}`) ?? []) {
-        a.answeredAt = m.at;
-        a.answeredBy = m.key;
-      }
-      open.delete(`${scope}|${m.senderId}`);
-    }
     if (!m.senderId) continue;
+    // Asks are to actors, so a post from any of the sender's handles answers what was asked of them in the same case
+    const self = actorOf.get(m.senderId) ?? m.senderId;
+    for (const a of open.get(`${scope}|${self}`) ?? []) {
+      a.answeredAt = m.at;
+      a.answeredBy = m.key;
+    }
+    open.delete(`${scope}|${self}`);
     const targets = new Map<string, Ask["strength"]>();
     const text = stripSignature(m.text);
     // A mention asks someone the fleet knows (not a tool's handle) when the message opens by addressing them, or the
@@ -100,9 +99,9 @@ export function findAsks(
       const actor = actorOf.get(id) ?? id;
       if (asked.get(actor) !== "blocks") asked.set(actor, strength);
     }
-    asked.delete(m.senderId);
+    asked.delete(self);
     for (const [to, strength] of asked) {
-      const ask: Ask = { strength, message: m.key, caseId: placements.get(m.key)?.cluster ?? null, from: m.senderId, to, at: m.at, answeredAt: null, answeredBy: null };
+      const ask: Ask = { strength, message: m.key, caseId: placements.get(m.key)?.cluster ?? null, from: self, to, at: m.at, answeredAt: null, answeredBy: null };
       asks.push(ask);
       const waiting = open.get(`${scope}|${to}`);
       if (waiting) waiting.push(ask);

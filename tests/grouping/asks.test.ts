@@ -32,6 +32,19 @@ describe("findAsks", () => {
   });
 });
 
+describe("findAsks across an actor's handles", () => {
+  it("closes an ask when the agent answers on its other handle, and never makes an ask of itself", () => {
+    const actorOf = new Map([["B0RELAY", "U0RELAY"]]);
+    const ms = [
+      msg("U0DANA", "<@B0RELAY> can you rerun the export?", { senderKind: "human" }),
+      msg("B0RELAY", "Rerunning now."),
+      msg("B0RELAY", "<@U0RELAY> please confirm the export finished"),
+    ];
+    const asks = findAsks(ms, placed(ms), new Map(), actorOf);
+    expect(asks.map((a) => [a.from, a.to, a.answeredAt !== null])).toEqual([["U0DANA", "U0RELAY", true]]);
+  });
+});
+
 describe("waitFor", () => {
   const ask = (from: string, to: string, strength: Ask["strength"] = "blocks"): Ask =>
     ({ strength, message: `${from}>${to}`, caseId: null, from, to, at: "2026-10-19T09:00:00.000Z", answeredAt: null, answeredBy: null });

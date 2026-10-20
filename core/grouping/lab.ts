@@ -50,7 +50,6 @@ interface Snapshot {
 
 /** The evidence that drew a message in ("sameKey", "thread", "promoted", …), else the first reason's, without points */
 function reasonKind(viaReason: string | null, reasons: readonly string[]): string {
-  if (reasons.some((r) => r.startsWith("promoted"))) return "promoted";
   return viaReason ?? (reasons[0] ?? "new").split(/[ ,]/)[0];
 }
 
@@ -113,11 +112,13 @@ export class GroupingLab {
   }
 
   /** A stream's cases, most recent first, each with the start of its first message as a title */
+  /** A stream's cases, latest first, at most MAX_LISTED */
   stream(key: string): { stream: Stream; cases: Array<{ id: string; keys: string[]; size: number; first: string; last: string; title: string; status: string | null; waiting: boolean; needsYou: boolean }> } | null {
     const snap = this.current();
     const stream = snap.streams.find((s) => s.key === key);
     if (!stream) return null;
-    const cases = stream.cases.map((id) => snap.cases.get(id)!).map((c) => ({
+    const latest = stream.cases.map((id) => snap.cases.get(id)!).sort((x, y) => (x.last < y.last ? 1 : x.last > y.last ? -1 : 0)).slice(0, MAX_LISTED);
+    const cases = latest.map((c) => ({
       id: c.id,
       keys: c.keys,
       size: c.members.length,

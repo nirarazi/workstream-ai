@@ -100,6 +100,7 @@ describe("recognizers", () => {
     expect(recognize(msg("Here's the PR for OPS-101, ready for review"), options).kind).toBe("work");
     expect(recognize(msg("Here is the fix, needs your approval"), options).kind).toBe("work");
     expect(recognize(msg("Dana are you around to review OPS-101?", { senderKind: "human" }), options).kind).toBe("work");
+    expect(recognize(msg("Hey are you there? prod is down for OPS-101", { senderKind: "human" }), options).kind).toBe("work");
     expect(recognize(msg("No change: still waiting on Dana to approve the schema"), options).kind).toBe("work");
     expect(recognize(msg("DEPLOY env=prod version=1.2.3 failed, rollback needed now"), options).kind).toBe("work");
     expect(recognize(msg("Sunday, outside calling hours. Ready for Monday.\n\nHEARTBEAT_OK\n\nNO_REPLY"), options).kind).toBe("telemetry");

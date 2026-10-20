@@ -109,7 +109,10 @@ export const SHADOW_MIN_INTERVAL_MS = 5 * 60_000;
 export class Pipeline {
   private catchUpLogged = false;
   private messagingAdapter: MessagingAdapter;
-  /** What the shadow grouping last ran on (it skips a poll that changed nothing it depends on), and when */
+  /**
+   * What the shadow grouping last ran on (it skips a poll that changed nothing it depends on), and when (a monotonic
+   * clock: a wall clock set back would stall it)
+   */
   private shadowVersion: string | null = null;
   private shadowRanAt = 0;
   private classifier: Classifier;
@@ -244,7 +247,7 @@ export class Pipeline {
    * polls don't each pay for it (a change skipped now is picked up by a later poll). Nothing shown changes. Off with
    * WORKSTREAM_SHADOW_GROUPING=false; a failure is logged and never stops polling. Called after each poll.
    */
-  regroupShadow(now = Date.now()): void {
+  regroupShadow(now = performance.now()): void {
     if (process.env.WORKSTREAM_SHADOW_GROUPING === "false") return;
     if (this.shadowRanAt && now - this.shadowRanAt < SHADOW_MIN_INTERVAL_MS) return;
     try {

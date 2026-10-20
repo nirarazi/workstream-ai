@@ -247,7 +247,8 @@ export function recognize(message: GroupingMessage, options: ResolverOptions & {
   // Anyone's: a briefing is told by its header, which people rarely start a message with otherwise (and an agent posting
   // under a person's account reads as a person)
   const briefing = !tagged && (BRIEFING.test(head) || PRIORITY_LIST.test(own.slice(0, MAX_FIRST_LINE)));
-  const chatter = !asks && own.trim().length <= 80 && (CHATTER.test(own.trim()) || LIVENESS.test(own.trim()) || (machine && ALIVE.test(own.trim())));
+  // A greeting that goes on to name a ticket or PR ("Hey are you there? OPS-101 is down") is work
+  const chatter = !asks && refs.length === 0 && own.trim().length <= 80 && (CHATTER.test(own.trim()) || LIVENESS.test(own.trim()) || (machine && ALIVE.test(own.trim())));
   const report = briefing || (!tagged && isReport(
     { threadId: message.threadId, senderKind: message.senderKind, text: own, status: message.status ?? null, priorInThread: 0, digest: message.digest },
     lines, [], about.subject,

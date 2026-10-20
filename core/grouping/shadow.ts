@@ -80,8 +80,9 @@ export function constraintsByMessage(db: BetterSqlite3.Database): NonNullable<Cl
 }
 
 /**
- * What a grouping depends on, cheaply: the events (added, and reclassified into or out of waiting or Needs me) and the
- * operator's constraints (added, retired or suspended). A grouping is recomputed only when this changes.
+ * What a grouping depends on, cheaply: the events (added, and reclassified into or out of waiting or Needs me), the
+ * operator's constraints (added, retired or suspended), and the agents (their names make actors, and whether each is a
+ * bot its sender kind). A grouping is recomputed only when this changes.
  */
 export function groupingVersion(db: BetterSqlite3.Database): string {
   const e = db.prepare(`
@@ -96,7 +97,13 @@ export function groupingVersion(db: BetterSqlite3.Database): string {
         FROM constraints
       `).get() as { n: number; last: number | null; retired: number; suspended: number }
     : { n: 0, last: 0, retired: 0, suspended: 0 };
-  return [e.n, e.last ?? 0, e.waiting, e.targeted, c.n, c.last ?? 0, c.retired, c.suspended].join(":");
+  const bot = (db.prepare("SELECT name FROM pragma_table_info('agents')").all() as Array<{ name: string }>).some((r) => r.name === "bot_type")
+    ? "COALESCE(is_bot, '') || '|' || COALESCE(bot_type, '')"
+    : "''";
+  const agents = db.prepare(`SELECT group_concat(row, char(10)) AS rows FROM (SELECT id || '|' || name || '|' || ${bot} AS row FROM agents ORDER BY id)`)
+    .get() as { rows: string | null };
+  const agentsHash = createHash("sha256").update(agents.rows ?? "").digest("hex").slice(0, 12);
+  return [e.n, e.last ?? 0, e.waiting, e.targeted, c.n, c.last ?? 0, c.retired, c.suspended, agentsHash].join(":");
 }
 
 export interface Grouping {
