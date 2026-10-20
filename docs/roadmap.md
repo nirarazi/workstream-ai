@@ -222,23 +222,32 @@ operator corrections as constraints, asks attached to messages, subject keys, th
 routines and runs, and a done policy before streams. Applying the re-link as first planned would discard operator
 merges and must not ship.
 
-**Grouping results, October 2026** (pairwise F1 on 673 labelled message pairs: the operator's labels, plus model
+**Grouping results, October 2026** (pairwise F1 on 761 labelled message pairs: the operator's labels, plus model
 labels the operator's labels overrule, with the model's unsure pairs left out, plus pairs drawn where v2's decisions
-act (`npm run eval:targets`); 528 dev pairs, 145 held-out test pairs):
+act (`npm run eval:targets`); 598 dev pairs, 163 held-out test pairs):
 
 | Grouping | dev F1 | test F1 |
 |---|---|---|
-| Current linker | 0.79 | 0.84 |
-| Re-link dry run (phase 2 resolver) | 0.77 | 0.85 |
-| v2 grouping (`core/grouping/`) | 0.88 | 0.87 |
+| Current linker | 0.77 | 0.80 |
+| Re-link dry run (phase 2 resolver) | 0.73 | 0.78 |
+| v2 grouping (`core/grouping/`) | 0.88 | 0.90 |
 
 - v2 splits much less and merges less unrelated work on dev, and leads on the held-out pairs too. The test half is
-  small (about 85 scored pairs), so its intervals are wide.
+  small (about 100 scored pairs), so its intervals are wide. On the pairs even the model labeller escalated to the
+  operator, v2 gets 17 of 26 right, the other two 13.
 - Each decision v2 makes is measured where it acts (`npm run eval:targets`): the over-merge detector's cuts were
   judged right in 12 of 12 pairs, and starting a new case after a subject's week of quiet in 7 of 10.
 - Fitting v2's weights to dev (`npm run eval:tune`) raised dev to 0.87 and lowered test to 0.76, so the
   hand-set weights stay. More labels come first: the operator's corrections in the app now become labels
   (`npm run eval:constraint-labels`).
+- Each join rule, on pairs drawn where it decided: near copies 86% right, named subjects 75%, a question and its
+  answer 71%, a person's follow-up 63%, a sender's keyless continuation 57%. Switching any one off lowers dev F1 or
+  changes nothing, so all stay.
+- Tried and dropped, on the labels: splitting long threads by the subjects they name, or cutting their weaker links
+  (about half the cuts joined the same work); weakening a thread's pull after a day (cost dev F1); holding back a
+  ticket first named inside another conversation (4 of 5 pairs were the same work); reply chains inside threads,
+  from whom a reply addresses (Slack threads are flat; dev F1 unchanged, 4 over-merges fixed for 5 same-work pairs
+  split, test 0.90 to 0.89). Most of v2's remaining mistakes are a long thread changing topic, which none of these see.
 - `npm run regroup` puts the real history in 1,300 cases in 430 streams, most of them partners.
 
 ## Then — strategic
