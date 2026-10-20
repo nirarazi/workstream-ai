@@ -25,6 +25,7 @@
     "eval:constraint-labels": "tsx core/eval/constraint-labels.ts",
     "eval:tune": "tsx core/eval/tune.ts",
     "eval:targets": "tsx core/eval/targets.ts",
+    "eval:inbox-diff": "tsx core/eval/inbox-diff.ts",
     "regroup": "tsx core/grouping/regroup-cli.ts",
     "engine": "WORKSTREAM_DEV_UI=true tsx watch core/server.ts",
     "dev:web": "concurrently \"WORKSTREAM_DEV_UI=true tsx watch core/server.ts\" \"vite\"",
