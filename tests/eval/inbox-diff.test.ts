@@ -162,5 +162,8 @@ describe("excerpt", () => {
     expect(excerpt("Relay, \x1b]8;;http://x.example\x07done\x1b[2J")).toBe("Relay, \\]8;;http://x.exampledone\\[2J");
     expect(excerpt("see ![](https://x.example/p.png) and <img src=x>")).toBe("see \\!\\[\\](https://x.example/p.png) and \\<img src=x\\>");
     expect(excerpt("a\nb   c", 3)).toBe("a b");
+    // A message's own backslash can't undo an escape: \<img> stays text, not a tag
+    expect(excerpt("\\<img src=x\\>")).toBe("\\\\\\<img src=x\\\\\\>");
+    expect(excerpt("\\[click\\](https://x.example)")).toBe("\\\\\\[click\\\\\\](https://x.example)");
   });
 });

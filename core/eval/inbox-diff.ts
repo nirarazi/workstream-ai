@@ -233,10 +233,11 @@ export function compareInboxes(
 
 /**
  * A few words of untrusted text, safe for a terminal and inert in markdown: control characters dropped (clean), lines
- * joined, and link, image and HTML syntax escaped, so a preview neither follows nor loads anything a message holds
+ * joined, and link, image and HTML syntax escaped (backslashes too, so a message's own can't undo an escape), so a
+ * preview neither follows nor loads anything a message holds
  */
 export const excerpt = (text: string | null | undefined, n = 140) =>
-  clean(text ?? "").replace(/\s+/g, " ").trim().slice(0, n).replace(/[[\]<>!`]/g, (c) => `\\${c}`);
+  clean(text ?? "").replace(/\s+/g, " ").trim().slice(0, n).replace(/[\\[\]<>!`]/g, (c) => `\\${c}`);
 
 let openSource: ReadOnlyCopy | undefined;
 
@@ -352,8 +353,8 @@ function main(): void {
         const kind = x.why.replace(/:.*$/, "").replace(/, by [^,]*, /, ", ").replace(/, by .*$/, "").trim();
         t.set(kind, (t.get(kind) ?? 0) + 1);
       }
-      // A reason can carry a sender's name or an item id: cleaned like any message text
-      return [...t].sort((a, b) => b[1] - a[1]).map(([k, n]) => `${n} ${excerpt(k, 120)}`).join("; ");
+      // A reason can carry a sender's name or an item id: cleaned for the terminal like any message text
+      return [...t].sort((a, b) => b[1] - a[1]).map(([k, n]) => `${n} ${clean(k).slice(0, 120)}`).join("; ");
     };
     if (cmp.liveOnly.length) console.log(`  live only, why: ${tally(cmp.liveOnly)}`);
     if (cmp.v2Only.length) console.log(`  v2 only, why: ${tally(cmp.v2Only)}`);
