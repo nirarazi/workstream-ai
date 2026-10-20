@@ -25,6 +25,7 @@ import { detectAnomalies, type FleetItemInput } from "./graph/anomalies.js";
 import { Sidekick, type SidekickMessage } from "./sidekick/index.js";
 import { buildUnifiedStatus, buildTimeline, usableName } from "./stream.js";
 import type { OperatorIdentityMap, StatusCategory } from "./types.js";
+import { operatorNames } from "./operator-names.js";
 import { backfillObservations } from "./observations/backfill.js";
 import { GroupingLab } from "./grouping/lab.js";
 
@@ -157,15 +158,6 @@ export function settingsNeedRestart(previous: Config, next: Config, envChanged: 
   const { inbox: _a, ...before } = previous;
   const { inbox: _b, ...after } = next;
   return JSON.stringify(before) !== JSON.stringify(after);
-}
-
-/** The ways a model names the operator in "who it's waiting on": platform IDs, usernames, full and first names */
-function operatorNames(identities: OperatorIdentityMap | undefined, configuredName: string | undefined): string[] {
-  const names = [
-    ...[...(identities?.values() ?? [])].flatMap((id) => [id.userId, id.userName]),
-    configuredName,
-  ].filter((n): n is string => Boolean(n?.trim()));
-  return [...new Set([...names, ...names.map((n) => n.trim().split(/[\s.]+/)[0])])];
 }
 
 /** The digest judge, asking the configured model (read per call, so a settings change applies at once) */
