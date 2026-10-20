@@ -1,7 +1,7 @@
 // tests/eval/inbox-diff.test.ts — Needs me by case under v2, and how it lines up with the live items
 
 import { describe, it, expect } from "vitest";
-import { compareInboxes, excerpt, v2Inbox, type Escalation, type EventInfo, type ItemState } from "../../core/eval/inbox-diff.js";
+import { compareInboxes, excerpt, scoreDisagreements, v2Inbox, type Escalation, type EventInfo, type ItemState } from "../../core/eval/inbox-diff.js";
 import type { LoadedMessage } from "../../core/grouping/load.js";
 import type { Case } from "../../core/grouping/streams.js";
 import type { ActionableItem } from "../../core/types.js";
@@ -165,5 +165,20 @@ describe("excerpt", () => {
     // A message's own backslash can't undo an escape: \<img> stays text, not a tag
     expect(excerpt("\\<img src=x\\>")).toBe("\\\\\\<img src=x\\\\\\>");
     expect(excerpt("\\[click\\](https://x.example)")).toBe("\\\\\\[click\\\\\\](https://x.example)");
+  });
+});
+
+describe("scoreDisagreements", () => {
+  it("counts an unneeded ask against the side showing it, and a needed one against the side hiding it", () => {
+    const q = (id: string, side: "live" | "v2" | "split") => ({ id, side, ask: `e-${id}`, later: null, why: "" });
+    const queue = [q("a", "live"), q("b", "live"), q("c", "v2"), q("d", "split"), q("e", "v2")];
+    const at = "2026-10-20T00:00:00.000Z";
+    const labels = [
+      { id: "a", needed: "no" as const, labeledAt: at },
+      { id: "b", needed: "yes" as const, labeledAt: at },
+      { id: "c", needed: "no" as const, labeledAt: at },
+      { id: "d", needed: "yes" as const, labeledAt: at },
+    ];
+    expect(scoreDisagreements(queue, labels)).toEqual({ live: { forNothing: 1, missed: 1 }, v2: { forNothing: 1, missed: 1 }, labelled: 4 });
   });
 });

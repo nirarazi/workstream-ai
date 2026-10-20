@@ -11,11 +11,15 @@
 //   v2 only    a case v2 would surface that Needs me doesn't, and why (its item is done, merged, or never was one)
 //   merged     several items that v2 holds in one case: fewer entries, or unrelated asks hidden behind one
 //   split      an item Needs me shows once that v2 would show as several cases: more entries
-// It prints counts and writes the entries, with a few words of each message, to eval-data/inbox-diff/report.md.
+// It prints counts and writes the entries, with a few words of each message, to eval-data/inbox-diff/report.md, and
+// the disagreements to queue.json, for npm run eval:inbox-label to ask the operator about, blind: does this need you?
+// With labels.json from that, it scores each side on the disagreements: asks shown that didn't need the operator (an
+// interruption for nothing) and asks that did but weren't shown (missed).
 // --operator names the operator (names or ids, comma-separated) for handoffs and their own messages; by default the
 // configured operator name. The engine also knows their platform ids and usernames from the messaging adapter: pass
 // those here to match it exactly. Nothing is written to the database and no model is called.
 
+import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { loadConfig } from "../config.js";
 import { operatorNames } from "../operator-names.js";
@@ -27,6 +31,7 @@ import { computeGrouping } from "../grouping/shadow.js";
 import type { Case } from "../grouping/streams.js";
 import type { ActionableItem } from "../types.js";
 import { onStopSignals, parseFlags, projectRoot } from "./linking-data.js";
+import { projectFile } from "./linking-labels.js";
 import { clean } from "./terminal.js";
 
 const OUT_DIR = join("eval-data", "inbox-diff");
@@ -231,6 +236,54 @@ export function compareInboxes(
   return out;
 }
 
+/** A disagreement to ask the operator about: an ask only one side shows, and the later message behind the other's view */
+export interface QueueEntry {
+  /** Stable across runs while the ask is the same: the side, the item or case, and the ask's event */
+  id: string;
+  /** Who shows it: live (Needs me now), v2, or v2 as one more entry for an item Needs me shows once (split) */
+  side: "live" | "v2" | "split";
+  /** The ask's event */
+  ask: string;
+  /** The later message that is why the other side doesn't show it (moved it on, closed it), if there's one */
+  later: string | null;
+  why: string;
+}
+
+/** The operator's answer: does this ask need them now? */
+export interface InboxLabel {
+  id: string;
+  needed: "yes" | "no";
+  labeledAt: string;
+}
+
+export interface SideScore {
+  /** Shown, and the operator said it didn't need them */
+  forNothing: number;
+  /** Needed, and not shown */
+  missed: number;
+}
+
+/**
+ * Pure. Each side's mistakes on the labelled disagreements: what one side shows and the other doesn't is, by the
+ * operator's answer, either an interruption for nothing on the showing side or a miss on the other. (A split counts
+ * as v2 showing one more entry: needed means Needs me merged a separate ask away.)
+ */
+export function scoreDisagreements(queue: readonly QueueEntry[], labels: readonly InboxLabel[]): { live: SideScore; v2: SideScore; labelled: number } {
+  const answer = new Map(labels.map((l) => [l.id, l.needed]));
+  const live: SideScore = { forNothing: 0, missed: 0 };
+  const v2: SideScore = { forNothing: 0, missed: 0 };
+  let labelled = 0;
+  for (const q of queue) {
+    const needed = answer.get(q.id);
+    if (!needed) continue;
+    labelled++;
+    const [shows, hides] = q.side === "live" ? [live, v2] : [v2, live];
+    if (needed === "yes") hides.missed++;
+    else shows.forNothing++;
+  }
+  return { live, v2, labelled };
+}
+
 /**
  * A few words of untrusted text, safe for a terminal and inert in markdown: control characters dropped (clean), lines
  * joined, and link, image and HTML syntax escaped (backslashes too, so a message's own can't undo an escape), so a
@@ -375,9 +428,35 @@ function main(): void {
     for (const x of cmp.split) lines.push(`- ${askLine(x.entry)}`, `  - also shown by: ${itemLine(x.item)}`);
     lines.push("", `## Both (${cmp.both.length})`, "");
     for (const x of cmp.both) lines.push(`- ${itemLine(x.item)}`);
+    // The disagreements, for the operator to judge blind (npm run eval:inbox-label)
+    const queue: QueueEntry[] = [
+      ...cmp.liveOnly.map((x) => {
+        const c = x.caseId ? cases.get(x.caseId) : undefined;
+        const last = c && !v2.held.has(c.id) ? lastOf(c) : undefined;
+        return { id: `live:${x.item.workItem.id}:${x.item.latestEvent.id}`, side: "live" as const, ask: x.item.latestEvent.id,
+          later: last && last.eventId !== x.item.latestEvent.id ? last.eventId : null, why: x.why };
+      }),
+      ...cmp.v2Only.map((x) => {
+        const item = x.entry.itemId ? items.get(x.entry.itemId) : undefined;
+        const by = x.entry.itemId && item?.status ? setBy.get(x.entry.itemId, item.status) as { id: string } | undefined : undefined;
+        return { id: `v2:${x.entry.caseId}:${x.entry.ask.eventId}`, side: "v2" as const, ask: x.entry.ask.eventId,
+          later: by && by.id !== x.entry.ask.eventId ? by.id : null, why: x.why };
+      }),
+      ...cmp.split.map((x) => ({ id: `split:${x.entry.caseId}:${x.entry.ask.eventId}`, side: "split" as const, ask: x.entry.ask.eventId,
+        later: x.item.latestEvent.id, why: "Needs me shows its item once, under another of its asks" })),
+    ];
     const dir = prepareOutDir(root, OUT_DIR);
     const path = writePrivateFile(dir, "report.md", lines.join("\n") + "\n");
-    console.log(`Wrote ${path}`);
+    writePrivateFile(dir, "queue.json", JSON.stringify({ version: 1, entries: queue }, null, 2) + "\n");
+    console.log(`Wrote ${path} and ${queue.length} disagreements to judge (npm run eval:inbox-label)`);
+    const labelsPath = projectFile(root, OUT_DIR, "labels.json");
+    if (labelsPath) {
+      const { labels } = JSON.parse(readFileSync(labelsPath, "utf8")) as { labels: InboxLabel[] };
+      const sc = scoreDisagreements(queue, labels);
+      console.log(`On the ${sc.labelled} of ${queue.length} disagreements judged:`);
+      console.log(`  Needs me now: ${sc.live.forNothing} shown for nothing, ${sc.live.missed} missed`);
+      console.log(`  v2:           ${sc.v2.forNothing} shown for nothing, ${sc.v2.missed} missed`);
+    }
   } finally {
     openSource = undefined;
     source.close();

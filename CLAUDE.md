@@ -134,7 +134,7 @@ See [docs/slack-setup.md](docs/slack-setup.md) to connect Slack.
 
 Classifier evaluation: `npm run eval:sample`, `eval:label` and `eval:run` build and score a labeled set from your own messages. The data stays in `eval-data/`, which is gitignored. The roadmap records results so far.
 
-Grouping evaluation: `npm run eval:pairs` labels message pairs (same work or not), and `eval:linking` scores the current grouping, the re-link proposal and the v2 grouping (`core/grouping/`) against them, on a dev or held-out test split (see [docs/streams-and-message-linking.md](docs/streams-and-message-linking.md)). `eval:pairs-dump` and `eval:agreement` let a second labeler label the same pairs and compare; `eval:constraint-labels` turns the operator's corrections in the app into labels. `eval:inbox-diff` lines up Needs me as it is with Needs me under the v2 grouping, read-only, for the cut-over decision.
+Grouping evaluation: `npm run eval:pairs` labels message pairs (same work or not), and `eval:linking` scores the current grouping, the re-link proposal and the v2 grouping (`core/grouping/`) against them, on a dev or held-out test split (see [docs/streams-and-message-linking.md](docs/streams-and-message-linking.md)). `eval:pairs-dump` and `eval:agreement` let a second labeler label the same pairs and compare; `eval:constraint-labels` turns the operator's corrections in the app into labels. `eval:inbox-diff` lines up Needs me as it is with Needs me under the v2 grouping, read-only, for the cut-over decision; `eval:inbox-label` asks the operator, blind, whether each ask the two disagree on needs them, and `eval:inbox-diff` then scores both sides on those answers.
 
 ---
 
