@@ -233,22 +233,28 @@ act (`npm run eval:targets`); 598 dev pairs, 163 held-out test pairs):
 | v2 grouping (`core/grouping/`) | 0.88 | 0.90 |
 
 - v2 splits much less and merges less unrelated work on dev, and leads on the held-out pairs too. The test half is
-  small (about 100 scored pairs), so its intervals are wide. On the pairs even the model labeller escalated to the
-  operator, v2 gets 17 of 26 right, the other two 13.
+  small (about 100 scored pairs), so its intervals are wide. The pairs the model labeller couldn't decide went to the
+  operator, whose labels keep them in the set: on those 26 hardest pairs v2 gets 17 right, the current linker and
+  the re-link 13 each.
 - Each decision v2 makes is measured where it acts (`npm run eval:targets`): the over-merge detector's cuts were
   judged right in 12 of 12 pairs, and starting a new case after a subject's week of quiet in 7 of 10.
-- Fitting v2's weights to dev (`npm run eval:tune`) raised dev to 0.87 and lowered test to 0.76, so the
-  hand-set weights stay. More labels come first: the operator's corrections in the app now become labels
+- On the earlier 673-pair set, fitting v2's weights to dev (`npm run eval:tune`) raised dev to 0.87 but dropped
+  test to 0.76, an overfit, so the hand-set weights stay. More labels come first: the operator's corrections in the app now become labels
   (`npm run eval:constraint-labels`).
-- Each join rule, on pairs drawn where it decided: near copies 86% right, named subjects 75%, a question and its
-  answer 71%, a person's follow-up 63%, a sender's keyless continuation 57%. Switching any one off lowers dev F1 or
-  changes nothing, so all stay.
-- Tried and dropped, on the labels: splitting long threads by the subjects they name, or cutting their weaker links
-  (about half the cuts joined the same work); weakening a thread's pull after a day (cost dev F1); holding back a
-  ticket first named inside another conversation (4 of 5 pairs were the same work); reply chains inside threads,
-  from whom a reply addresses (Slack threads are flat; dev F1 unchanged, 4 over-merges fixed for 5 same-work pairs
-  split, test 0.90 to 0.89). Most of v2's remaining mistakes are a long thread changing topic, which none of these see.
-- `npm run regroup` puts the real history in 1,300 cases in 430 streams, most of them partners.
+- Each join rule, on pairs drawn where it decided (model labels, unsure left out): near copies 12 of 14 right,
+  named subjects 6 of 8, a question and its answer 5 of 7, a person's follow-up 5 of 8, a sender's keyless
+  continuation 4 of 7. Switching off any but named subjects lowers dev F1; named subjects changes nothing on dev
+  and stays until more labels say otherwise.
+- Tried and dropped, on the labels:
+  - splitting long threads by the subjects they name, or cutting their weaker links: about half the cuts joined
+    the same work;
+  - weakening a thread's pull after a day: it cost dev F1;
+  - holding back a ticket first named inside another conversation: 4 of 5 such pairs were the same work;
+  - reply chains inside threads, read from whom a reply addresses (Slack threads are flat): dev F1 unchanged, with
+    4 over-merges fixed and 5 same-work pairs split, and test fell from 0.90 to 0.89.
+
+  Most of v2's remaining mistakes are a long thread changing topic, which none of these see.
+- `npm run regroup` puts the real history in about 1,600 cases in 530 streams, most of them a subject's.
 
 ## Then — strategic
 
