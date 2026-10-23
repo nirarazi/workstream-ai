@@ -1241,7 +1241,9 @@ export class ContextGraph {
         WHERE dc.work_item_id = ? AND dc.digest_status = ? AND dc.agrees = 0
           AND dc.resolved_at IS NULL AND dc.judged_at IS NULL
           AND e.agent_id IS (SELECT agent_id FROM events WHERE id = ?)
-      `).get(check.workItemId, check.digestStatus, check.eventId) as { event_id: string } | undefined;
+          -- a whole-message claim says nothing about the item, so it never stands in for a line
+          AND dc.from_line >= ?
+      `).get(check.workItemId, check.digestStatus, check.eventId, check.fromLine === false ? 0 : 1) as { event_id: string } | undefined;
       if (waiting) {
         // The sender's own line for the item makes the waiting claim the item's own line (and targeted if it is)
         if (check.fromLine !== false) {
@@ -1257,12 +1259,12 @@ export class ContextGraph {
         SELECT 1 FROM digest_checks dc JOIN events e ON e.id = dc.event_id
         WHERE dc.work_item_id = ? AND dc.digest_status = ? AND dc.item_status IS ? AND dc.agrees = 0
           AND e.agent_id IS (SELECT agent_id FROM events WHERE id = ?)
+          -- a whole-message claim, left open or dismissed, doesn't silence a later one from the item's own line
+          AND dc.from_line >= ?
           AND ((dc.judge_verdict = 'unsure' AND dc.resolved_at IS NULL)
-            OR (dc.resolution IN ('app', 'operator-app') AND dc.resolved_at > ?
-              -- dismissing a whole-message claim doesn't silence a later one from the item's own line
-              AND dc.from_line >= ?))
-      `).get(check.workItemId, check.digestStatus, check.itemStatus, check.eventId,
-        new Date(Date.now() - 7 * 86400000).toISOString(), check.fromLine === false ? 0 : 1)) return;
+            OR (dc.resolution IN ('app', 'operator-app') AND dc.resolved_at > ?))
+      `).get(check.workItemId, check.digestStatus, check.itemStatus, check.eventId, check.fromLine === false ? 0 : 1,
+        new Date(Date.now() - 7 * 86400000).toISOString())) return;
     }
     this.db.db.prepare(`
       INSERT OR IGNORE INTO digest_checks (event_id, work_item_id, digest_status, digest_targeted, item_status, agrees, created_at, from_line)
@@ -1306,7 +1308,7 @@ export class ContextGraph {
   /**
    * Whether a digest's ask to the operator reaches them some other way: the digest has an item of its own (its
    * thread's, which takes its status and targeting), a line escalated an item (event_targets), or a line's own check
-   * says an item needs them
+   * says an item needs them. hasLaterDigestOnlyAsk repeats this test: change the two together
    */
   digestAskHasLine(eventId: string): boolean {
     return this.db.db.prepare(`
@@ -1322,7 +1324,8 @@ export class ContextGraph {
 
   /**
    * Whether the same sender has since posted another digest asking for the operator with no line saying what for: the
-   * latest such ask stands for the earlier ones, so a daily digest repeating it is one card, not one a day
+   * latest such ask stands for the earlier ones, so a daily digest repeating it is one card, not one a day. "No line"
+   * is digestAskHasLine's test, written out per digest here: change the two together
    */
   hasLaterDigestOnlyAsk(eventId: string, at: string): boolean {
     return this.db.db.prepare(`

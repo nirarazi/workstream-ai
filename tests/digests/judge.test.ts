@@ -275,6 +275,30 @@ describe("DigestJudge", () => {
     expect(shown.map((d) => [d.workItemId, d.createdAt])).toEqual([["OPS-2", "2026-10-16T09:00:00.000Z"]]);
   });
 
+  it("records and judges a later line about an item while a digest's ask filed under it is open, and keeps the ask", async () => {
+    disagreement("OPS-1", "in_progress", "blocked_on_human", { targeted: true, fromLine: false });
+    await new DigestJudge(graph, answering("app")).judgeSome();
+    disagreement("OPS-1", "in_progress", "blocked_on_human", { targeted: false, fromLine: true, messageId: "d2", at: "2026-10-16T09:00:00.000Z" });
+    const complete = answering("app");
+
+    await new DigestJudge(graph, complete).judgeSome();
+
+    expect(complete).toHaveBeenCalledTimes(1);
+    const rows = db.db.prepare("SELECT from_line, resolution, judge_verdict FROM digest_checks WHERE work_item_id = 'OPS-1' ORDER BY created_at").all();
+    expect(rows).toEqual([
+      { from_line: 0, resolution: null, judge_verdict: "unsure" },
+      { from_line: 1, resolution: "app", judge_verdict: "app" },
+    ]);
+  });
+
+  it("doesn't turn a waiting ask into the line's claim when the line arrives before the judge runs", () => {
+    disagreement("OPS-1", "in_progress", "blocked_on_human", { targeted: true, fromLine: false });
+    disagreement("OPS-1", "in_progress", "blocked_on_human", { targeted: false, fromLine: true, messageId: "d2", at: "2026-10-16T09:00:00.000Z" });
+
+    const rows = db.db.prepare("SELECT from_line FROM digest_checks WHERE work_item_id = 'OPS-1' ORDER BY created_at").all();
+    expect(rows).toEqual([{ from_line: 0 }, { from_line: 1 }]);
+  });
+
   it("doesn't count a line waiting on someone else as saying what the ask is for", async () => {
     disagreement("OPS-1", "in_progress", "blocked_on_human", { targeted: true, fromLine: false });
     disagreement("OPS-2", "in_progress", "blocked_on_human", { targeted: false, fromLine: true });

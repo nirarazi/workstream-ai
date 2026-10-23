@@ -110,7 +110,7 @@ export default function DigestChecks({ checks, onDecided, onOpen, selectedWorkIt
                   Digest is right
                 </button>
               )}
-                <button
+              <button
                 type="button"
                 disabled={isBusy}
                 onClick={() => decide(check, "app")}

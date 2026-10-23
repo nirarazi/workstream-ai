@@ -81,7 +81,6 @@ export function settleIfStale(graph: ContextGraph, d: DigestDisagreement): boole
     graph.resolveDigestCheck(d.eventId, d.workItemId, "superseded");
   } else if (item.currentAtcStatus && statusKind(item.currentAtcStatus) === statusKind(d.digestStatus)) {
     graph.resolveDigestCheck(d.eventId, d.workItemId, "agrees");
-
   } else if (
     statusKind(item.currentAtcStatus ?? "") !== "needs"
     && statusKind(d.digestStatus) !== "needs"
