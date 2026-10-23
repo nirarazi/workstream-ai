@@ -191,11 +191,21 @@ describe("digest checks for the operator", () => {
   });
 
   it("doesn't show a claim that was the whole digest's status, not its line about this item: it can only be dismissed", async () => {
-    const eventId = waiting("OPS-1", "noise", "blocked_on_human", true, false);
+    const eventId = waiting("OPS-1", "noise", "blocked_on_human", false, false);
     expect((await (await get()).json()).items).toEqual([]);
 
     expect((await decide({ eventId, workItemId: "OPS-1", verdict: "digest" })).status).toBe(404);
     expect(graph.getWorkItemById("OPS-1")!.currentAtcStatus).toBe("noise");
+  });
+
+  it("shows a digest that asks for the operator with no line saying what for once, and only lets it be dismissed", async () => {
+    const eventId = waiting("OPS-1", "noise", "blocked_on_human", true, false);
+    waiting("OPS-3", "noise", "blocked_on_human", true, false);
+
+    const items = (await (await get()).json()).items;
+    expect(items.map((i: { workItemId: string; aboutThisItem: boolean }) => [i.workItemId, i.aboutThisItem])).toEqual([["OPS-1", false]]);
+    expect((await decide({ eventId, workItemId: "OPS-1", verdict: "digest" })).status).toBe(409);
+    expect((await decide({ eventId, workItemId: "OPS-1", verdict: "app" })).status).toBe(200);
   });
 
   it("keeps a snooze, reopens a finished item the operator agrees needs them, and refuses a non-JSON body", async () => {

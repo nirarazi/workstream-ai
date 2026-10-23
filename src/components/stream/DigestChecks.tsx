@@ -61,23 +61,29 @@ export default function DigestChecks({ checks, onDecided, onOpen, selectedWorkIt
         const text = clean(check.digestText);
         return (
           <div key={key} role="group" aria-labelledby={titleId} className="px-4 py-3 border-t border-gray-800/60 text-xs">
-            <button
-              id={titleId}
-              type="button"
-              onClick={() => onOpen(check.workItemId)}
-              aria-current={selectedWorkItemId === check.workItemId ? "true" : undefined}
-              className="text-left font-medium text-gray-200 hover:underline cursor-pointer"
-            >
-              {clean(check.title || check.workItemId)}
-            </button>
-            <div className="mt-1.5 flex flex-wrap items-center gap-2 text-gray-400">
+            {/* A digest asking for the operator without a line saying what for: shown once, as the digest's ask */}
+            {!check.aboutThisItem ? (
+              <p id={titleId} className="font-medium text-gray-200">
+                {check.sender ? clean(check.sender) : "A digest"} asks for you, without saying which item
+              </p>
+            ) : (
+              <button
+                id={titleId}
+                type="button"
+                onClick={() => onOpen(check.workItemId)}
+                aria-current={selectedWorkItemId === check.workItemId ? "true" : undefined}
+                className="text-left font-medium text-gray-200 hover:underline cursor-pointer"
+              >
+                {clean(check.title || check.workItemId)}
+              </button>
+            )}
+            {check.aboutThisItem && <div className="mt-1.5 flex flex-wrap items-center gap-2 text-gray-400">
               <span>{check.sender ? clean(check.sender) : "A digest"} says</span>
               <StatusBadge status={check.digestStatus} />
               {check.digestSaysNeedsYou && <span className="text-gray-500">(needs you)</span>}
-              {!check.aboutThisItem && <span className="text-gray-500">(of the whole digest, not this item)</span>}
               <span>· the app has</span>
               {check.appStatus ? <StatusBadge status={check.appStatus} /> : <span className="text-gray-500">no status</span>}
-            </div>
+            </div>}
             <p className={`mt-1.5 text-gray-500 whitespace-pre-wrap ${isExpanded ? "" : "line-clamp-3"}`}>{text}</p>
             <button
               type="button"

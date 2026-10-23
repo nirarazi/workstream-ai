@@ -11,6 +11,7 @@
 // in progress (an item marked done too early, or one a digest can close). Otherwise, where neither side needs the
 // operator (done against noise, say), it's settled without asking anyone: either way nothing changes in Needs me. So
 // is a claim that was only the whole digest's status, not its line about the item: it says nothing about the item.
+// One such claim per digest stays when the digest asks for the operator and none of its lines says what for.
 
 import { createLogger } from "../logger.js";
 import { statusKind, type ContextGraph, type DigestDisagreement } from "../graph/index.js";
@@ -62,9 +63,14 @@ export function settleIfStale(graph: ContextGraph, d: DigestDisagreement): boole
     graph.resolveDigestCheck(d.eventId, d.workItemId, "superseded");
   } else if (item.currentAtcStatus && statusKind(item.currentAtcStatus) === statusKind(d.digestStatus)) {
     graph.resolveDigestCheck(d.eventId, d.workItemId, "agrees");
-  } else if (!d.fromLine) {
-    // The digest's status as a whole, not its line about this item: it says nothing about the item, its view can't be
-    // taken, and all the operator could do is dismiss it. The app's view stands
+  } else if (
+    !d.fromLine
+    && !(statusKind(d.digestStatus) === "needs" && d.digestTargeted && !graph.digestAskHasLine(d.eventId)
+      && !graph.hasEarlierWholeDigestCheck(d.eventId, d.workItemId))
+  ) {
+    // The digest's status as a whole, not its line about this item: it says nothing about the item, and its view can't
+    // be taken. The app's view stands. Except once per digest that asks for the operator with no line saying what for:
+    // that ask would reach them nowhere else, so one of its checks stays, as the digest's
     graph.resolveDigestCheck(d.eventId, d.workItemId, "not_about_item");
   } else if (
     statusKind(item.currentAtcStatus ?? "") !== "needs"

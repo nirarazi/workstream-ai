@@ -1303,6 +1303,28 @@ export class ContextGraph {
       .map((r) => ({ ...r, digestTargeted: r.digestTargeted === 1, fromLine: r.fromLine === 1 }));
   }
 
+  /**
+   * Whether a digest's ask to the operator reaches them through one of its own lines: a line that escalated an item
+   * (event_targets), or a line's own check saying an item needs them
+   */
+  digestAskHasLine(eventId: string): boolean {
+    return this.db.db.prepare(`
+      SELECT 1 FROM event_targets WHERE event_id = ?
+      UNION ALL
+      SELECT 1 FROM digest_checks WHERE event_id = ? AND from_line = 1 AND digest_status IN ('blocked_on_human', 'needs_decision')
+      LIMIT 1
+    `).get(eventId, eventId) !== undefined;
+  }
+
+  /** Whether another of a digest's whole-message checks, still waiting, comes first (by item id): the one that shows it */
+  hasEarlierWholeDigestCheck(eventId: string, workItemId: string): boolean {
+    return this.db.db.prepare(`
+      SELECT 1 FROM digest_checks
+      WHERE event_id = ? AND from_line = 0 AND resolved_at IS NULL AND work_item_id < ?
+      LIMIT 1
+    `).get(eventId, workItemId) !== undefined;
+  }
+
   /** Whether the same sender's digest has said something about the item since `at` (whatever it said) */
   hasLaterDigestCheck(workItemId: string, at: string, eventId: string): boolean {
     return this.db.db.prepare(`

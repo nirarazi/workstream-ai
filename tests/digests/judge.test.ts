@@ -234,8 +234,30 @@ describe("DigestJudge", () => {
     expect(check("OPS-1").judged_at).toBeNull();
   });
 
-  it("settles a claim that was the whole message's status rather than the digest's line for the item, asking no one", async () => {
+  it("keeps one claim per digest that asks for the operator with no line saying what for, and settles the rest", async () => {
     disagreement("OPS-1", "in_progress", "blocked_on_human", { targeted: true, fromLine: false });
+    disagreement("OPS-2", "in_progress", "blocked_on_human", { targeted: true, fromLine: false });
+    const complete = vi.fn(async () => JSON.stringify({ verdict: "digest", reason: "it asks" }));
+
+    await new DigestJudge(graph, complete).judgeSome();
+
+    expect(check("OPS-1")).toMatchObject({ resolution: null, judge_verdict: "unsure" });
+    expect(check("OPS-2").resolution).toBe("not_about_item");
+    expect(complete).toHaveBeenCalledTimes(1);
+  });
+
+  it("settles a digest's whole-message ask when one of its lines already asks for the operator", async () => {
+    disagreement("OPS-1", "in_progress", "blocked_on_human", { targeted: true, fromLine: false });
+    graph.upsertWorkItem({ id: "OPS-7", source: "jira", currentAtcStatus: "blocked_on_human" });
+    db.db.prepare("INSERT INTO event_targets (event_id, work_item_id) VALUES (?, ?)").run(graph.getEventByMessageId("d1", "T-DIGEST")!.id, "OPS-7");
+
+    await new DigestJudge(graph, answering("digest")).judgeSome();
+
+    expect(check("OPS-1").resolution).toBe("not_about_item");
+  });
+
+  it("settles a claim that was the whole message's status rather than the digest's line for the item, asking no one", async () => {
+    disagreement("OPS-1", "in_progress", "blocked_on_human", { targeted: false, fromLine: false });
     const complete = answering("digest");
 
     expect(await new DigestJudge(graph, complete).judgeSome()).toEqual({ settled: 1, asked: 0 });
