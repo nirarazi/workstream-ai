@@ -57,8 +57,12 @@ export function createMcpServer(graph: ContextGraph): McpServer {
       workItemId: z.string(),
       status: z.enum(["completed", "in_progress", "blocked_on_human", "needs_decision"]),
       message: z.string(),
+      // Optional: who the agent is waiting on (people or agents, by name or platform id), for a blocked status or a
+      // decision. Recorded as the message's "action required from", where the wait-for graph and the blocked-on-me
+      // report read it. It never takes an item out of Needs me: an agent's claim is unverified
+      waitingOn: z.array(z.string().trim().min(1).max(200)).max(10).optional(),
     },
-    async ({ workItemId, status, message }) => {
+    async ({ workItemId, status, message, waitingOn }) => {
       // An agent's push is a message: it sets the status time like any polled message does
       const now = new Date().toISOString();
       graph.upsertWorkItem({
@@ -81,6 +85,8 @@ export function createMcpServer(graph: ContextGraph): McpServer {
         reason: message,
         rawText: message,
         timestamp: now,
+        // Only a wait names someone: a done or in-progress report has no one to wait on
+        actionRequiredFrom: waitingOn?.length && (status === "blocked_on_human" || status === "needs_decision") ? [...new Set(waitingOn)] : null,
       });
 
       return {

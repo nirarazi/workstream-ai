@@ -45,7 +45,7 @@ agents via MCP ─────────────────────�
 - **Work item linking** (`core/graph/linker.ts`, `core/graph/extractors/`): pattern extraction of ticket IDs and PR numbers, plus continuation detection for messages outside threads (`core/continuation/`).
 - **Task adapters** (`core/adapters/tasks/`): enrich work items with data from a tracker (Jira is the reference implementation) and create tickets.
 - **MCP server** (`core/mcp/`, stdio, started with `npm run mcp`): lets agents push status directly instead of being read from chat. Tools:
-  - `workstream_report_status`
+  - `workstream_report_status` (optionally with `waitingOn`: who a blocked agent waits on)
   - `workstream_request_approval`
   - `workstream_complete`
 - **UI** (`src/`): React, run in a Tauri desktop window or a browser tab.

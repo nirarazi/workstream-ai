@@ -71,6 +71,30 @@ describe("MCP Server", () => {
       expect(graph.findItemByKey("mcp:northwind-export")).toBe("northwind-export");
     });
 
+    it("records who a blocked agent is waiting on, without changing whether it's for the operator", async () => {
+      await client.callTool({
+        name: "workstream_report_status",
+        arguments: { workItemId: "OPS-300", status: "blocked_on_human", message: "Need the schema signed off", waitingOn: ["Dana", "Dana", "Alex Rivera"] },
+      });
+      const [event] = graph.getEventsForWorkItem("OPS-300");
+      expect(event.actionRequiredFrom).toEqual(["Dana", "Alex Rivera"]);
+      expect(event.targetedAtOperator).toBe(true);
+    });
+
+    it("ignores waitingOn on a status that waits on no one, and rejects an oversized one", async () => {
+      await client.callTool({
+        name: "workstream_report_status",
+        arguments: { workItemId: "OPS-301", status: "in_progress", message: "Halfway", waitingOn: ["Dana"] },
+      });
+      expect(graph.getEventsForWorkItem("OPS-301")[0].actionRequiredFrom).toBeNull();
+      const result = await client.callTool({
+        name: "workstream_report_status",
+        arguments: { workItemId: "OPS-302", status: "blocked_on_human", message: "Stuck", waitingOn: Array.from({ length: 11 }, (_, i) => `person ${i}`) },
+      });
+      expect(result.isError).toBe(true);
+      expect(graph.getWorkItemById("OPS-302")).toBeNull();
+    });
+
     it("updates an existing work item status", async () => {
       // First report
       await client.callTool({
