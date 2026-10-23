@@ -74,14 +74,29 @@ describe("DigestJudge", () => {
     expect(graph.getActionableItems().map((i) => i.workItem.id)).toEqual(["OPS-1"]);
   });
 
-  it("only ever adds the operator's attention: a digest's word that an item is done or noise waits for them", async () => {
+  it("settles, keeping the app's view and asking no one, when neither side says the item needs the operator", async () => {
     disagreement("OPS-1", "in_progress", "completed");
-    disagreement("OPS-2", "in_progress", "noise");
+    disagreement("OPS-2", "noise", "completed");
+    disagreement("OPS-3", "completed", "in_progress");
+    const complete = answering("digest");
+
+    expect(await new DigestJudge(graph, complete).judgeSome()).toEqual({ settled: 3, asked: 0 });
+
+    expect(complete).not.toHaveBeenCalled();
+    expect(graph.getWorkItemById("OPS-1")!.currentAtcStatus).toBe("in_progress");
+    expect(graph.getWorkItemById("OPS-2")!.currentAtcStatus).toBe("noise");
+    expect(check("OPS-1").resolution).toBe("no_attention");
+    expect(check("OPS-2").resolution).toBe("no_attention");
+  });
+
+  it("only ever adds the operator's attention: a digest's word that an item in Needs me is done waits for them", async () => {
+    disagreement("OPS-1", "needs_decision", "completed");
+    disagreement("OPS-2", "blocked_on_human", "noise");
 
     await new DigestJudge(graph, answering("digest")).judgeSome();
 
-    expect(graph.getWorkItemById("OPS-1")!.currentAtcStatus).toBe("in_progress");
-    expect(graph.getWorkItemById("OPS-2")!.currentAtcStatus).toBe("in_progress");
+    expect(graph.getWorkItemById("OPS-1")!.currentAtcStatus).toBe("needs_decision");
+    expect(graph.getWorkItemById("OPS-2")!.currentAtcStatus).toBe("blocked_on_human");
     expect(check("OPS-1")).toMatchObject({ resolution: null, judge_verdict: "unsure" });
   });
 
@@ -125,9 +140,9 @@ describe("DigestJudge", () => {
   });
 
   it("gives up asking about a check the model keeps failing on while it answers others, and settles free ones meanwhile", async () => {
-    disagreement("OPS-2", "in_progress", "completed", { at: "2026-10-15T08:00:00.000Z", messageId: "d0" });
+    disagreement("OPS-2", "blocked_on_human", "completed", { at: "2026-10-15T08:00:00.000Z", messageId: "d0" });
     disagreement("OPS-1", "in_progress", "blocked_on_human");
-    disagreement("OPS-3", "in_progress", "completed", { statusAt: "2026-10-15T10:00:00.000Z" });
+    disagreement("OPS-3", "blocked_on_human", "completed", { statusAt: "2026-10-15T10:00:00.000Z" });
     const complete = vi.fn(async (prompt: string) => {
       if (prompt.startsWith("Work item: OPS-2")) return '{"verdict":"app","reason":"fine"}';
       throw new Error("Anthropic API error 400: bad request");
@@ -143,8 +158,8 @@ describe("DigestJudge", () => {
 
   it("doesn't let a check the model always fails on hold up the others", async () => {
     disagreement("OPS-1", "in_progress", "blocked_on_human", { at: "2026-10-15T08:00:00.000Z", messageId: "d0" }); // oldest
-    disagreement("OPS-2", "in_progress", "completed");
-    disagreement("OPS-3", "in_progress", "completed", { messageId: "d2", at: "2026-10-15T09:30:00.000Z" });
+    disagreement("OPS-2", "blocked_on_human", "completed");
+    disagreement("OPS-3", "blocked_on_human", "completed", { messageId: "d2", at: "2026-10-15T09:30:00.000Z" });
     const complete = vi.fn(async (prompt: string) => {
       if (prompt.startsWith("Work item: OPS-1")) throw new Error("Anthropic API error 400: bad request");
       return '{"verdict":"app","reason":"fine"}';
@@ -159,7 +174,7 @@ describe("DigestJudge", () => {
   });
 
   it("doesn't count a rate limit against a check", async () => {
-    disagreement("OPS-2", "in_progress", "completed", { at: "2026-10-15T08:00:00.000Z", messageId: "d0" });
+    disagreement("OPS-2", "blocked_on_human", "completed", { at: "2026-10-15T08:00:00.000Z", messageId: "d0" });
     disagreement("OPS-1", "in_progress", "blocked_on_human");
     const complete = vi.fn(async (prompt: string) => {
       if (prompt.startsWith("Work item: OPS-2")) return '{"verdict":"app","reason":"fine"}';
@@ -221,8 +236,8 @@ describe("DigestJudge", () => {
     disagreement("OPS-1", "in_progress", "blocked_on_human", { targeted: true });
     // Another agent's later digest agreeing with the app doesn't cancel it
     disagreement("OPS-1", "in_progress", "in_progress", { messageId: "r1", at: "2026-10-15T10:00:00.000Z", agentId: "U-relay" });
-    for (let i = 10; i < 16; i++) disagreement(`OPS-${i}`, "in_progress", "completed");
-    disagreement("OPS-20", "in_progress", "completed", { messageId: "r2", at: "2026-10-15T11:00:00.000Z", agentId: "U-relay" });
+    for (let i = 10; i < 16; i++) disagreement(`OPS-${i}`, "blocked_on_human", "completed");
+    disagreement("OPS-20", "blocked_on_human", "completed", { messageId: "r2", at: "2026-10-15T11:00:00.000Z", agentId: "U-relay" });
     const complete = answering("app");
 
     await new DigestJudge(graph, complete).judgeSome();
@@ -233,11 +248,11 @@ describe("DigestJudge", () => {
   });
 
   it("doesn't queue the same claim about an item twice, nor let one sender fill the queue", async () => {
-    disagreement("OPS-1", "in_progress", "completed");
-    disagreement("OPS-1", "in_progress", "completed", { messageId: "d2", at: "2026-10-15T10:00:00.000Z" });
+    disagreement("OPS-1", "blocked_on_human", "completed");
+    disagreement("OPS-1", "blocked_on_human", "completed", { messageId: "d2", at: "2026-10-15T10:00:00.000Z" });
     expect(db.db.prepare("SELECT COUNT(*) AS n FROM digest_checks WHERE work_item_id = 'OPS-1'").get()).toEqual({ n: 1 });
 
-    for (let i = 10; i < 30; i++) disagreement(`OPS-${i}`, "in_progress", "completed");
+    for (let i = 10; i < 30; i++) disagreement(`OPS-${i}`, "blocked_on_human", "completed");
     graph.upsertAgent({ id: "U-relay", name: "Relay", platform: "slack", platformUserId: "U-relay" });
     graph.insertEvent({ threadId: "T-DIGEST", messageId: "r1", workItemId: null, agentId: "U-relay", status: "in_progress", confidence: 0.9, rawText: "Relay's round-up", timestamp: "2026-10-15T11:00:00.000Z", digest: true });
     graph.upsertWorkItem({ id: "OPS-99", source: "jira", currentAtcStatus: "in_progress", statusAt: "2026-10-14T09:00:00.000Z" });
@@ -258,8 +273,8 @@ describe("DigestJudge", () => {
   });
 
   it("leaves what it can't settle for the operator, and doesn't ask again", async () => {
-    disagreement("OPS-1", "in_progress", "completed");
-    disagreement("OPS-2", "in_progress", "completed");
+    disagreement("OPS-1", "blocked_on_human", "completed");
+    disagreement("OPS-2", "blocked_on_human", "completed");
     const complete = vi.fn().mockResolvedValueOnce('{"verdict":"unsure","reason":"no messages"}').mockResolvedValueOnce("Sure! The digest is right.");
 
     await new DigestJudge(graph, complete).judgeSome();
@@ -271,7 +286,7 @@ describe("DigestJudge", () => {
   });
 
   it("tries again next poll when the model can't be reached, and asks at most a few times a poll", async () => {
-    for (const id of ["OPS-1", "OPS-2", "OPS-3", "OPS-4", "OPS-5"]) disagreement(id, "in_progress", "completed");
+    for (const id of ["OPS-1", "OPS-2", "OPS-3", "OPS-4", "OPS-5"]) disagreement(id, "blocked_on_human", "completed");
     const down = vi.fn().mockRejectedValue(new Error("Daily LLM budget exhausted"));
 
     // A spent budget isn't the check's doing: no probe, just stop for this run

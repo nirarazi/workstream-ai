@@ -6,8 +6,9 @@
 // which reads the digest's line and the item's own recent messages.
 //
 // The judge only ever adds the operator's attention: it may keep the app's view, or take a digest's word that an item
-// needs the operator (reopening it if it was done). A digest that would take an item out of Needs me, finish it, or
-// call it noise is the operator's call, as is anything the judge can't settle.
+// needs the operator (reopening it if it was done). A digest that would take an item out of Needs me is the operator's
+// call, as is anything the judge can't settle where one side says the item needs them. Where neither side does (done
+// against noise, say), it's settled without asking anyone: either way nothing changes in Needs me.
 
 import { createLogger } from "../logger.js";
 import { statusKind, type ContextGraph, type DigestDisagreement } from "../graph/index.js";
@@ -47,7 +48,8 @@ Reply with JSON only: {"verdict": "app" | "digest" | "unsure", "reason": "<one s
 
 /**
  * Settles a digest check that no longer needs judging: the item is gone, has moved on since the digest (a message
- * about it, or the operator), the same sender's later line has spoken about it, or the two now agree. True if settled.
+ * about it, or the operator), the same sender's later line has spoken about it, the two now agree, or neither side
+ * says the item needs the operator. True if settled.
  */
 export function settleIfStale(graph: ContextGraph, d: DigestDisagreement): boolean {
   const item = graph.getWorkItemById(d.workItemId);
@@ -57,6 +59,10 @@ export function settleIfStale(graph: ContextGraph, d: DigestDisagreement): boole
     graph.resolveDigestCheck(d.eventId, d.workItemId, "superseded");
   } else if (item.currentAtcStatus && statusKind(item.currentAtcStatus) === statusKind(d.digestStatus)) {
     graph.resolveDigestCheck(d.eventId, d.workItemId, "agrees");
+  } else if (statusKind(item.currentAtcStatus ?? "") !== "needs" && statusKind(d.digestStatus) !== "needs") {
+    // Neither side needs the operator (done against noise, in progress against done): whichever is right, nothing
+    // changes in Needs me, so it isn't worth their attention or a model call. The app's view stands
+    graph.resolveDigestCheck(d.eventId, d.workItemId, "no_attention");
   } else {
     return false;
   }
