@@ -5,7 +5,7 @@
 // Its only state is when you last looked, per lens, kept in this browser; without it, the last 24 hours. Calm by
 // design: green and amber, never red, and no counts you can't act on.
 
-import { useCallback, useEffect, useRef, useState, type JSX } from "react";
+import { useEffect, useState, type JSX } from "react";
 import { fetchOverview, type Overview, type OverviewRow } from "../lib/api";
 
 const LOOKED_KEY = "workstream-overview-looked";
@@ -27,6 +27,10 @@ function writeLooked(lens: string, at: string): void {
     localStorage.setItem(LOOKED_KEY, JSON.stringify({ ...readLooked(), [lens]: at }));
   } catch { /* not remembered: next time falls back to the last 24 hours */ }
 }
+
+// When each lens was last looked at before this visit to the app: read once, so a refresh, switching lenses or
+// leaving the tab and coming back keeps showing the same changes, while each look is remembered for next time
+let lookedBefore: Record<string, string> | null = null;
 
 function sinceLabel(since: string, now: string): string {
   const hours = (Date.parse(now) - Date.parse(since)) / 3_600_000;
@@ -70,10 +74,7 @@ function Section({ title, total, rows, empty }: { title: string; total: number; 
 
 export default function OverviewView(): JSX.Element {
   const [lens, setLens] = useState<string>(WHOLE);
-  // When each lens was last looked at before this visit: read once, so a refresh or switching back keeps showing the
-  // same changes, while the visit itself is remembered for next time
-  const looked = useRef<Record<string, string>>(readLooked());
-  const since = looked.current[lens] ?? null;
+  const since = (lookedBefore ??= readLooked())[lens] ?? null;
   const [data, setData] = useState<Overview | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -82,20 +83,26 @@ export default function OverviewView(): JSX.Element {
     writeLooked(lens, new Date().toISOString());
   }, [lens]);
 
-  const load = useCallback(async () => {
-    try {
-      setData(await fetchOverview(since, lens || null));
-      setError(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "The engine didn't answer");
-    }
-  }, [since, lens]);
-
   useEffect(() => {
+    // A response for a lens no longer showing is dropped
+    let current = true;
+    const load = async () => {
+      try {
+        const next = await fetchOverview(since, lens || null);
+        if (!current) return;
+        setData(next);
+        setError(null);
+      } catch (err) {
+        if (current) setError(err instanceof Error ? err.message : "The engine didn't answer");
+      }
+    };
     load();
     const t = setInterval(load, REFRESH_MS);
-    return () => clearInterval(t);
-  }, [load]);
+    return () => {
+      current = false;
+      clearInterval(t);
+    };
+  }, [since, lens]);
 
   if (error && !data) return <p className="text-sm text-gray-500">Couldn't load the overview: {error}</p>;
   if (!data) return <p className="text-sm text-gray-600">Loading…</p>;
@@ -125,7 +132,7 @@ export default function OverviewView(): JSX.Element {
       </p>
 
       <nav className="flex flex-wrap items-center gap-1.5 mb-6" aria-label="Lens">
-        {[{ id: WHOLE, label: "Whole business", off: data.areas.some((a) => a.off > 0), active: 0 }, ...data.areas.slice(0, 12).map((a) => ({ id: a.id, label: a.label, off: a.off > 0, active: a.active }))]
+        {[{ id: WHOLE, label: "Whole business", off: data.areas.some((a) => a.off > 0), active: 0 }, ...data.areas.filter((a, i) => i < 12 || a.id === lens).map((a) => ({ id: a.id, label: a.label, off: a.off > 0, active: a.active }))]
           .map((a) => (
             <button
               key={a.id || "whole"}

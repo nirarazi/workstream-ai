@@ -8,10 +8,11 @@
 //   - what changed since the viewer last looked;
 //   - one line for every other stream with a message in the last 30 days.
 // Movement is a case's status changing, in the messages that are work (reports and telemetry never count). A stream is
-// stuck when a case in it waits on someone (blocked, or a decision) other than as an ask already in front of the
-// operator, and its latest movement is older than its stuck line: three times its median gap between movements and at
+// stuck when a case in it waits on someone (blocked, or a decision), other than an ask already in front of the operator
+// or one they've dealt with (snoozed, dismissed, acted on) or that was handed on, and its latest movement is older
+// than its stuck line, however old (a case blocked for months is still stuck): three times its median gap between movements and at
 // least two days, or seven days while it has fewer than three. A case merely in progress and quiet is a slow stream's
-// normal, not stuck. It's noisy with ten or more
+// normal, not stuck. A case's first message counts as movement, so a stream that keeps opening new cases is moving. It's noisy with ten or more
 // messages that are work or chatter in the last seven days and no movement in them. An area is the channel most of a
 // stream's messages are in; direct messages are one area. All placeholders for the trial (open question 1).
 
@@ -77,6 +78,8 @@ export interface OverviewInput {
   grouping: StoredGrouping;
   /** Needs me by case */
   needsYou: V2Entry[];
+  /** Cases Needs me by case holds back: snoozed, dismissed or acted on by the operator, handed off, or noise */
+  held: ReadonlySet<string>;
   ranked: ReturnType<typeof rankNeedsYou>;
   actorName: (id: string) => string;
 }
@@ -131,7 +134,8 @@ export function buildOverview(input: OverviewInput, opts: { now: string; since: 
   const messages = new Map(g.messages.map((m) => [m.key, m]));
   const channelNames = new Map(g.messages.filter((m) => m.channelId && m.channelName).map((m) => [m.channelId!, m.channelName]));
   const cases = new Map(g.cases.map((c) => [c.id, c]));
-  const needsYouCases = new Set(input.needsYou.map((e) => e.caseId));
+  // Already in front of the operator, or already dealt with by them or handed on: never "stuck" as well
+  const settled = new Set([...input.needsYou.map((e) => e.caseId), ...input.held]);
 
   // Each stream's area: the channel most of its messages are in, direct messages together
   const areaOf = new Map<string, string>();
@@ -155,6 +159,8 @@ export function buildOverview(input: OverviewInput, opts: { now: string; since: 
   const states: StreamState[] = [];
   const finished: OverviewRow[] = [];
   let newCases = 0;
+  // Finished since the last look, however long ago that was (the list itself is the last seven days)
+  let finishedSince = 0;
   for (const s of g.streams) {
     const moves: string[] = [];
     let openCase: Case | null = null;
@@ -167,11 +173,12 @@ export function buildOverview(input: OverviewInput, opts: { now: string; since: 
       const { at, status } = movementsOf(c, messages, g.kinds);
       moves.push(...at);
       if (status && status !== "completed" && (!openCase || c.last > openCase.last)) openCase = c;
-      if (status && ASKS.has(status) && !needsYouCases.has(c.id) && (!waitingCase || c.last > waitingCase.last)) waitingCase = c;
+      if (status && ASKS.has(status) && !settled.has(c.id) && (!waitingCase || c.last > waitingCase.last)) waitingCase = c;
       const last = at[at.length - 1];
       if (status === "completed" && last && now - Date.parse(last) <= FINISHED_DAYS * DAY && inLens(s.key)) {
         finished.push({ caseId: c.id, stream: s.key, streamLabel: label(s.key), area: areaOf.get(s.key)!, title: titleOf(messages.get(c.members[0].key)), detail: `finished ${ago(last, opts.now)} ago`, at: last });
       }
+      if (status === "completed" && last && last > opts.since && inLens(s.key)) finishedSince++;
       if (c.first > opts.since && inLens(s.key)) newCases++;
       for (const member of c.members) {
         const m = messages.get(member.key);
@@ -241,7 +248,7 @@ export function buildOverview(input: OverviewInput, opts: { now: string; since: 
     since: opts.since,
     area: opts.area,
     areas: [...areas.values()].sort((a, b) => b.active - a.active || (a.label < b.label ? -1 : 1)),
-    changes: { finished: finished.filter((f) => f.at > opts.since).length, stuck: becameStuck, new: newCases, handedToYou },
+    changes: { finished: finishedSince, stuck: becameStuck, new: newCases, handedToYou },
     needsYou: { rows: needsRows.slice(0, MAX_ROWS), total: needsRows.length },
     stuck: { rows: stuckRows.slice(0, MAX_ROWS), total: stuckRows.length },
     finished: { rows: finished.slice(0, MAX_ROWS), total: finished.length },
@@ -277,7 +284,7 @@ export function loadOverviewInput(
   const operatorActors = new Set([...actors].filter(([id, name]) => isOperator(opts.operatorNames, id, name)).map(([id]) => id));
   const since = new Date(Date.parse(opts.now) - BLOCKS_DAYS * DAY).toISOString();
   const ranked = rankNeedsYou(inbox.entries, new Map(grouping.cases.map((c) => [c.id, c])), messages, asks, { operatorNames: opts.operatorNames, operatorActors, since });
-  return { grouping, needsYou: inbox.entries, ranked, actorName: (id) => actors.get(id) ?? id };
+  return { grouping, needsYou: inbox.entries, held: new Set(inbox.held.keys()), ranked, actorName: (id) => actors.get(id) ?? id };
 }
 
 const RECHECK_MS = 30_000;

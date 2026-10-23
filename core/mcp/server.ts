@@ -58,8 +58,9 @@ export function createMcpServer(graph: ContextGraph): McpServer {
       status: z.enum(["completed", "in_progress", "blocked_on_human", "needs_decision"]),
       message: z.string(),
       // Optional: who the agent is waiting on (people or agents, by name or platform id), for a blocked status or a
-      // decision. Recorded as the message's "action required from", where the wait-for graph and the blocked-on-me
-      // report read it. It never takes an item out of Needs me: an agent's claim is unverified
+      // decision. Recorded as the message's "action required from", as the classifier records it for a polled message.
+      // The wait-for graph will read it once an agent's push has a verified sender (today it has none, so it draws no
+      // ask). It never takes an item out of Needs me: an agent's claim is unverified
       waitingOn: z.array(z.string().trim().min(1).max(200)).max(10).optional(),
     },
     async ({ workItemId, status, message, waitingOn }) => {

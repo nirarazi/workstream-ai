@@ -4,7 +4,7 @@ Status: the first version (section 5) is built: the Overview tab, `GET /api/over
 and `npm run report:blocked`. The rest is design. The model underneath it (cases, streams, subjects, the
 graph) is in [work-model.md](work-model.md); this doc is about what the operator sees. The Overview is a new page
 beside the existing ones: the Stream view (Needs me, Snoozed, All active, Dismissed) stays the place to act on
-items, and the Work items table stays the full list. The Overview links into both.
+items, and the Work items table stays the full list. Later, the Overview links into both; the first version doesn't.
 
 The question this doc answers: when a company runs hundreds of streams of work at once, how does one page let a
 person see what's going on and focus on the right things, without adding to the overload it's meant to remove?
@@ -150,7 +150,8 @@ and "nobody owns it" and the cross-area ownership lines (they need actors, step 
 - **stuck:** a case waiting on someone (blocked, or a decision), other than an ask already under "needs you", and no
   movement for longer than three times the stream's median gap between movements, and at least two days; a stream
   with fewer than three movements so far uses seven days. A case merely in progress and quiet isn't stuck: on the
-  reference fleet, counting those made about 240 of some 530 active streams "stuck", which is no summary at all;
+  reference fleet, counting those made about 240 streams "stuck", which is no summary at all. Neither is a case the
+  operator snoozed, dismissed or acted on, or that was handed on. A case's first message counts as movement;
 - **noisy:** ten or more messages that are work or chatter (not reports or telemetry) in the last seven days, and
   no movement.
 

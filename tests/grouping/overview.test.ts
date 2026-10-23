@@ -26,7 +26,7 @@ function msg(at: string, over: Partial<LoadedMessage> = {}): LoadedMessage {
 const asCase = (id: string, stream: string, ms: LoadedMessage[]): Case =>
   ({ id, keys: [], stream, first: ms[0].at, last: ms[ms.length - 1].at, members: ms.map((m) => ({ key: m.key, at: m.at, via: null, viaReason: null, reasons: [] })) });
 
-function input(cases: Array<[string, string, LoadedMessage[]]>, extra: { kinds?: Map<string, string>; direct?: string[]; needsYou?: V2Entry[] } = {}): OverviewInput {
+function input(cases: Array<[string, string, LoadedMessage[]]>, extra: { kinds?: Map<string, string>; direct?: string[]; needsYou?: V2Entry[]; held?: string[] } = {}): OverviewInput {
   const all = cases.flatMap(([, , ms]) => ms);
   const cs = cases.map(([id, stream, ms]) => asCase(id, stream, ms));
   const streams = new Map<string, Stream>();
@@ -41,6 +41,7 @@ function input(cases: Array<[string, string, LoadedMessage[]]>, extra: { kinds?:
   return {
     grouping: { messages: all, cases: cs, streams: [...streams.values()], kinds: extra.kinds ?? new Map(), directChannels: new Set(extra.direct ?? []), computedAt: NOW },
     needsYou,
+    held: new Set(extra.held ?? []),
     ranked: needsYou.map((entry) => ({ entry, heldUp: [], timesAsked: 1, waitingSince: entry.ask.at })),
     actorName: (id) => id,
   };
@@ -82,6 +83,20 @@ describe("buildOverview", () => {
     expect(o.stuck.total).toBe(0);
     expect(o.needsYou.rows).toMatchObject([{ caseId: "c1", streamLabel: "northwind", detail: "waiting 8 days" }]);
     expect(o.movingNormally).toBe(0);
+  });
+
+  it("leaves a case the operator already dealt with (snoozed, acted on) or that was handed on out of stuck", () => {
+    const waiting = [msg(daysAgo(9)), msg(daysAgo(8), { status: "blocked_on_human" })];
+    const o = buildOverview(input([["c1", "subject:northwind", waiting]], { held: ["c1"] }), lens());
+    expect(o.stuck.total).toBe(0);
+    expect(o.movingNormally).toBe(1);
+  });
+
+  it("counts what finished since a look longer ago than the seven days it lists", () => {
+    const done = [msg(daysAgo(12)), msg(daysAgo(10), { status: "completed" })];
+    const o = buildOverview(input([["c1", "subject:northwind", done]]), lens({ since: daysAgo(14) }));
+    expect(o.finished.total).toBe(0);
+    expect(o.changes.finished).toBe(1);
   });
 
   it("calls a busy stream with no movement this week noisy, counting neither reports nor noise", () => {
