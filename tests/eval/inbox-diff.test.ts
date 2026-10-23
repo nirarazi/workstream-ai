@@ -1,7 +1,8 @@
 // tests/eval/inbox-diff.test.ts — Needs me by case under v2, and how it lines up with the live items
 
 import { describe, it, expect } from "vitest";
-import { compareInboxes, disagreementQueue, excerpt, scoreDisagreements, v2Inbox, type Escalation, type EventInfo, type ItemState } from "../../core/eval/inbox-diff.js";
+import { compareInboxes, disagreementQueue, excerpt, scoreDisagreements } from "../../core/eval/inbox-diff.js";
+import { v2Inbox, type Escalation, type EventInfo, type ItemState } from "../../core/grouping/inbox.js";
 import type { LoadedMessage } from "../../core/grouping/load.js";
 import type { Case } from "../../core/grouping/streams.js";
 import type { ActionableItem } from "../../core/types.js";
