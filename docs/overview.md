@@ -86,11 +86,11 @@ by agent.
 
 **Taking a role is a temporary remit.** Eventually, while Dana has the "Partner success" lens on, "needs me" on this
 page means "needs whoever runs partner success". Nobody has to write down where their responsibilities end; picking
-a lens says it, for as long as it's on. Which lens a person picks, and when, is itself evidence the app can learn
-from. This fits how ownership works in practice: loose, renegotiated in the open, and better inferred from what
+a lens says it, for as long as it's on. Which lens a person picks, and when, may be evidence the app can learn from
+(open question 6). This fits how ownership works in practice: loose, renegotiated in the open, and better inferred from what
 people say and do than declared up front. In the first version a lens only filters this page: "needs you" stays the
 operator's own asks, and Needs me, its interrupts and `operator.context` are unchanged. How lenses should combine
-with the written remit in roadmap item 5 is open question 6.
+with the learned remit in roadmap item 5 is open question 6.
 
 **Each zoom level has its own actions** (later, section 6):
 
@@ -163,8 +163,8 @@ Needs you (2)
   Pricing page copy   — Atlas has asked twice
 
 Stuck or noisy (2)
-  Partners            — welcome notes waiting on one decision, 4 days
-  Platform            — Relay's nightly import failing since Monday
+  Partners · Welcome notes   — waiting on one decision, 4 days
+  Platform · Nightly import  — Relay's import failing since Monday
 
 Finished, last 7 days (3)
   Contoso onboarding · OPS-101 export fix · Q3 price list
@@ -211,12 +211,14 @@ eval score makes up for it.
 4. **Several people.** Several people, each in their own roles, would look at one company through different
    lenses. Today the app is local-first, one operator per engine, and the engine's API has no authentication: it's
    safe only because it listens on loopback. Sharing one picture would need authentication and per-person scoping of
-   what each person can see first, and direct messages left out of anything shared by default. Whether to share
+   what each person can see first, and direct messages left out of anything shared by default. So would each person's learned remit and the
+   actions it's learned from: those belong to that person. Whether to share
    one picture, or have each person run their own and get different answers, is an architecture and product
    decision, and not one to make yet.
 5. **Ranking what needs you.** By what's queued behind each block, how long it has waited, and what it's worth.
    Where do those signals come from when agents don't state them?
-6. **Lenses and the written remit.** Roadmap item 5 has each person write a remit. A lens is a remit taken on for
-   a while instead of written down. Does a lens replace the written remit, feed a draft of it, or sit beside it?
+6. **Lenses and the learned remit.** Roadmap item 5 learns each person's remit from what they do, with a written
+   one optional. A lens is a remit taken on for a while. Is picking a lens one more piece of evidence for the
+   learned remit, or should a lens override it while it's on?
 7. **Goals.** Setting goals and seeing which are going off track belongs at the whole-business level, but a goal
    isn't a kind in the work model yet. What is one: a milestone, a rule, or something new?

@@ -59,7 +59,8 @@ accuracy on the reference fleet) has never been measured.
        channel (for example an integration failing).
      - So ownership depends on channel *and* the kind of problem: business approvals go to Dana;
        infra and agent misbehaviour go to Alex.
-     - That means filling in the operator's remit in config, and asking the "targeted" question with
+     - That means giving the classifier the operator's remit (in config for this eval; item 5 learns it
+       instead), and asking the "targeted" question with
        ownership in the state instead of forcing every block into the inbox.
    **Third run (2026-10-12): with Alex's remit in `operator.context`.** In the decision path, the remit now
    decides whether a block reaches the operator, instead of every block going to the inbox.
@@ -120,26 +121,35 @@ accuracy on the reference fleet) has never been measured.
 
 5. **Operator persona and remit** (plan `docs/superpowers/plans/2026-04-17-operator-persona.md`): add "Not for me" and correction capture.
    Every correction becomes a new labeled eval item and a live count of unnecessary interrupts.
-   - **The remit is written by each person and never hardcoded.** The 2026-10-11 eval shows why it matters:
-     21 of 28 unnecessary interrupts were blocks owned by another human.
+   - **The remit is learned per person, never required and never hardcoded.** The 2026-10-11 eval shows why
+     it matters: 21 of 28 unnecessary interrupts were blocks owned by another human. Responsibilities are
+     loose and renegotiated in the open, so a new user starts with no written remit: the app infers one from
+     the history it already reads (who each ask names or waits on, handoffs, what the person answers, acts on
+     or dismisses) and keeps correcting it as ownership shifts. Writing one is optional: a person can state
+     theirs, and the app treats it as a starting belief that their own actions confirm or correct, showing
+     where the two disagree. When the evidence for an item is thin, the app doesn't guess: the item stays in
+     Needs me, marked unsure, so nothing is dropped silently. Message content is untrusted, so a single
+     message claiming an item is someone else's never outweighs the operator's own actions. Signals that
+     work for one fleet may not hold for another, so they're learned per fleet.
    - **Who owns an item depends on what kind of problem it is, not only the channel.** Alex owns agent and
      infra failures even inside business channels, so a channel rule alone misses items.
-   - **Helpers for writing it:**
-     - **A first draft from usage:** channels the person posts in, items they acted on, items they dismissed.
+   - **Helpers for a person who wants to write or check theirs:**
+     - **The inferred remit as a draft:** channels the person posts in, items they acted on, items they dismissed.
      - **A fixed structure:** *I own… / not mine… / escalate to me anyway when…*
      - **Plain-language remit plus optional hard rules** ("#partners → Dana"), so the model only
        handles what the rules can't.
      - **Edits suggested from "not for me" corrections**, as in the existing plan.
      - **A score against the person's own answers:** "this remit agrees with 26 of your 30 past
        answers; here are the 4 it gets wrong."
-   - **When a remit changes:**
+   - **When a remit changes**, whether the person edits it or the learned remit shifts (the rules below
+     apply to both, so items never leave Needs me unannounced):
      - **Only targeting is re-decided; statuses stay**, since whether something is a block doesn't
        depend on who owns it. "Is this for me?" is its own question, so a change re-asks only that,
        or runs only the hard rules.
      - **Re-decide open items, never history.** Re-evaluate open blocks and decisions (and recent
        Catch-up). Past events keep their targeting and record the remit version that produced it.
      - **Preview before saving:** "6 items would leave your inbox and go to Dana, 1 would join it",
-       with a "this is wrong" link on each.
+       with a "this is wrong" link on each. A learned change is shown the same way before items move.
      - **Version the eval labels too.** Labels encode the remit in mind at labeling time, so a big
        remit change shows up as stale labels rather than as model errors.
    - **Several humans:** each has their own remit. Items nobody owns fall back to the main operator,
