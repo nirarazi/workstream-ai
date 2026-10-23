@@ -9,7 +9,8 @@
 // needs the operator (reopening it if it was done). A digest that would take an item out of Needs me is the operator's
 // call, as is anything the judge can't settle where one side says the item needs them, or one says done and the other
 // in progress (an item marked done too early, or one a digest can close). Otherwise, where neither side needs the
-// operator (done against noise, say), it's settled without asking anyone: either way nothing changes in Needs me.
+// operator (done against noise, say), it's settled without asking anyone: either way nothing changes in Needs me. So
+// is a claim that was only the whole digest's status, not its line about the item: it says nothing about the item.
 
 import { createLogger } from "../logger.js";
 import { statusKind, type ContextGraph, type DigestDisagreement } from "../graph/index.js";
@@ -49,8 +50,9 @@ Reply with JSON only: {"verdict": "app" | "digest" | "unsure", "reason": "<one s
 
 /**
  * Settles a digest check that no longer needs judging: the item is gone, has moved on since the digest (a message
- * about it, or the operator), the same sender's later line has spoken about it, the two now agree, or neither side
- * says the item needs the operator (unless one says done and the other in progress). True if settled.
+ * about it, or the operator), the same sender's later line has spoken about it, the two now agree, the digest said
+ * nothing about the item in particular (only the whole message's status), or neither side says the item needs the
+ * operator (unless one says done and the other in progress). True if settled.
  */
 export function settleIfStale(graph: ContextGraph, d: DigestDisagreement): boolean {
   const item = graph.getWorkItemById(d.workItemId);
@@ -60,6 +62,10 @@ export function settleIfStale(graph: ContextGraph, d: DigestDisagreement): boole
     graph.resolveDigestCheck(d.eventId, d.workItemId, "superseded");
   } else if (item.currentAtcStatus && statusKind(item.currentAtcStatus) === statusKind(d.digestStatus)) {
     graph.resolveDigestCheck(d.eventId, d.workItemId, "agrees");
+  } else if (!d.fromLine) {
+    // The digest's status as a whole, not its line about this item: it says nothing about the item, its view can't be
+    // taken, and all the operator could do is dismiss it. The app's view stands
+    graph.resolveDigestCheck(d.eventId, d.workItemId, "not_about_item");
   } else if (
     statusKind(item.currentAtcStatus ?? "") !== "needs"
     && statusKind(d.digestStatus) !== "needs"

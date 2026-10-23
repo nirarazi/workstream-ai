@@ -234,13 +234,15 @@ describe("DigestJudge", () => {
     expect(check("OPS-1").judged_at).toBeNull();
   });
 
-  it("doesn't adopt a claim that was the whole message's status rather than the digest's line for the item", async () => {
+  it("settles a claim that was the whole message's status rather than the digest's line for the item, asking no one", async () => {
     disagreement("OPS-1", "in_progress", "blocked_on_human", { targeted: true, fromLine: false });
+    const complete = answering("digest");
 
-    await new DigestJudge(graph, answering("digest")).judgeSome();
+    expect(await new DigestJudge(graph, complete).judgeSome()).toEqual({ settled: 1, asked: 0 });
 
+    expect(complete).not.toHaveBeenCalled();
     expect(graph.getWorkItemById("OPS-1")!.currentAtcStatus).toBe("in_progress");
-    expect(check("OPS-1").judge_verdict).toBe("unsure");
+    expect(check("OPS-1").resolution).toBe("not_about_item");
   });
 
   it("lets only the same sender's later digest settle an earlier claim, and shares calls between senders", async () => {

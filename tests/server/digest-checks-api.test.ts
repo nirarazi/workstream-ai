@@ -190,12 +190,12 @@ describe("digest checks for the operator", () => {
     expect((await decide({ eventId: merged, workItemId: "OPS-3", verdict: "digest" })).status).toBe(409);
   });
 
-  it("won't take a digest's view that wasn't about this item, and says so", async () => {
-    const eventId = waiting("OPS-1", "blocked_on_human", "completed", false, false);
-    expect((await (await get()).json()).items[0].aboutThisItem).toBe(false);
+  it("doesn't show a claim that was the whole digest's status, not its line about this item: it can only be dismissed", async () => {
+    const eventId = waiting("OPS-1", "noise", "blocked_on_human", true, false);
+    expect((await (await get()).json()).items).toEqual([]);
 
-    expect((await decide({ eventId, workItemId: "OPS-1", verdict: "digest" })).status).toBe(409);
-    expect((await decide({ eventId, workItemId: "OPS-1", verdict: "app" })).status).toBe(200);
+    expect((await decide({ eventId, workItemId: "OPS-1", verdict: "digest" })).status).toBe(404);
+    expect(graph.getWorkItemById("OPS-1")!.currentAtcStatus).toBe("noise");
   });
 
   it("keeps a snooze, reopens a finished item the operator agrees needs them, and refuses a non-JSON body", async () => {
