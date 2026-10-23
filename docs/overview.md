@@ -87,10 +87,10 @@ by agent.
 **Taking a role is a temporary remit.** Eventually, while Dana has the "Partner success" lens on, "needs me" on this
 page means "needs whoever runs partner success". Nobody has to write down where their responsibilities end; picking
 a lens says it, for as long as it's on. Which lens a person picks, and when, may be evidence the app can learn from
-(open question 6). This fits how ownership works in practice: loose, renegotiated in the open, and better inferred from what
-people say and do than declared up front. In the first version a lens only filters this page: "needs you" stays the
-operator's own asks, and Needs me, its interrupts and `operator.context` are unchanged. How lenses should combine
-with the learned remit in roadmap item 5 is open question 6.
+(open question 6). This fits how ownership works in practice: loose, renegotiated in the open, and better inferred
+from what people say and do than declared up front. In the first version a lens only filters this page: "needs you"
+stays the operator's own asks, and Needs me, its interrupts and `operator.context` are unchanged. How lenses should
+combine with the learned remit in roadmap item 5 is open question 6.
 
 **Each zoom level has its own actions** (later, section 6):
 
@@ -208,13 +208,12 @@ eval score makes up for it.
    operator need to correct them?
 3. **What counts as a look.** Opening the page counts as looking at the whole business; opening an area counts as
    looking at that area. Should opening a single stream count for that stream?
-4. **Several people.** Several people, each in their own roles, would look at one company through different
-   lenses. Today the app is local-first, one operator per engine, and the engine's API has no authentication: it's
-   safe only because it listens on loopback. Sharing one picture would need authentication and per-person scoping of
-   what each person can see first, and direct messages left out of anything shared by default. So would each person's learned remit and the
-   actions it's learned from: those belong to that person. Whether to share
-   one picture, or have each person run their own and get different answers, is an architecture and product
-   decision, and not one to make yet.
+4. **Several people.** Several people, each in their own roles, would look at one company through different lenses.
+   Today the app is local-first, one operator per engine, and the engine's API has no authentication: it's safe only
+   because it listens on loopback. Sharing one picture would need authentication and per-person scoping of what each
+   person can see first, and direct messages left out of anything shared by default. So would each person's learned
+   remit and the actions it's learned from: those belong to that person. Whether to share one picture, or have each
+   person run their own and get different answers, is an architecture and product decision, and not one to make yet.
 5. **Ranking what needs you.** By what's queued behind each block, how long it has waited, and what it's worth.
    Where do those signals come from when agents don't state them?
 6. **Lenses and the learned remit.** Roadmap item 5 learns each person's remit from what they do, with a written
