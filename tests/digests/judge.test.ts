@@ -75,18 +75,29 @@ describe("DigestJudge", () => {
   });
 
   it("settles, keeping the app's view and asking no one, when neither side says the item needs the operator", async () => {
-    disagreement("OPS-1", "in_progress", "completed");
     disagreement("OPS-2", "noise", "completed");
-    disagreement("OPS-3", "completed", "in_progress");
+    disagreement("OPS-3", "completed", "noise");
     const complete = answering("digest");
 
-    expect(await new DigestJudge(graph, complete).judgeSome()).toEqual({ settled: 3, asked: 0 });
+    expect(await new DigestJudge(graph, complete).judgeSome()).toEqual({ settled: 2, asked: 0 });
 
     expect(complete).not.toHaveBeenCalled();
-    expect(graph.getWorkItemById("OPS-1")!.currentAtcStatus).toBe("in_progress");
     expect(graph.getWorkItemById("OPS-2")!.currentAtcStatus).toBe("noise");
-    expect(check("OPS-1").resolution).toBe("no_attention");
+    expect(graph.getWorkItemById("OPS-3")!.currentAtcStatus).toBe("completed");
     expect(check("OPS-2").resolution).toBe("no_attention");
+    expect(check("OPS-3").resolution).toBe("no_attention");
+  });
+
+  it("still asks about done against in progress, either way round: marked done too early, or one a digest can close", async () => {
+    disagreement("OPS-1", "in_progress", "completed");
+    disagreement("OPS-2", "completed", "in_progress");
+
+    await new DigestJudge(graph, answering("digest")).judgeSome();
+
+    expect(graph.getWorkItemById("OPS-1")!.currentAtcStatus).toBe("in_progress");
+    expect(graph.getWorkItemById("OPS-2")!.currentAtcStatus).toBe("completed");
+    expect(check("OPS-1")).toMatchObject({ resolution: null, judge_verdict: "unsure" });
+    expect(check("OPS-2")).toMatchObject({ resolution: null, judge_verdict: "unsure" });
   });
 
   it("only ever adds the operator's attention: a digest's word that an item in Needs me is done waits for them", async () => {

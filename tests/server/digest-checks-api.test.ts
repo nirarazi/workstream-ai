@@ -58,11 +58,12 @@ describe("digest checks for the operator", () => {
     });
   });
 
-  it("doesn't show one where neither side says the item needs the operator, and settles it keeping the app's view", async () => {
+  it("doesn't show one where neither side needs the operator, unless it's done against in progress, and keeps the app's view", async () => {
     waiting("OPS-1", "noise", "completed");
-    waiting("OPS-3", "in_progress", "completed");
+    waiting("OPS-3", "completed", "noise");
+    waiting("OPS-5", "completed", "in_progress");
 
-    expect((await (await get()).json()).items).toEqual([]);
+    expect((await (await get()).json()).items.map((i: { workItemId: string }) => i.workItemId)).toEqual(["OPS-5"]);
     expect(graph.getWorkItemById("OPS-1")!.currentAtcStatus).toBe("noise");
     expect(db.db.prepare("SELECT resolution FROM digest_checks WHERE work_item_id = 'OPS-1'").get()).toEqual({ resolution: "no_attention" });
   });

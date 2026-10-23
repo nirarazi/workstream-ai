@@ -7,8 +7,9 @@
 //
 // The judge only ever adds the operator's attention: it may keep the app's view, or take a digest's word that an item
 // needs the operator (reopening it if it was done). A digest that would take an item out of Needs me is the operator's
-// call, as is anything the judge can't settle where one side says the item needs them. Where neither side does (done
-// against noise, say), it's settled without asking anyone: either way nothing changes in Needs me.
+// call, as is anything the judge can't settle where one side says the item needs them, or one says done and the other
+// in progress (an item marked done too early, or one a digest can close). Otherwise, where neither side needs the
+// operator (done against noise, say), it's settled without asking anyone: either way nothing changes in Needs me.
 
 import { createLogger } from "../logger.js";
 import { statusKind, type ContextGraph, type DigestDisagreement } from "../graph/index.js";
@@ -49,7 +50,7 @@ Reply with JSON only: {"verdict": "app" | "digest" | "unsure", "reason": "<one s
 /**
  * Settles a digest check that no longer needs judging: the item is gone, has moved on since the digest (a message
  * about it, or the operator), the same sender's later line has spoken about it, the two now agree, or neither side
- * says the item needs the operator. True if settled.
+ * says the item needs the operator (unless one says done and the other in progress). True if settled.
  */
 export function settleIfStale(graph: ContextGraph, d: DigestDisagreement): boolean {
   const item = graph.getWorkItemById(d.workItemId);
@@ -59,14 +60,24 @@ export function settleIfStale(graph: ContextGraph, d: DigestDisagreement): boole
     graph.resolveDigestCheck(d.eventId, d.workItemId, "superseded");
   } else if (item.currentAtcStatus && statusKind(item.currentAtcStatus) === statusKind(d.digestStatus)) {
     graph.resolveDigestCheck(d.eventId, d.workItemId, "agrees");
-  } else if (statusKind(item.currentAtcStatus ?? "") !== "needs" && statusKind(d.digestStatus) !== "needs") {
-    // Neither side needs the operator (done against noise, in progress against done): whichever is right, nothing
-    // changes in Needs me, so it isn't worth their attention or a model call. The app's view stands
+  } else if (
+    statusKind(item.currentAtcStatus ?? "") !== "needs"
+    && statusKind(d.digestStatus) !== "needs"
+    && !doneAgainstInProgress(item.currentAtcStatus, d.digestStatus)
+  ) {
+    // Neither side needs the operator (done against noise, say): whichever is right, nothing changes in Needs me, so
+    // it isn't worth their attention or a model call. The app's view stands. Done against in progress still goes on:
+    // it may be an item marked done too early, or one the digest can close
     graph.resolveDigestCheck(d.eventId, d.workItemId, "no_attention");
   } else {
     return false;
   }
   return true;
+}
+
+/** One side says done and the other in progress, either way round */
+function doneAgainstInProgress(app: string | null, digest: string): boolean {
+  return (app === "completed" && digest === "in_progress") || (app === "in_progress" && digest === "completed");
 }
 
 /** Untrusted text as data: no angle brackets (so it can't open or close a tag, in any spelling), clipped */
