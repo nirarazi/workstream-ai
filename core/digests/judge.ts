@@ -11,9 +11,6 @@
 // in progress (an item marked done too early, or one a digest can close). Otherwise, where neither side needs the
 // operator (done against noise, say), it's settled without asking anyone: either way nothing changes in Needs me. So
 // is a claim that was only the whole digest's status, not its line about the item: it says nothing about the item.
-// One such claim per digest stays when the digest asks for the operator and none of its lines says what for: it goes
-// to the operator without a model call (the model judges items, and this says nothing about one), and the same
-// sender's later such ask replaces it.
 
 import { createLogger } from "../logger.js";
 import { statusKind, type ContextGraph, type DigestDisagreement } from "../graph/index.js";
@@ -54,24 +51,14 @@ Reply with JSON only: {"verdict": "app" | "digest" | "unsure", "reason": "<one s
 /**
  * Settles a digest check that no longer needs judging: the item is gone, has moved on since the digest (a message
  * about it, or the operator), the same sender's later line has spoken about it, the two now agree, the digest said
- * nothing about the item in particular (only the whole message's status; one such check per digest that asks for the
- * operator with no line saying what for stays), or neither side says the item needs the operator (unless one says done
- * and the other in progress). True if settled.
+ * nothing about the item in particular (only the whole message's status), or neither side says the item needs the
+ * operator (unless one says done and the other in progress). True if settled.
  */
 export function settleIfStale(graph: ContextGraph, d: DigestDisagreement): boolean {
-  // The digest's status as a whole, not its line about this item: it says nothing about the item, and its view can't
-  // be taken, so it's settled and the app's view stands. Except once per digest that asks for the operator with no
-  // line saying what for: that ask would reach them nowhere else, so one of its checks stays, as the digest's, until
-  // the operator dismisses it or the same sender asks again (nothing about the item it's filed under settles it)
+  // The digest's status as a whole, not its line about this item: it says nothing about the item, its view can't be
+  // taken, and all the operator could do is dismiss it. The app's view stands
   if (!d.fromLine) {
-    if (!isDigestOnlyAsk(graph, d)) {
-      graph.resolveDigestCheck(d.eventId, d.workItemId, "not_about_item");
-    } else if (graph.hasLaterDigestOnlyAsk(d.eventId, d.createdAt)) {
-      // The same sender asked again since: the later ask is the one shown
-      graph.resolveDigestCheck(d.eventId, d.workItemId, "superseded");
-    } else {
-      return false;
-    }
+    graph.resolveDigestCheck(d.eventId, d.workItemId, "not_about_item");
     return true;
   }
   const item = graph.getWorkItemById(d.workItemId);
@@ -94,12 +81,6 @@ export function settleIfStale(graph: ContextGraph, d: DigestDisagreement): boole
     return false;
   }
   return true;
-}
-
-/** The one check kept for a digest that asks for the operator with no line saying what for */
-export function isDigestOnlyAsk(graph: ContextGraph, d: DigestDisagreement): boolean {
-  return !d.fromLine && statusKind(d.digestStatus) === "needs" && d.digestTargeted
-    && !graph.digestAskHasLine(d.eventId) && !graph.hasEarlierWholeDigestCheck(d.eventId, d.workItemId);
 }
 
 /** One side says done and the other in progress, either way round */
@@ -173,12 +154,6 @@ export class DigestJudge {
       if (stopped()) break;
       if (this.settleForFree(d)) {
         settled++;
-        continue;
-      }
-      // A digest's ask with no line saying what for: the model is asked about an item, which this says nothing about,
-      // and could only lose the ask. It goes to the operator as it is
-      if (!d.fromLine) {
-        this.graph.markDigestCheckUnsure(d.eventId, d.workItemId, "The digest asks for you without saying which item");
         continue;
       }
       if (modelDown || asked >= JUDGE_CALLS_PER_RUN) continue;

@@ -3,7 +3,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { Database } from "../../core/graph/db.js";
 import { ContextGraph } from "../../core/graph/index.js";
-import { DigestJudge, JUDGE_CALLS_PER_RUN, buildJudgePrompt, parseVerdict, settleIfStale } from "../../core/digests/judge.js";
+import { DigestJudge, JUDGE_CALLS_PER_RUN, buildJudgePrompt, parseVerdict } from "../../core/digests/judge.js";
 import type { StatusCategory } from "../../core/types.js";
 
 let db: Database;
@@ -234,48 +234,20 @@ describe("DigestJudge", () => {
     expect(check("OPS-1").judged_at).toBeNull();
   });
 
-  it("keeps one claim per digest that asks for the operator with no line saying what for, and settles the rest", async () => {
+  it("settles every whole-message claim, even one saying the operator is needed, asking no one", async () => {
     disagreement("OPS-1", "in_progress", "blocked_on_human", { targeted: true, fromLine: false });
-    disagreement("OPS-2", "in_progress", "blocked_on_human", { targeted: true, fromLine: false });
-    // The model is never asked: it would judge an item the claim says nothing about, and could only lose the ask
-    const complete = answering("app");
+    disagreement("OPS-2", "in_progress", "needs_decision", { targeted: true, fromLine: false });
+    const complete = answering("digest");
 
-    await new DigestJudge(graph, complete).judgeSome();
+    expect(await new DigestJudge(graph, complete).judgeSome()).toEqual({ settled: 2, asked: 0 });
 
-    expect(check("OPS-1")).toMatchObject({ resolution: null, judge_verdict: "unsure" });
-    expect(check("OPS-2").resolution).toBe("not_about_item");
     expect(complete).not.toHaveBeenCalled();
+    expect(check("OPS-1").resolution).toBe("not_about_item");
+    expect(check("OPS-2").resolution).toBe("not_about_item");
+    expect(graph.getWorkItemById("OPS-1")!.currentAtcStatus).toBe("in_progress");
   });
 
-  it("keeps the digest's ask on a check that disagrees, not on one never shown (it agrees, or met an item with no status)", async () => {
-    graph.upsertWorkItem({ id: "OPS-1", source: "jira" });
-    graph.linkThreadWorkItem("T-DIGEST", "OPS-1", "mentioned");
-    const eventId = graph.getEventByMessageId("d1", "T-DIGEST")!.id;
-    graph.recordDigestCheck({ eventId, workItemId: "OPS-1", digestStatus: "blocked_on_human", digestTargeted: true, itemStatus: null, at: DIGEST_AT, fromLine: false });
-    disagreement("OPS-2", "needs_decision", "blocked_on_human", { targeted: true, fromLine: false });
-    disagreement("OPS-3", "in_progress", "blocked_on_human", { targeted: true, fromLine: false });
-
-    await new DigestJudge(graph, answering("app")).judgeSome();
-
-    expect(check("OPS-3")).toMatchObject({ resolution: null, judge_verdict: "unsure" });
-  });
-
-  it("shows a sender's repeated ask once: the latest such digest replaces the earlier", async () => {
-    disagreement("OPS-1", "in_progress", "blocked_on_human", { targeted: true, fromLine: false });
-    disagreement("OPS-2", "in_progress", "blocked_on_human", { targeted: true, fromLine: false });
-    await new DigestJudge(graph, answering("app")).judgeSome();
-    // The next day's digest asks again, naming the same items: day one's ask was kept on OPS-1, so OPS-1's claim is
-    // the one deduped into it, and OPS-2's is the day-two card
-    disagreement("OPS-2", "in_progress", "blocked_on_human", { targeted: true, fromLine: false, messageId: "d2", at: "2026-10-16T09:00:00.000Z" });
-
-    await new DigestJudge(graph, answering("app")).judgeSome();
-
-    // What the operator is shown, re-checked as the list is (GET /api/digest-checks)
-    const shown = graph.getDigestChecksForOperator().filter((d) => !settleIfStale(graph, d));
-    expect(shown.map((d) => [d.workItemId, d.createdAt])).toEqual([["OPS-2", "2026-10-16T09:00:00.000Z"]]);
-  });
-
-  it("records and judges a later line about an item while a digest's ask filed under it is open, and keeps the ask", async () => {
+  it("doesn't let a whole-message claim swallow a later line about the item: the line is recorded and judged", async () => {
     disagreement("OPS-1", "in_progress", "blocked_on_human", { targeted: true, fromLine: false });
     await new DigestJudge(graph, answering("app")).judgeSome();
     disagreement("OPS-1", "in_progress", "blocked_on_human", { targeted: false, fromLine: true, messageId: "d2", at: "2026-10-16T09:00:00.000Z" });
@@ -286,55 +258,17 @@ describe("DigestJudge", () => {
     expect(complete).toHaveBeenCalledTimes(1);
     const rows = db.db.prepare("SELECT from_line, resolution, judge_verdict FROM digest_checks WHERE work_item_id = 'OPS-1' ORDER BY created_at").all();
     expect(rows).toEqual([
-      { from_line: 0, resolution: null, judge_verdict: "unsure" },
+      { from_line: 0, resolution: "not_about_item", judge_verdict: null },
       { from_line: 1, resolution: "app", judge_verdict: "app" },
     ]);
   });
 
-  it("doesn't turn a waiting ask into the line's claim when the line arrives before the judge runs", () => {
+  it("doesn't turn a waiting whole-message claim into the line's claim when the line arrives before the judge runs", () => {
     disagreement("OPS-1", "in_progress", "blocked_on_human", { targeted: true, fromLine: false });
     disagreement("OPS-1", "in_progress", "blocked_on_human", { targeted: false, fromLine: true, messageId: "d2", at: "2026-10-16T09:00:00.000Z" });
 
     const rows = db.db.prepare("SELECT from_line FROM digest_checks WHERE work_item_id = 'OPS-1' ORDER BY created_at").all();
     expect(rows).toEqual([{ from_line: 0 }, { from_line: 1 }]);
-  });
-
-  it("doesn't count a line waiting on someone else as saying what the ask is for", async () => {
-    disagreement("OPS-1", "in_progress", "blocked_on_human", { targeted: true, fromLine: false });
-    disagreement("OPS-2", "in_progress", "blocked_on_human", { targeted: false, fromLine: true });
-
-    await new DigestJudge(graph, answering("app")).judgeSome();
-
-    expect(check("OPS-1")).toMatchObject({ resolution: null, judge_verdict: "unsure" });
-  });
-
-  it("settles a digest's whole-message ask when the digest has an item of its own, which carries the ask", async () => {
-    graph.upsertWorkItem({ id: "OPS-9", source: "jira", currentAtcStatus: "blocked_on_human" });
-    db.db.prepare("UPDATE events SET work_item_id = 'OPS-9' WHERE message_id = 'd1'").run();
-    disagreement("OPS-1", "in_progress", "blocked_on_human", { targeted: true, fromLine: false });
-
-    await new DigestJudge(graph, answering("app")).judgeSome();
-
-    expect(check("OPS-1").resolution).toBe("not_about_item");
-  });
-
-  it("keeps the digest's ask whatever happens to the item it's filed under", async () => {
-    disagreement("OPS-1", "in_progress", "blocked_on_human", { targeted: true, fromLine: false });
-    graph.upsertWorkItem({ id: "OPS-1", source: "jira", currentAtcStatus: "completed", statusAt: "2026-10-16T09:00:00.000Z" });
-
-    await new DigestJudge(graph, answering("app")).judgeSome();
-
-    expect(check("OPS-1")).toMatchObject({ resolution: null, judge_verdict: "unsure" });
-  });
-
-  it("settles a digest's whole-message ask when one of its lines already asks for the operator", async () => {
-    disagreement("OPS-1", "in_progress", "blocked_on_human", { targeted: true, fromLine: false });
-    graph.upsertWorkItem({ id: "OPS-7", source: "jira", currentAtcStatus: "blocked_on_human" });
-    db.db.prepare("INSERT INTO event_targets (event_id, work_item_id) VALUES (?, ?)").run(graph.getEventByMessageId("d1", "T-DIGEST")!.id, "OPS-7");
-
-    await new DigestJudge(graph, answering("digest")).judgeSome();
-
-    expect(check("OPS-1").resolution).toBe("not_about_item");
   });
 
   it("settles a claim that was the whole message's status rather than the digest's line for the item, asking no one", async () => {

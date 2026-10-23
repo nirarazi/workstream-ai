@@ -198,15 +198,11 @@ describe("digest checks for the operator", () => {
     expect(graph.getWorkItemById("OPS-1")!.currentAtcStatus).toBe("noise");
   });
 
-  it("shows a digest that asks for the operator with no line saying what for once, and only lets it be dismissed", async () => {
+  it("doesn't show a whole-digest claim even when it says the operator is needed", async () => {
     const eventId = waiting("OPS-1", "noise", "blocked_on_human", true, false);
-    waiting("OPS-3", "noise", "blocked_on_human", true, false);
 
-    const items = (await (await get()).json()).items;
-    expect(items.map((i: { workItemId: string; aboutThisItem: boolean }) => [i.workItemId, i.aboutThisItem])).toEqual([["OPS-1", false]]);
-    expect((await decide({ eventId, workItemId: "OPS-1", verdict: "digest" })).status).toBe(409);
-    expect((await decide({ eventId, workItemId: "OPS-1", verdict: "app" })).status).toBe(200);
-    // Dismissed, and nothing written to OPS-1's timeline: the ask wasn't about it
+    expect((await (await get()).json()).items).toEqual([]);
+    expect((await decide({ eventId, workItemId: "OPS-1", verdict: "app" })).status).toBe(404);
     expect(graph.getEventsForWorkItem("OPS-1").some((e) => /digest/.test(e.reason ?? ""))).toBe(false);
   });
 
