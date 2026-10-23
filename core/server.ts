@@ -594,8 +594,9 @@ export function createApp(
     const outcome = state.graph.transaction((): { status: 200 | 404 | 409; error?: string } => {
       const check = state.graph.getDigestCheckForOperator(eventId, workItemId);
       if (!check) return { status: 404, error: "No digest check waiting for that" };
-      // The item may have moved on since the card was shown: that settles it, and the operator's click doesn't apply
-      if (settleIfStale(state.graph, check)) return { status: 409, error: "Already settled: the item has moved on" };
+      // The item may have moved on since the card was shown, or no longer need anyone: that settles it, and the
+      // operator's click doesn't apply
+      if (settleIfStale(state.graph, check)) return { status: 409, error: "Already settled: the item moved on, or no longer needs you" };
       if (verdict === "digest" && !check.fromLine) {
         return { status: 409, error: "The digest said nothing about this item in particular, so its view can't be taken" };
       }
