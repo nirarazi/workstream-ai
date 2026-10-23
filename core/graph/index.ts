@@ -1304,23 +1304,49 @@ export class ContextGraph {
   }
 
   /**
-   * Whether a digest's ask to the operator reaches them through one of its own lines: a line that escalated an item
-   * (event_targets), or a line's own check saying an item needs them
+   * Whether a digest's ask to the operator reaches them some other way: the digest has an item of its own (its
+   * thread's, which takes its status and targeting), a line escalated an item (event_targets), or a line's own check
+   * says an item needs them
    */
   digestAskHasLine(eventId: string): boolean {
     return this.db.db.prepare(`
+      SELECT 1 FROM events WHERE id = ? AND work_item_id IS NOT NULL
+      UNION ALL
       SELECT 1 FROM event_targets WHERE event_id = ?
       UNION ALL
-      SELECT 1 FROM digest_checks WHERE event_id = ? AND from_line = 1 AND digest_status IN ('blocked_on_human', 'needs_decision')
+      SELECT 1 FROM digest_checks
+      WHERE event_id = ? AND from_line = 1 AND digest_targeted = 1 AND digest_status IN ('blocked_on_human', 'needs_decision')
       LIMIT 1
-    `).get(eventId, eventId) !== undefined;
+    `).get(eventId, eventId, eventId) !== undefined;
   }
 
-  /** Whether another of a digest's whole-message checks, still waiting, comes first (by item id): the one that shows it */
+  /**
+   * Whether the same sender has since posted another digest asking for the operator with no line saying what for: the
+   * latest such ask stands for the earlier ones, so a daily digest repeating it is one card, not one a day
+   */
+  hasLaterDigestOnlyAsk(eventId: string, at: string): boolean {
+    return this.db.db.prepare(`
+      SELECT 1 FROM digest_checks dc JOIN events e ON e.id = dc.event_id
+      WHERE dc.from_line = 0 AND dc.agrees = 0 AND dc.digest_targeted = 1 AND dc.created_at > ?
+        AND dc.digest_status IN ('blocked_on_human', 'needs_decision')
+        AND e.agent_id IS (SELECT agent_id FROM events WHERE id = ?) AND e.work_item_id IS NULL
+        AND NOT EXISTS (SELECT 1 FROM event_targets t WHERE t.event_id = dc.event_id)
+        AND NOT EXISTS (
+          SELECT 1 FROM digest_checks l WHERE l.event_id = dc.event_id AND l.from_line = 1 AND l.digest_targeted = 1
+            AND l.digest_status IN ('blocked_on_human', 'needs_decision')
+        )
+      LIMIT 1
+    `).get(at, eventId) !== undefined;
+  }
+
+  /**
+   * Whether another of a digest's whole-message disagreements, still waiting, comes first (by item id): the one that
+   * shows it. Checks that agree, or met an item with no status yet, are never shown, so they don't count
+   */
   hasEarlierWholeDigestCheck(eventId: string, workItemId: string): boolean {
     return this.db.db.prepare(`
       SELECT 1 FROM digest_checks
-      WHERE event_id = ? AND from_line = 0 AND resolved_at IS NULL AND work_item_id < ?
+      WHERE event_id = ? AND from_line = 0 AND agrees = 0 AND resolved_at IS NULL AND work_item_id < ?
       LIMIT 1
     `).get(eventId, workItemId) !== undefined;
   }
@@ -1335,10 +1361,10 @@ export class ContextGraph {
     `).get(workItemId, at, eventId) !== undefined;
   }
 
-  /** Settles a digest check: `app` (the app's view stands), `digest` (adopted), or why it no longer needs judging */
   /**
    * Settles a digest check: `app`/`digest` (the judge's verdict), `operator-app`/`operator-digest` (the operator's), or
-   * why it no longer needs judging (`gone`, `superseded`, `agrees`). A judge's earlier note is kept unless replaced.
+   * why it no longer needs judging (`gone`, `superseded`, `agrees`, `no_attention`, `not_about_item`). A judge's
+   * earlier note is kept unless replaced.
    */
   resolveDigestCheck(eventId: string, workItemId: string, resolution: string, verdict?: { verdict: string; reason: string }): void {
     const now = new Date().toISOString();

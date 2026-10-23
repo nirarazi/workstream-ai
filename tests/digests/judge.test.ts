@@ -3,7 +3,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { Database } from "../../core/graph/db.js";
 import { ContextGraph } from "../../core/graph/index.js";
-import { DigestJudge, JUDGE_CALLS_PER_RUN, buildJudgePrompt, parseVerdict } from "../../core/digests/judge.js";
+import { DigestJudge, JUDGE_CALLS_PER_RUN, buildJudgePrompt, parseVerdict, settleIfStale } from "../../core/digests/judge.js";
 import type { StatusCategory } from "../../core/types.js";
 
 let db: Database;
@@ -237,13 +237,70 @@ describe("DigestJudge", () => {
   it("keeps one claim per digest that asks for the operator with no line saying what for, and settles the rest", async () => {
     disagreement("OPS-1", "in_progress", "blocked_on_human", { targeted: true, fromLine: false });
     disagreement("OPS-2", "in_progress", "blocked_on_human", { targeted: true, fromLine: false });
-    const complete = vi.fn(async () => JSON.stringify({ verdict: "digest", reason: "it asks" }));
+    // The model is never asked: it would judge an item the claim says nothing about, and could only lose the ask
+    const complete = answering("app");
 
     await new DigestJudge(graph, complete).judgeSome();
 
     expect(check("OPS-1")).toMatchObject({ resolution: null, judge_verdict: "unsure" });
     expect(check("OPS-2").resolution).toBe("not_about_item");
-    expect(complete).toHaveBeenCalledTimes(1);
+    expect(complete).not.toHaveBeenCalled();
+  });
+
+  it("keeps the digest's ask on a check that disagrees, not on one never shown (it agrees, or met an item with no status)", async () => {
+    graph.upsertWorkItem({ id: "OPS-1", source: "jira" });
+    graph.linkThreadWorkItem("T-DIGEST", "OPS-1", "mentioned");
+    const eventId = graph.getEventByMessageId("d1", "T-DIGEST")!.id;
+    graph.recordDigestCheck({ eventId, workItemId: "OPS-1", digestStatus: "blocked_on_human", digestTargeted: true, itemStatus: null, at: DIGEST_AT, fromLine: false });
+    disagreement("OPS-2", "needs_decision", "blocked_on_human", { targeted: true, fromLine: false });
+    disagreement("OPS-3", "in_progress", "blocked_on_human", { targeted: true, fromLine: false });
+
+    await new DigestJudge(graph, answering("app")).judgeSome();
+
+    expect(check("OPS-3")).toMatchObject({ resolution: null, judge_verdict: "unsure" });
+  });
+
+  it("shows a sender's repeated ask once: the latest such digest replaces the earlier", async () => {
+    disagreement("OPS-1", "in_progress", "blocked_on_human", { targeted: true, fromLine: false });
+    disagreement("OPS-2", "in_progress", "blocked_on_human", { targeted: true, fromLine: false });
+    await new DigestJudge(graph, answering("app")).judgeSome();
+    // The next day's digest asks again, naming the same items: day one's ask was kept on OPS-1, so OPS-1's claim is
+    // the one deduped into it, and OPS-2's is the day-two card
+    disagreement("OPS-2", "in_progress", "blocked_on_human", { targeted: true, fromLine: false, messageId: "d2", at: "2026-10-16T09:00:00.000Z" });
+
+    await new DigestJudge(graph, answering("app")).judgeSome();
+
+    // What the operator is shown, re-checked as the list is (GET /api/digest-checks)
+    const shown = graph.getDigestChecksForOperator().filter((d) => !settleIfStale(graph, d));
+    expect(shown.map((d) => [d.workItemId, d.createdAt])).toEqual([["OPS-2", "2026-10-16T09:00:00.000Z"]]);
+  });
+
+  it("doesn't count a line waiting on someone else as saying what the ask is for", async () => {
+    disagreement("OPS-1", "in_progress", "blocked_on_human", { targeted: true, fromLine: false });
+    disagreement("OPS-2", "in_progress", "blocked_on_human", { targeted: false, fromLine: true });
+
+    await new DigestJudge(graph, answering("app")).judgeSome();
+
+    expect(check("OPS-1")).toMatchObject({ resolution: null, judge_verdict: "unsure" });
+  });
+
+  it("settles a digest's whole-message ask when the digest has an item of its own, which carries the ask", async () => {
+    graph.upsertWorkItem({ id: "OPS-9", source: "jira", currentAtcStatus: "blocked_on_human" });
+    db.db.prepare("UPDATE events SET work_item_id = 'OPS-9' WHERE message_id = 'd1'").run();
+    disagreement("OPS-1", "in_progress", "blocked_on_human", { targeted: true, fromLine: false });
+
+    await new DigestJudge(graph, answering("app")).judgeSome();
+
+    expect(check("OPS-1").resolution).toBe("not_about_item");
+  });
+
+  it("keeps the digest's ask whatever happens to the item it's filed under", async () => {
+    disagreement("OPS-1", "in_progress", "blocked_on_human", { targeted: true, fromLine: false });
+    graph.upsertWorkItem({ id: "OPS-1", source: "jira", currentAtcStatus: "completed", statusAt: "2026-10-16T09:00:00.000Z" });
+
+    await new DigestJudge(graph, answering("app")).judgeSome();
+
+    expect(check("OPS-1")).toMatchObject({ resolution: null, judge_verdict: "unsure" });
   });
 
   it("settles a digest's whole-message ask when one of its lines already asks for the operator", async () => {

@@ -623,8 +623,8 @@ export function createApp(
           state.graph.clearDismissed(workItemId);
         }
       }
-      // In the item's timeline, like the operator's other actions
-      state.graph.insertEvent({
+      // In the item's timeline, like the operator's other actions; not for a digest's ask that wasn't about the item
+      if (check.fromLine) state.graph.insertEvent({
         threadId: check.threadId,
         messageId: `operator-digest-${eventId}-${workItemId}`, // each check is decided once
         workItemId,

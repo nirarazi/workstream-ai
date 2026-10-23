@@ -206,6 +206,8 @@ describe("digest checks for the operator", () => {
     expect(items.map((i: { workItemId: string; aboutThisItem: boolean }) => [i.workItemId, i.aboutThisItem])).toEqual([["OPS-1", false]]);
     expect((await decide({ eventId, workItemId: "OPS-1", verdict: "digest" })).status).toBe(409);
     expect((await decide({ eventId, workItemId: "OPS-1", verdict: "app" })).status).toBe(200);
+    // Dismissed, and nothing written to OPS-1's timeline: the ask wasn't about it
+    expect(graph.getEventsForWorkItem("OPS-1").some((e) => /digest/.test(e.reason ?? ""))).toBe(false);
   });
 
   it("keeps a snooze, reopens a finished item the operator agrees needs them, and refuses a non-JSON body", async () => {
