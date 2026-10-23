@@ -1,6 +1,7 @@
 # The Overview: Seeing Everything Without Being Overwhelmed
 
-Status: design, for review. Nothing here is built yet. The model underneath it (cases, streams, subjects, the
+Status: the first version (section 5) is built: the Overview tab, `GET /api/overview` (`core/grouping/overview.ts`),
+and `npm run report:blocked`. The rest is design. The model underneath it (cases, streams, subjects, the
 graph) is in [work-model.md](work-model.md); this doc is about what the operator sees. The Overview is a new page
 beside the existing ones: the Stream view (Needs me, Snoozed, All active, Dismissed) stays the place to act on
 items, and the Work items table stays the full list. The Overview links into both.
@@ -51,10 +52,10 @@ further when they choose to.
   two may not be. A stream *moves* when a case in it changes state, finishes, gets a decision, or a linked key (a
   ticket, a PR) changes state. A routine "still waiting" report is not movement. With the stream health states
   of work-model.md section 2:
-  - **stuck** (no movement for longer than its pace) and **overdue** (past a stated date) are exceptions;
+  - **stuck** (waiting on someone for longer than its pace) and **overdue** (past a stated date) are exceptions;
   - **noisy** (lots of messages, no movement) is an exception too: it's the fact "should we be doing this now?"
     most often needs;
-  - **quiet** is normal for a slow stream, and folds into the one line.
+  - **quiet** (in progress, no movement) is normal for a slow stream, and folds into the one line.
 - **Show what's done.** Seeing work close lets the operator stop holding it in their head. Without a "finished
   this week" section, the page only ever grows.
 - **No number the reader can't act on,** with one exception: the single reassurance line ("84 streams moving
@@ -112,21 +113,23 @@ wait for the cutover (work-model.md section 9, step 7). Shadow mode stores its r
 the page reads those tables and never regroups on a page load. This brings a read-only preview of step 9's stream
 view forward; the stored `stream_keys`, the done policy and stored health stay in step 9.
 
-The v2 inbox rule ("needs you", below) lives in the eval script today (`v2Inbox` in `core/eval/inbox-diff.ts`), fed
-by a fresh regroup. The first version moves it, with the rule for what the operator has already handled, into
-`core/grouping/`, fed from the stored `v2_assignments`, the loaded messages and the events, so it needs no regroup
-either.
+The v2 inbox rule ("needs you", below) and the rule for what the operator has already handled live in
+`core/grouping/inbox.ts`, shared with `npm run eval:inbox-diff`. The Overview feeds them from the stored cases
+(`core/grouping/stored.ts`), the loaded messages and the events, so it needs no regroup either.
 
 **Movement, in the first version,** is what the messages show: a case's status changing (from the events of its
 messages, through `v2_assignments`) or a decision. Routine reports and telemetry (the recognizer's `kind` claims)
 never count. A linked ticket or PR changing state counts once tracker history is stored. Pace and "stuck" are per
-stream: a stream is stuck when its latest movement, in any of its cases, is older than its stuck line.
+stream: a stream is stuck when a case in it is waiting on someone and its latest movement, in any of its cases, is
+older than its stuck line.
 
 **What it shows:**
 
 1. **One page for the whole business:**
    - what changed since you last looked;
-   - what needs you: the asks the v2 inbox rule shows the operator, the rule `npm run eval:inbox-diff` scores;
+   - what needs you: the asks the v2 inbox rule shows the operator, the rule `npm run eval:inbox-diff` scores,
+     ranked by who each holds up, then how often it was asked, then how long it has waited (`core/grouping/rank.ts`;
+     `npm run report:blocked` prints the same ranking);
    - what's stuck or noisy, judged against each stream's pace;
    - what finished in the last seven days;
    - one line for everything moving normally: the streams with a message in the last 30 days that aren't shown
@@ -134,18 +137,28 @@ stream: a stream is stuck when its latest movement, in any of its cases, is olde
 2. **Lenses as filters** on that page: an area lens shows the same sections for that area only, and "needs you"
    stays the operator's own asks within it. The lenses themselves are the computed areas; saved lenses come later.
 3. **Areas computed** from channels: each stream goes to the channel most of its messages are in, and each channel
-   is an area named after it, with direct messages together in one. This is the part most likely to be wrong at
-   first. Renaming and merging areas is a write, so it comes later; the first version shows how far computed areas
-   get alone.
+   is an area named after it, with direct messages together in one (the messaging adapter marks a direct message's
+   thread `isDirect`; threads stored before that count as their own channel until they're polled again). This is the
+   part most likely to be wrong at first. Renaming and merging areas is a write, so it comes later; the first
+   version shows how far computed areas get alone.
 
 **Not in the first version:** overdue (it needs expectation claims, which work-model.md step 5 doesn't store yet),
 and "nobody owns it" and the cross-area ownership lines (they need actors, step 4).
 
 **Starting rules,** placeholders to tune during the two-week trial (open question 1):
 
-- **stuck:** no movement for longer than three times the stream's median gap between movements, and at least two
-  days; a stream with fewer than three movements so far uses seven days;
-- **noisy:** ten or more messages in the last seven days and no movement.
+- **stuck:** a case waiting on someone (blocked, or a decision), other than an ask already under "needs you", and no
+  movement for longer than three times the stream's median gap between movements, and at least two days; a stream
+  with fewer than three movements so far uses seven days. A case merely in progress and quiet isn't stuck: on the
+  reference fleet, counting those made about 240 of some 530 active streams "stuck", which is no summary at all;
+- **noisy:** ten or more messages that are work or chatter (not reports or telemetry) in the last seven days, and
+  no movement.
+
+**First read on the reference fleet** (a read-only copy, 2026-10-23): needs you 78, stuck 60, finished this week 71,
+and about 460 streams moving normally. That isn't calm yet: needs you inherits the v2 inbox rule's over-surfacing
+(on the disagreements the operator judged with `npm run eval:inbox-diff`, it showed more asks for nothing than Needs
+me does), and one channel holds most streams, so areas from channels barely split them (open question 2). The trial
+starts from here.
 
 **Changes since you last looked** come from message times, not a stored snapshot: a case finished since then if its
 latest status became completed after that time, it's new if its first message came after it, and a stream got

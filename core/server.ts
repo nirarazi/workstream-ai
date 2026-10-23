@@ -28,6 +28,7 @@ import type { OperatorIdentityMap, StatusCategory } from "./types.js";
 import { operatorNames } from "./operator-names.js";
 import { backfillObservations } from "./observations/backfill.js";
 import { GroupingLab } from "./grouping/lab.js";
+import { OverviewService } from "./grouping/overview.js";
 
 const log = createLogger("server");
 
@@ -278,6 +279,21 @@ export function createApp(
       return out ? c.json(out) : c.json({ error: "No such case" }, 404);
     });
   }
+
+  // The Overview (docs/overview.md): is anything off, across every stream? Read only, from the grouping shadow mode
+  // stored, so it never regroups. since: when the viewer last looked (the UI keeps it, per lens); area: one area's lens
+  const overview = new OverviewService(state.db.db, () => ({
+    operatorNames: operatorNames(state.operatorIdentities, state.config.operator?.name),
+    handoff: state.config.inbox?.handoffMinConfidence ?? 0.6,
+  }));
+  app.get("/api/overview", (c) => {
+    const now = Date.now();
+    const asked = Date.parse(c.req.query("since") ?? "");
+    // Missing, unreadable or in the future: the last 24 hours. At most 90 days back
+    const since = Number.isFinite(asked) && asked <= now ? Math.max(asked, now - 90 * 86_400_000) : now - 86_400_000;
+    const area = c.req.query("area");
+    return c.json(overview.get({ since: new Date(since).toISOString(), area: area && area.length <= 300 ? area : null }));
+  });
 
   // --- GET /api/status ---
   app.get("/api/status", (c) => {

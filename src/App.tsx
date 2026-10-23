@@ -38,11 +38,12 @@ import { useTheme, useTextSize, type ThemeMode } from "./lib/theme";
 import StreamView from "./components/StreamView";
 import WorkItemsView from "./components/WorkItemsView";
 import LabView from "./components/LabView";
+import OverviewView from "./components/OverviewView";
 import Sidekick from "./components/Sidekick";
 import Setup from "./components/Setup";
 import { getSerializeMention } from "./messaging/registry";
 
-type View = "loading" | "setup" | "stream" | "work-items" | "lab" | "settings";
+type View = "loading" | "setup" | "stream" | "overview" | "work-items" | "lab" | "settings";
 type DotStatus = "ok" | "degraded" | "disconnected";
 
 const DEFAULT_SERVICES: ServiceStatuses = {};
@@ -273,7 +274,7 @@ function App(): JSX.Element {
         </header>
 
         {/* Tab bar */}
-        {(view === "stream" || view === "work-items" || view === "lab") && (
+        {(view === "stream" || view === "overview" || view === "work-items" || view === "lab") && (
           <nav className="border-b border-gray-800 px-6 flex items-center gap-6">
             <button
               onClick={() => setView("stream")}
@@ -284,6 +285,16 @@ function App(): JSX.Element {
               }`}
             >
               Stream
+            </button>
+            <button
+              onClick={() => setView("overview")}
+              className={`cursor-pointer py-2.5 text-sm font-medium border-b-2 transition-colors ${
+                view === "overview"
+                  ? "border-cyan-500 text-gray-200"
+                  : "border-transparent text-gray-500 hover:text-gray-300"
+              }`}
+            >
+              Overview
             </button>
             <button
               onClick={() => setView("work-items")}
@@ -337,6 +348,7 @@ function App(): JSX.Element {
         {view === "stream" && (
           <StreamView mentionables={mentionables} serializeMention={serializeMention} platform={agentPlatform} platformMeta={platformMeta} onSyncStateChange={setSyncState} />
         )}
+        {view === "overview" && <OverviewView />}
         {view === "work-items" && <WorkItemsView platformMeta={platformMeta} />}
         {view === "lab" && labEnabled && <LabView />}
         {view === "settings" && (

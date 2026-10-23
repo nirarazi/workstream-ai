@@ -65,7 +65,8 @@ function resolveActors(names: readonly string[], byName: ReadonlyMap<string, str
  */
 export function findAsks(
   messages: readonly LoadedMessage[],
-  placements: ReadonlyMap<string, Placement>,
+  /** Each message's case (a placement's cluster, or a stored case id) */
+  placements: ReadonlyMap<string, Pick<Placement, "cluster">>,
   byName: ReadonlyMap<string, string>,
   /** Each handle's actor (load.ts, actorOfHandle): asks to either handle of one agent are asks to that agent */
   actorOf: ReadonlyMap<string, string> = new Map(),

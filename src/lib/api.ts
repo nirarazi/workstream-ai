@@ -764,3 +764,49 @@ export function fetchLabWaiting(days = 14): Promise<LabWaiting> {
 export function fetchLabCase(id: string): Promise<LabCase> {
   return apiFetch(`/api/lab/case/${encodeURIComponent(id)}`);
 }
+
+// ---------------------------------------------------------------------------
+// Overview (docs/overview.md): is anything off, across every stream? Read only
+// ---------------------------------------------------------------------------
+
+export interface OverviewArea {
+  id: string;
+  label: string;
+  /** Streams with a message in the last 30 days */
+  active: number;
+  /** Of those, stuck or noisy */
+  off: number;
+}
+
+export interface OverviewRow {
+  caseId: string | null;
+  stream: string;
+  streamLabel: string;
+  area: string;
+  title: string;
+  detail: string;
+  at: string;
+  why?: Array<"stuck" | "noisy">;
+}
+
+export interface Overview {
+  /** When the grouping it reads was stored; null before the engine has grouped anything */
+  groupedAt: string | null;
+  now: string;
+  since: string;
+  area: string | null;
+  areas: OverviewArea[];
+  changes: { finished: number; stuck: number; new: number; handedToYou: number };
+  needsYou: { rows: OverviewRow[]; total: number };
+  stuck: { rows: OverviewRow[]; total: number };
+  finished: { rows: OverviewRow[]; total: number };
+  movingNormally: number;
+}
+
+export function fetchOverview(since: string | null, area: string | null): Promise<Overview> {
+  const params = new URLSearchParams();
+  if (since) params.set("since", since);
+  if (area) params.set("area", area);
+  const query = params.toString();
+  return apiFetch(`/api/overview${query ? `?${query}` : ""}`);
+}

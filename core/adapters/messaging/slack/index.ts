@@ -987,7 +987,8 @@ export class SlackAdapter implements MessagingAdapter {
       id: threadTs,
       channelId,
       channelName,
-      platformMeta: { isPrivate: this.channelMap.get(channelId)?.isPrivate ?? false },
+      // isDirect: a one-to-one conversation, which the Overview keeps apart from channels (core/grouping/stored.ts)
+      platformMeta: { isPrivate: this.channelMap.get(channelId)?.isPrivate ?? false, isDirect: this.channelMap.get(channelId)?.isDirect ?? false },
       platform: "slack",
       workItemId: null,
       lastActivity: lastMessage?.timestamp ?? (threadTs ? slackTsToISO(threadTs) : ""),

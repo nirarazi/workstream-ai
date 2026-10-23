@@ -50,6 +50,7 @@ agents via MCP ─────────────────────�
   - `workstream_complete`
 - **UI** (`src/`): React, run in a Tauri desktop window or a browser tab.
   - **Stream view:** tabs for Needs me, Snoozed, All active and Dismissed, each searchable. Each item has a timeline, suggested actions and a reply box.
+  - **Overview:** is anything off, across every stream: what needs you (ranked by what it holds up), what's stuck or noisy, what finished this week, and what changed since you last looked, for the whole business or one area. Read only, from the v2 grouping shadow mode stores (`core/grouping/overview.ts`, [docs/overview.md](docs/overview.md)).
   - **Work items:** every active work item in one filterable table. A new Fleet view of the agents themselves is being designed.
   - **Sidekick:** a question-answering pane over the context graph (`core/sidekick/`).
   - **Settings screen:** credentials, model and inbox preferences.
@@ -120,6 +121,7 @@ npm run start:web     # build the UI and serve it from the engine
 npm run mcp           # MCP server on stdio
 npm run classify      # classify a message given as arguments or on stdin (calls the configured model)
 npm run relink        # dry run of the deterministic work item resolver over a read-only copy of workstream.db (reports to eval-data/relink/)
+npm run report:blocked  # what's blocked on you, ranked as the Overview ranks it, over a read-only copy (reports to eval-data/blocked/)
 ```
 
 The engine and the MCP server open `workstream.db` in the directory they're started from. Start them from the repo root, or point the MCP server at the engine's database with `WORKSTREAM_DB_PATH`.
