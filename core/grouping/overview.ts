@@ -7,14 +7,15 @@
 //   - finished in the last seven days;
 //   - what changed since the viewer last looked;
 //   - one line for every other stream with a message in the last 30 days.
-// Movement is a case's status changing, in the messages that are work (reports and telemetry never count). A stream is
-// stuck when a case in it waits on someone (blocked, or a decision), other than an ask already in front of the operator
-// or one they've dealt with (snoozed, dismissed, acted on) or that was handed on, and its latest movement is older
-// than its stuck line, however old (a case blocked for months is still stuck): three times its median gap between movements and at
-// least two days, or seven days while it has fewer than three. A case merely in progress and quiet is a slow stream's
-// normal, not stuck. A case's first message counts as movement, so a stream that keeps opening new cases is moving. It's noisy with ten or more
-// messages that are work or chatter in the last seven days and no movement in them. An area is the channel most of a
-// stream's messages are in; direct messages are one area. All placeholders for the trial (open question 1).
+// Movement is a case's status changing, in the messages that are work (reports and telemetry never count). A stream
+// is stuck when a case in it waits on someone (blocked, or a decision), other than an ask already in front of the
+// operator or one they've dealt with (snoozed, dismissed, acted on) or that was handed on, and its latest movement
+// is older than its stuck line, however old (a case blocked for months is still stuck): three times its median gap
+// between movements and at least two days, or seven days while it has fewer than three. A case merely in progress
+// and quiet is a slow stream's normal, not stuck. A case's first message counts as movement, so a stream that keeps
+// opening new cases is moving. It's noisy with ten or more messages that are work or chatter in the last seven days
+// and no movement in them. An area is the channel most of a stream's messages are in; direct messages are one area.
+// All placeholders for the trial (open question 1).
 
 import type BetterSqlite3 from "better-sqlite3";
 import { findAsks } from "./asks.js";

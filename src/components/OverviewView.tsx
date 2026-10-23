@@ -7,6 +7,7 @@
 
 import { useEffect, useState, type JSX } from "react";
 import { fetchOverview, type Overview, type OverviewRow } from "../lib/api";
+import { lookTracker } from "../lib/looks";
 
 const LOOKED_KEY = "workstream-overview-looked";
 const REFRESH_MS = 60_000;
@@ -28,9 +29,8 @@ function writeLooked(lens: string, at: string): void {
   } catch { /* not remembered: next time falls back to the last 24 hours */ }
 }
 
-// When each lens was last looked at before this visit to the app: read once, so a refresh, switching lenses or
-// leaving the tab and coming back keeps showing the same changes, while each look is remembered for next time
-let lookedBefore: Record<string, string> | null = null;
+// When each lens was last looked at before this look (src/lib/looks.ts): kept across tabs, read again after an hour
+const looks = lookTracker(readLooked);
 
 function sinceLabel(since: string, now: string): string {
   const hours = (Date.parse(now) - Date.parse(since)) / 3_600_000;
@@ -74,13 +74,22 @@ function Section({ title, total, rows, empty }: { title: string; total: number; 
 
 export default function OverviewView(): JSX.Element {
   const [lens, setLens] = useState<string>(WHOLE);
-  const since = (lookedBefore ??= readLooked())[lens] ?? null;
+  const [since, setSince] = useState<string | null>(() => looks.since(WHOLE, Date.now()));
   const [data, setData] = useState<Overview | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  // Opening a lens counts as looking at it
+  // Opening a lens counts as looking at it, and so does coming back to the window
   useEffect(() => {
-    writeLooked(lens, new Date().toISOString());
+    const look = () => {
+      setSince(looks.since(lens, Date.now()));
+      writeLooked(lens, new Date().toISOString());
+    };
+    look();
+    const onVisible = () => {
+      if (document.visibilityState === "visible") look();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
   }, [lens]);
 
   useEffect(() => {
